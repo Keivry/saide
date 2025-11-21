@@ -53,7 +53,10 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("V4L2 Player")
-            .with_inner_size([VIDEO_WIDTH as f32, VIDEO_HEIGHT as f32]),
+            .with_inner_size([
+                VIDEO_WIDTH as f32 + VideoApp::toolbar_width(),
+                VIDEO_HEIGHT as f32 + VideoApp::statusbar_height(),
+            ]),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             // Use AutoVsync to reduce CPU/GPU usage

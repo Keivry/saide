@@ -70,6 +70,10 @@ impl VideoApp {
         }
     }
 
+    pub const fn toolbar_width() -> f32 { TOOLBAR_WIDTH }
+
+    pub const fn statusbar_height() -> f32 { STATUSBAR_HEIGHT }
+
     fn effective_dimensions(&self) -> (u32, u32) {
         if self.rotation & 1 == 0 {
             (self.video_width, self.video_height)
@@ -153,10 +157,8 @@ impl VideoApp {
         } else {
             (rect.x, rect.x / aspect)
         };
-        let rect = eframe::egui::Rect::from_center_size(
-            ui.max_rect().center(),
-            eframe::egui::vec2(width, height),
-        );
+        let rect =
+            egui::Rect::from_center_size(ui.max_rect().center(), eframe::egui::vec2(width, height));
         let _ = ui.allocate_rect(rect, eframe::egui::Sense::hover());
 
         if let Some(frame) = &self.current_frame {
