@@ -11,6 +11,7 @@ use {
 const VIDEO_DEVICE: &str = "/dev/video0";
 const VIDEO_WIDTH: u32 = 1280;
 const VIDEO_HEIGHT: u32 = 576;
+const MAX_FPS: f32 = 60.0;
 
 fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -55,8 +56,8 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([VIDEO_WIDTH as f32, VIDEO_HEIGHT as f32]),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
-            // Use NoVsync for lower latency
-            present_mode: wgpu::PresentMode::AutoNoVsync,
+            // Use AutoVsync to reduce CPU/GPU usage
+            present_mode: wgpu::PresentMode::AutoVsync,
             // Request low latency for real-time video
             desired_maximum_frame_latency: Some(1),
             ..Default::default()
@@ -67,6 +68,14 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "v4l2play",
         options,
-        Box::new(move |cc| Ok(Box::new(VideoApp::new(cc, rx, VIDEO_WIDTH, VIDEO_HEIGHT)))),
+        Box::new(move |cc| {
+            Ok(Box::new(VideoApp::new(
+                cc,
+                rx,
+                VIDEO_WIDTH,
+                VIDEO_HEIGHT,
+                MAX_FPS,
+            )))
+        }),
     )
 }

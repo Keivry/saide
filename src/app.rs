@@ -2,7 +2,7 @@ use {
     crate::player::{new_yuv_render_callback, Yu12Frame, YuvRenderResources},
     eframe::egui::{self, Button, Color32, RichText},
     once_cell::sync::Lazy,
-    std::sync::Arc,
+    std::{sync::Arc, time::Instant},
 };
 
 const BG_COLOR: Color32 = Color32::from_rgb(32, 32, 32);
@@ -33,6 +33,9 @@ static TOOLBAR_BUTTONS: Lazy<Vec<ToolbarButton>> = Lazy::new(|| {
 pub struct VideoApp {
     frame_receiver: crossbeam_channel::Receiver<Arc<Yu12Frame>>,
     current_frame: Option<Arc<Yu12Frame>>,
+    last_frame_instant: Option<Instant>,
+    max_fps: f32,
+    fps: f32,
     video_width: u32,
     video_height: u32,
     rotation: u32,
@@ -44,6 +47,7 @@ impl VideoApp {
         frame_receiver: crossbeam_channel::Receiver<Arc<Yu12Frame>>,
         video_width: u32,
         video_height: u32,
+        max_fps: f32,
     ) -> Self {
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
             let resources = YuvRenderResources::new(&wgpu_state.device, wgpu_state.target_format);
@@ -57,6 +61,9 @@ impl VideoApp {
         Self {
             frame_receiver,
             current_frame: None,
+            last_frame_instant: None,
+            max_fps,
+            fps: 0.0,
             video_width,
             video_height,
             rotation: 0,
@@ -109,18 +116,33 @@ impl VideoApp {
         });
     }
 
-    fn draw_statusbar(&self, ui: &mut egui::Ui) {
+    fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             ui.label(format!(
-                "Resolution: {}x{} | Rotation: {}°",
+                "Resolution: {}x{} | FPS: {} |Rotation: {}°",
                 self.video_width,
                 self.video_height,
+                self.fps.min(self.max_fps) as u32,
                 self.rotation * 90
             ));
         });
     }
 
-    fn draw_v4l2_player(&self, ui: &mut egui::Ui) {
+    fn draw_v4l2_player(&mut self, ui: &mut egui::Ui) {
+        // Receive latest frame
+        while let Ok(frame) = self.frame_receiver.try_recv() {
+            self.current_frame = Some(frame);
+        }
+        // Update FPS
+        if let Some(last_instant) = self.last_frame_instant {
+            let delta = Instant::now().duration_since(last_instant).as_secs_f32();
+            if delta > 0.0 {
+                self.fps = 0.95 * self.fps + 0.05 * (1.0 / delta);
+            }
+        }
+
+        self.last_frame_instant = Some(Instant::now());
+
         // Always maintain aspect ratio
         let (eff_w, eff_h) = self.effective_dimensions();
         let aspect = eff_w as f32 / eff_h as f32;
@@ -159,11 +181,6 @@ impl VideoApp {
 
 impl eframe::App for VideoApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        // Receive latest frame
-        while let Ok(frame) = self.frame_receiver.try_recv() {
-            self.current_frame = Some(frame);
-        }
-
         eframe::egui::SidePanel::left("Toolbar")
             .frame(eframe::egui::Frame::NONE.fill(BG_COLOR))
             .resizable(false)
