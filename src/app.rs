@@ -79,6 +79,82 @@ impl VideoApp {
             h as f32 + STATUSBAR_HEIGHT,
         )));
     }
+
+    fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            ui.spacing_mut().item_spacing.y = TOOLBAR_BTN_SPACING;
+
+            // Center buttons vertically
+            let rect = ui.available_rect_before_wrap();
+            let desired_height = (TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING)
+                * TOOLBAR_BTN_COUNT as f32
+                + TOOLBAR_BTN_SPACING;
+            let top_padding = (rect.height() - desired_height) / 2.0;
+            ui.add_space(top_padding);
+
+            ui.add_space(TOOLBAR_BTN_SPACING);
+            for btn in TOOLBAR_BUTTONS.iter() {
+                if ui
+                    .add_sized(
+                        TOOLBAR_BTN_SIZE,
+                        Button::new(RichText::new(btn.lable).color(FG_COLOR).size(16.0)),
+                    )
+                    .on_hover_text(btn.tooltip)
+                    .clicked()
+                {
+                    (btn.callback)(self, ui.ctx());
+                }
+                ui.add_space(TOOLBAR_BTN_SPACING);
+            }
+        });
+    }
+
+    fn draw_statusbar(&self, ui: &mut egui::Ui) {
+        ui.horizontal_centered(|ui| {
+            ui.label(format!(
+                "Resolution: {}x{} | Rotation: {}°",
+                self.video_width,
+                self.video_height,
+                self.rotation * 90
+            ));
+        });
+    }
+
+    fn draw_v4l2_player(&self, ui: &mut egui::Ui) {
+        // Always maintain aspect ratio
+        let (eff_w, eff_h) = self.effective_dimensions();
+        let aspect = eff_w as f32 / eff_h as f32;
+
+        let rect = ui.available_size();
+        let (width, height) = if rect.x / rect.y > aspect {
+            (rect.y * aspect, rect.y)
+        } else {
+            (rect.x, rect.x / aspect)
+        };
+        let rect = eframe::egui::Rect::from_center_size(
+            ui.max_rect().center(),
+            eframe::egui::vec2(width, height),
+        );
+        let _ = ui.allocate_rect(rect, eframe::egui::Sense::hover());
+
+        if let Some(frame) = &self.current_frame {
+            let callback = eframe::egui_wgpu::Callback::new_paint_callback(
+                rect,
+                new_yuv_render_callback(Arc::clone(frame), self.rotation),
+            );
+            ui.painter().add(callback);
+        } else {
+            ui.painter()
+                .rect_filled(rect, 0.0, eframe::egui::Color32::from_gray(32));
+            ui.painter().text(
+                rect.center(),
+                eframe::egui::Align2::CENTER_CENTER,
+                "Waiting for video...",
+                eframe::egui::FontId::proportional(24.0),
+                eframe::egui::Color32::GRAY,
+            );
+        }
+    }
 }
 
 impl eframe::App for VideoApp {
@@ -93,32 +169,7 @@ impl eframe::App for VideoApp {
             .resizable(false)
             .exact_width(TOOLBAR_WIDTH)
             .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.spacing_mut().item_spacing.y = TOOLBAR_BTN_SPACING;
-
-                    // Center buttons vertically
-                    let rect = ui.available_rect_before_wrap();
-                    let desired_height = (TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING)
-                        * TOOLBAR_BTN_COUNT as f32
-                        + TOOLBAR_BTN_SPACING;
-                    let top_padding = (rect.height() - desired_height) / 2.0;
-                    ui.add_space(top_padding);
-
-                    ui.add_space(TOOLBAR_BTN_SPACING);
-                    for btn in TOOLBAR_BUTTONS.iter() {
-                        if ui
-                            .add_sized(
-                                TOOLBAR_BTN_SIZE,
-                                Button::new(RichText::new(btn.lable).color(FG_COLOR).size(16.0)),
-                            )
-                            .on_hover_text(btn.tooltip)
-                            .clicked()
-                        {
-                            (btn.callback)(self, ctx);
-                        }
-                        ui.add_space(TOOLBAR_BTN_SPACING);
-                    }
-                });
+                self.draw_toolbar(ui);
             });
 
         eframe::egui::TopBottomPanel::top("Status Bar")
@@ -126,39 +177,14 @@ impl eframe::App for VideoApp {
             .resizable(false)
             .exact_height(STATUSBAR_HEIGHT)
             .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.label(format!(
-                        "Resolution: {}x{} | Rotation: {}°",
-                        self.video_width,
-                        self.video_height,
-                        self.rotation * 90
-                    ));
-                });
+                self.draw_statusbar(ui);
             });
 
         // Main video panel - fills entire window
         eframe::egui::CentralPanel::default()
             .frame(eframe::egui::Frame::NONE)
             .show(ctx, |ui| {
-                let rect = ui.max_rect();
-
-                if let Some(frame) = &self.current_frame {
-                    let callback = eframe::egui_wgpu::Callback::new_paint_callback(
-                        rect,
-                        new_yuv_render_callback(Arc::clone(frame), self.rotation),
-                    );
-                    ui.painter().add(callback);
-                } else {
-                    ui.painter()
-                        .rect_filled(rect, 0.0, eframe::egui::Color32::from_gray(32));
-                    ui.painter().text(
-                        rect.center(),
-                        eframe::egui::Align2::CENTER_CENTER,
-                        "Waiting for video...",
-                        eframe::egui::FontId::proportional(24.0),
-                        eframe::egui::Color32::GRAY,
-                    );
-                }
+                self.draw_v4l2_player(ui);
             });
 
         ctx.request_repaint();
