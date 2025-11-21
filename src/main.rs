@@ -3,14 +3,14 @@ mod player;
 
 use {
     app::VideoApp,
-    eframe::egui,
+    eframe::{egui, egui_wgpu},
     player::{V4l2Capture, Yu12Frame},
     std::{sync::Arc, thread},
 };
 
 const VIDEO_DEVICE: &str = "/dev/video0";
-const VIDEO_WIDTH: u32 = 1600;
-const VIDEO_HEIGHT: u32 = 720;
+const VIDEO_WIDTH: u32 = 1280;
+const VIDEO_HEIGHT: u32 = 576;
 
 fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -54,6 +54,13 @@ fn main() -> eframe::Result<()> {
             .with_title("V4L2 Player")
             .with_inner_size([VIDEO_WIDTH as f32, VIDEO_HEIGHT as f32]),
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: egui_wgpu::WgpuConfiguration {
+            // Use NoVsync for lower latency
+            present_mode: wgpu::PresentMode::AutoNoVsync,
+            // Request low latency for real-time video
+            desired_maximum_frame_latency: Some(1),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
