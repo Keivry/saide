@@ -9,7 +9,7 @@ use {
 pub struct Yu12Frame {
     pub width: u32,
     pub height: u32,
-    pub data: Arc<Vec<u8>>,
+    pub data: Arc<[u8]>,
 }
 
 pub struct V4l2Capture {
@@ -60,8 +60,8 @@ impl V4l2Capture {
     pub fn capture_frame(&mut self) -> Result<Yu12Frame> {
         let (buffer, _meta) = self.stream.next().context("Failed to capture frame")?;
 
-        // Clone data to owned Vec
-        let data = Arc::new(buffer.to_vec());
+        // Create Arc directly from slice (single allocation)
+        let data: Arc<[u8]> = Arc::from(buffer);
 
         Ok(Yu12Frame {
             width: self.width,
