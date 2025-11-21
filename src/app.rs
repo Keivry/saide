@@ -1,9 +1,15 @@
 use {
     crate::v4l2_capture::Yu12Frame,
     eframe::egui_wgpu::CallbackTrait,
-    std::sync::Arc,
+    std::sync::{Arc, Mutex},
     wgpu::util::DeviceExt,
 };
+
+/// Shared rotation state between windows
+pub type RotationState = Arc<Mutex<u32>>;
+
+/// Toolbar viewport ID
+const TOOLBAR_VIEWPORT: &str = "toolbar_viewport";
 
 /// Custom wgpu render callback for YUV frame
 struct YuvRenderCallback {
@@ -318,8 +324,9 @@ pub struct VideoApp {
     current_frame: Option<Arc<Yu12Frame>>,
     video_width: u32,
     video_height: u32,
-    rotation: u32,
+    rotation: RotationState,
     last_rotation: u32,
+    toolbar_open: bool,
 }
 
 impl VideoApp {
@@ -343,15 +350,17 @@ impl VideoApp {
             current_frame: None,
             video_width,
             video_height,
-            rotation: 0,
+            rotation: Arc::new(Mutex::new(0)),
             last_rotation: 0,
+            toolbar_open: true,
         }
     }
 
-    fn rotate_clockwise(&mut self) { self.rotation = (self.rotation + 1) % 4; }
+    fn current_rotation(&self) -> u32 { *self.rotation.lock().unwrap() }
 
     fn effective_dimensions(&self) -> (u32, u32) {
-        if self.rotation & 1 == 0 {
+        let rotation = self.current_rotation();
+        if rotation & 1 == 0 {
             (self.video_width, self.video_height)
         } else {
             (self.video_height, self.video_width)
@@ -366,29 +375,41 @@ impl eframe::App for VideoApp {
             self.current_frame = Some(frame);
         }
 
+        let rotation = self.current_rotation();
+
         // Check if rotation changed, resize window to match video
-        if self.rotation != self.last_rotation {
+        if rotation != self.last_rotation {
             let (w, h) = self.effective_dimensions();
             ctx.send_viewport_cmd(eframe::egui::ViewportCommand::InnerSize(
                 eframe::egui::vec2(w as f32, h as f32),
             ));
-            self.last_rotation = self.rotation;
+            self.last_rotation = rotation;
         }
 
-        // Floating toolbar window
-        eframe::egui::Window::new("Toolbar")
-            .title_bar(false)
-            .resizable(false)
-            .collapsible(false)
-            .anchor(eframe::egui::Align2::LEFT_TOP, [10.0, 10.0])
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("\u{21BB} Rotate").clicked() {
-                        self.rotate_clockwise();
-                    }
-                    ui.label(format!("{}°", self.rotation * 90));
-                });
-            });
+        // Spawn independent toolbar window
+        if self.toolbar_open {
+            let rotation_state = Arc::clone(&self.rotation);
+            ctx.show_viewport_deferred(
+                eframe::egui::ViewportId::from_hash_of(TOOLBAR_VIEWPORT),
+                eframe::egui::ViewportBuilder::default()
+                    .with_title("Toolbar")
+                    .with_inner_size([120.0, 40.0])
+                    .with_resizable(false)
+                    .with_always_on_top(),
+                move |ctx, _class| {
+                    eframe::egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("\u{21BB} Rotate").clicked() {
+                                let mut r = rotation_state.lock().unwrap();
+                                *r = (*r + 1) % 4;
+                            }
+                            let r = *rotation_state.lock().unwrap();
+                            ui.label(format!("{}°", r * 90));
+                        });
+                    });
+                },
+            );
+        }
 
         // Main video panel - fills entire window
         eframe::egui::CentralPanel::default()
@@ -401,7 +422,7 @@ impl eframe::App for VideoApp {
                         rect,
                         YuvRenderCallback {
                             frame: Arc::clone(frame),
-                            rotation: self.rotation,
+                            rotation,
                         },
                     );
                     ui.painter().add(callback);
