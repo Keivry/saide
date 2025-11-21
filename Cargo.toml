@@ -1,0 +1,32 @@
+[package]
+name = "v4l2play"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+eframe = { version = "0.33", features = ["wgpu"] }
+
+# wgpu 用于底层纹理管理（eframe 会创建内部 wgpu device/queue，我们只用其 GPU 类型）
+wgpu = "27"
+
+# 异步 / 线程工具
+crossbeam-channel = "0.5"
+
+# v4l 设备支持
+v4l = "0.14"
+
+# 方便阻塞在 main 中
+pollster = "0.4"
+
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+
+
+[profile.dev]
+opt-level = 0
+
+
+[profile.release]
+opt-level = 3
