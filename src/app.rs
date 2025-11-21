@@ -71,7 +71,6 @@ impl YuvRenderResources {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("YUV Bind Group Layout"),
             entries: &[
-                // Y texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -82,7 +81,6 @@ impl YuvRenderResources {
                     },
                     count: None,
                 },
-                // U texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -93,7 +91,6 @@ impl YuvRenderResources {
                     },
                     count: None,
                 },
-                // V texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -104,14 +101,12 @@ impl YuvRenderResources {
                     },
                     count: None,
                 },
-                // Sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                // Uniforms (rotation)
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::VERTEX,
@@ -169,10 +164,9 @@ impl YuvRenderResources {
             ..Default::default()
         });
 
-        // Create uniform buffer for rotation
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Rotation Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[0u32; 4]), // 16 bytes aligned
+            contents: bytemuck::cast_slice(&[0u32; 4]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -184,7 +178,7 @@ impl YuvRenderResources {
             textures: None,
             bind_group: None,
             cached_dimensions: (0, 0),
-            cached_rotation: u32::MAX, // Force initial update
+            cached_rotation: u32::MAX,
         }
     }
 
@@ -203,7 +197,6 @@ impl YuvRenderResources {
             self.cached_dimensions = (width, height);
         }
 
-        // Update uniform buffer if rotation changed
         if self.cached_rotation != rotation {
             queue.write_buffer(
                 &self.uniform_buffer,
@@ -213,7 +206,6 @@ impl YuvRenderResources {
             self.cached_rotation = rotation;
         }
 
-        // Rebuild bind group if textures changed
         if needs_rebuild {
             let textures = self.textures.as_ref().unwrap();
             self.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -327,6 +319,7 @@ pub struct VideoApp {
     video_width: u32,
     video_height: u32,
     rotation: u32,
+    last_rotation: u32,
 }
 
 impl VideoApp {
@@ -351,12 +344,12 @@ impl VideoApp {
             video_width,
             video_height,
             rotation: 0,
+            last_rotation: 0,
         }
     }
 
     fn rotate_clockwise(&mut self) { self.rotation = (self.rotation + 1) % 4; }
 
-    /// Get effective dimensions after rotation
     fn effective_dimensions(&self) -> (u32, u32) {
         if self.rotation & 1 == 0 {
             (self.video_width, self.video_height)
@@ -373,58 +366,57 @@ impl eframe::App for VideoApp {
             self.current_frame = Some(frame);
         }
 
-        // Top toolbar
-        eframe::egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("\u{21BB} Rotate").clicked() {
-                    self.rotate_clockwise();
-                }
-                ui.separator();
-                ui.label(format!("{}°", self.rotation * 90));
+        // Check if rotation changed, resize window to match video
+        if self.rotation != self.last_rotation {
+            let (w, h) = self.effective_dimensions();
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::InnerSize(
+                eframe::egui::vec2(w as f32, h as f32),
+            ));
+            self.last_rotation = self.rotation;
+        }
+
+        // Floating toolbar window
+        eframe::egui::Window::new("Toolbar")
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(eframe::egui::Align2::LEFT_TOP, [10.0, 10.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("\u{21BB} Rotate").clicked() {
+                        self.rotate_clockwise();
+                    }
+                    ui.label(format!("{}°", self.rotation * 90));
+                });
             });
-        });
 
-        // Video panel
-        eframe::egui::CentralPanel::default().show(ctx, |ui| {
-            let available_size = ui.available_size();
-            let (eff_w, eff_h) = self.effective_dimensions();
-            let aspect = eff_w as f32 / eff_h as f32;
+        // Main video panel - fills entire window
+        eframe::egui::CentralPanel::default()
+            .frame(eframe::egui::Frame::NONE)
+            .show(ctx, |ui| {
+                let rect = ui.max_rect();
 
-            let (render_width, render_height) = if available_size.x / available_size.y > aspect {
-                (available_size.y * aspect, available_size.y)
-            } else {
-                (available_size.x, available_size.x / aspect)
-            };
-
-            let offset_x = (available_size.x - render_width) / 2.0;
-            let offset_y = (available_size.y - render_height) / 2.0;
-
-            let rect = eframe::egui::Rect::from_min_size(
-                ui.min_rect().min + eframe::egui::vec2(offset_x, offset_y),
-                eframe::egui::vec2(render_width, render_height),
-            );
-
-            if let Some(frame) = &self.current_frame {
-                let callback = eframe::egui_wgpu::Callback::new_paint_callback(
-                    rect,
-                    YuvRenderCallback {
-                        frame: Arc::clone(frame),
-                        rotation: self.rotation,
-                    },
-                );
-                ui.painter().add(callback);
-            } else {
-                ui.painter()
-                    .rect_filled(rect, 0.0, eframe::egui::Color32::from_gray(32));
-                ui.painter().text(
-                    rect.center(),
-                    eframe::egui::Align2::CENTER_CENTER,
-                    "Waiting for video...",
-                    eframe::egui::FontId::proportional(24.0),
-                    eframe::egui::Color32::GRAY,
-                );
-            }
-        });
+                if let Some(frame) = &self.current_frame {
+                    let callback = eframe::egui_wgpu::Callback::new_paint_callback(
+                        rect,
+                        YuvRenderCallback {
+                            frame: Arc::clone(frame),
+                            rotation: self.rotation,
+                        },
+                    );
+                    ui.painter().add(callback);
+                } else {
+                    ui.painter()
+                        .rect_filled(rect, 0.0, eframe::egui::Color32::from_gray(32));
+                    ui.painter().text(
+                        rect.center(),
+                        eframe::egui::Align2::CENTER_CENTER,
+                        "Waiting for video...",
+                        eframe::egui::FontId::proportional(24.0),
+                        eframe::egui::Color32::GRAY,
+                    );
+                }
+            });
 
         ctx.request_repaint();
     }
