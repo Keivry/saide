@@ -3219,6 +3219,7 @@ dependencies = [
  "eframe",
  "env_logger",
  "log",
+ "once_cell",
  "pollster",
  "v4l",
  "wgpu",

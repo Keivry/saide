@@ -1,10 +1,11 @@
 mod app;
-mod v4l2_capture;
+mod player;
 
 use {
     app::VideoApp,
+    eframe::egui,
+    player::{V4l2Capture, Yu12Frame},
     std::{sync::Arc, thread},
-    v4l2_capture::{V4l2Capture, Yu12Frame},
 };
 
 const VIDEO_DEVICE: &str = "/dev/video0";
@@ -49,7 +50,7 @@ fn main() -> eframe::Result<()> {
 
     // Run eframe app
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
+        viewport: egui::ViewportBuilder::default()
             .with_title("V4L2 Player")
             .with_inner_size([VIDEO_WIDTH as f32, VIDEO_HEIGHT as f32]),
         renderer: eframe::Renderer::Wgpu,

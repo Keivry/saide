@@ -22,21 +22,15 @@ pub struct V4l2Capture {
 
 impl V4l2Capture {
     /// Open video device and configure for YU12 capture
-    pub fn new(device_path: &str, width: u32, height: u32) -> Result<Self> {
-        let device = Device::with_path(device_path).context("Failed to open video device")?;
+    pub fn new(dev: &str, width: u32, height: u32) -> Result<Self> {
+        let device = Device::with_path(dev).context("Failed to open video device")?;
 
-        // Set format to YU12 (Planar YUV 4:2:0)
-        let mut fmt = device.format()?;
-        fmt.width = width;
-        fmt.height = height;
-        fmt.fourcc = FourCC::new(b"YU12");
-        device.set_format(&fmt).context("Failed to set format")?;
-
-        // Verify format was accepted
+        // Check format and dimensions
         let fmt = device.format()?;
         if fmt.fourcc != FourCC::new(b"YU12") {
-            anyhow::bail!("Device does not support YU12 format");
+            anyhow::bail!("Device is not in YU12 format");
         }
+
         if fmt.width != width || fmt.height != height {
             log::warn!(
                 "Requested {}x{}, got {}x{}",

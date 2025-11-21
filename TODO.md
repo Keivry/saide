@@ -12,3 +12,4 @@
 - [x] 实现 egui 应用框架和 wgpu 纹理管理
 - [x] 集成视频捕获线程和渲染管线
 - [x] 添加独立的工具栏窗口和旋转功能
+- [x] 修复工具栏窗口位置跟踪（使用 viewport_rect 和 OuterPosition）
