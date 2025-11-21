@@ -1,8 +1,14 @@
-use {crate::v4l2_capture::Yu12Frame, eframe::egui_wgpu::CallbackTrait, std::sync::Arc};
+use {
+    crate::v4l2_capture::Yu12Frame,
+    eframe::egui_wgpu::CallbackTrait,
+    std::sync::Arc,
+    wgpu::util::DeviceExt,
+};
 
 /// Custom wgpu render callback for YUV frame
 struct YuvRenderCallback {
     frame: Arc<Yu12Frame>,
+    rotation: u32,
 }
 
 impl CallbackTrait for YuvRenderCallback {
@@ -29,19 +35,21 @@ impl CallbackTrait for YuvRenderCallback {
         callback_resources: &mut eframe::egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let resources = callback_resources.get_mut::<YuvRenderResources>().unwrap();
-        resources.upload_frame(device, queue, &self.frame);
+        resources.upload_frame(device, queue, &self.frame, self.rotation);
         Vec::new()
     }
 }
 
-/// Shared resources for YUV rendering (stored in egui_wgpu callback resources)
+/// Shared resources for YUV rendering
 pub struct YuvRenderResources {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    uniform_buffer: wgpu::Buffer,
     textures: Option<YuvTextures>,
     bind_group: Option<wgpu::BindGroup>,
     cached_dimensions: (u32, u32),
+    cached_rotation: u32,
 }
 
 struct YuvTextures {
@@ -63,6 +71,7 @@ impl YuvRenderResources {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("YUV Bind Group Layout"),
             entries: &[
+                // Y texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -73,6 +82,7 @@ impl YuvRenderResources {
                     },
                     count: None,
                 },
+                // U texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -83,6 +93,7 @@ impl YuvRenderResources {
                     },
                     count: None,
                 },
+                // V texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -93,10 +104,22 @@ impl YuvRenderResources {
                     },
                     count: None,
                 },
+                // Sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Uniforms (rotation)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -146,23 +169,52 @@ impl YuvRenderResources {
             ..Default::default()
         });
 
+        // Create uniform buffer for rotation
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Rotation Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[0u32; 4]), // 16 bytes aligned
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         Self {
             pipeline,
             bind_group_layout,
             sampler,
+            uniform_buffer,
             textures: None,
             bind_group: None,
             cached_dimensions: (0, 0),
+            cached_rotation: u32::MAX, // Force initial update
         }
     }
 
-    fn upload_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Yu12Frame) {
+    fn upload_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &Yu12Frame,
+        rotation: u32,
+    ) {
         let (width, height) = (frame.width, frame.height);
+        let needs_rebuild = self.cached_dimensions != (width, height);
 
-        if self.cached_dimensions != (width, height) {
+        if needs_rebuild {
             self.textures = Some(Self::create_textures(device, width, height));
             self.cached_dimensions = (width, height);
+        }
 
+        // Update uniform buffer if rotation changed
+        if self.cached_rotation != rotation {
+            queue.write_buffer(
+                &self.uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[rotation, 0, 0, 0]),
+            );
+            self.cached_rotation = rotation;
+        }
+
+        // Rebuild bind group if textures changed
+        if needs_rebuild {
             let textures = self.textures.as_ref().unwrap();
             self.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("YUV Bind Group"),
@@ -183,6 +235,10 @@ impl YuvRenderResources {
                     wgpu::BindGroupEntry {
                         binding: 3,
                         resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.uniform_buffer.as_entire_binding(),
                     },
                 ],
             }));
@@ -270,6 +326,7 @@ pub struct VideoApp {
     current_frame: Option<Arc<Yu12Frame>>,
     video_width: u32,
     video_height: u32,
+    rotation: u32,
 }
 
 impl VideoApp {
@@ -279,7 +336,6 @@ impl VideoApp {
         video_width: u32,
         video_height: u32,
     ) -> Self {
-        // Initialize wgpu render resources
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
             let resources = YuvRenderResources::new(&wgpu_state.device, wgpu_state.target_format);
             wgpu_state
@@ -294,29 +350,52 @@ impl VideoApp {
             current_frame: None,
             video_width,
             video_height,
+            rotation: 0,
+        }
+    }
+
+    fn rotate_clockwise(&mut self) { self.rotation = (self.rotation + 1) % 4; }
+
+    /// Get effective dimensions after rotation
+    fn effective_dimensions(&self) -> (u32, u32) {
+        if self.rotation & 1 == 0 {
+            (self.video_width, self.video_height)
+        } else {
+            (self.video_height, self.video_width)
         }
     }
 }
 
 impl eframe::App for VideoApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        // Receive latest frame (drain channel to get most recent)
+        // Receive latest frame
         while let Ok(frame) = self.frame_receiver.try_recv() {
             self.current_frame = Some(frame);
         }
 
+        // Top toolbar
+        eframe::egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("\u{21BB} Rotate").clicked() {
+                    self.rotate_clockwise();
+                }
+                ui.separator();
+                ui.label(format!("{}°", self.rotation * 90));
+            });
+        });
+
+        // Video panel
         eframe::egui::CentralPanel::default().show(ctx, |ui| {
             let available_size = ui.available_size();
+            let (eff_w, eff_h) = self.effective_dimensions();
+            let aspect = eff_w as f32 / eff_h as f32;
 
-            // Calculate aspect-correct size
-            let aspect = self.video_width as f32 / self.video_height as f32;
             let (render_width, render_height) = if available_size.x / available_size.y > aspect {
                 (available_size.y * aspect, available_size.y)
             } else {
                 (available_size.x, available_size.x / aspect)
             };
 
-            // Center the video
             let offset_x = (available_size.x - render_width) / 2.0;
             let offset_y = (available_size.y - render_height) / 2.0;
 
@@ -330,6 +409,7 @@ impl eframe::App for VideoApp {
                     rect,
                     YuvRenderCallback {
                         frame: Arc::clone(frame),
+                        rotation: self.rotation,
                     },
                 );
                 ui.painter().add(callback);
@@ -346,7 +426,6 @@ impl eframe::App for VideoApp {
             }
         });
 
-        // Request continuous repaints for video
         ctx.request_repaint();
     }
 }

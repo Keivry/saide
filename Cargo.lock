@@ -3214,6 +3214,7 @@ name = "v4l2play"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "crossbeam-channel",
  "eframe",
  "env_logger",
