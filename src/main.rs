@@ -1,11 +1,11 @@
-mod app;
 mod player;
+mod ui;
 
 use {
-    app::VideoApp,
     eframe::{egui, egui_wgpu},
     player::{V4l2Capture, Yu12Frame},
     std::{sync::Arc, thread},
+    ui::VideoApp,
 };
 
 const VIDEO_DEVICE: &str = "/dev/video0";
