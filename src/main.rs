@@ -9,42 +9,35 @@ use {
 };
 
 const VIDEO_DEVICE: &str = "/dev/video0";
-const VIDEO_WIDTH: u32 = 1280;
-const VIDEO_HEIGHT: u32 = 576;
 const MAX_FPS: f32 = 60.0;
 
-fn main() -> eframe::Result<()> {
+fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     log::info!("v4l2play starting...");
 
     // Channel for frame transfer
     let (tx, rx) = crossbeam_channel::bounded::<Arc<Yu12Frame>>(2);
 
+    let mut capture = match V4l2Capture::new(VIDEO_DEVICE) {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to initialize V4L2 capture");
+            return Err(e);
+        }
+    };
+
+    let (width, height) = capture.dimensions();
+    log::info!("Capture started: {}x{}", width, height);
+
     // Start capture thread
-    thread::spawn(move || {
-        let mut capture = match V4l2Capture::new(VIDEO_DEVICE, VIDEO_WIDTH, VIDEO_HEIGHT) {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!("Failed to open video device: {}", e);
-                return;
+    thread::spawn(move || loop {
+        match capture.capture_frame() {
+            Ok(frame) => {
+                let _ = tx.try_send(Arc::new(frame));
             }
-        };
-
-        log::info!(
-            "Capture started: {}x{}",
-            capture.dimensions().0,
-            capture.dimensions().1
-        );
-
-        loop {
-            match capture.capture_frame() {
-                Ok(frame) => {
-                    let _ = tx.try_send(Arc::new(frame));
-                }
-                Err(e) => {
-                    log::error!("Capture error: {}", e);
-                    break;
-                }
+            Err(e) => {
+                log::error!("Capture error: {}", e);
+                break;
             }
         }
     });
@@ -54,13 +47,13 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("V4L2 Player")
             .with_inner_size([
-                VIDEO_WIDTH as f32 + VideoApp::toolbar_width(),
-                VIDEO_HEIGHT as f32 + VideoApp::statusbar_height(),
+                width as f32 + VideoApp::toolbar_width(),
+                height as f32 + VideoApp::statusbar_height(),
             ]),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             // Use AutoVsync to reduce CPU/GPU usage
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: wgpu::PresentMode::AutoNoVsync,
             // Request low latency for real-time video
             desired_maximum_frame_latency: Some(1),
             ..Default::default()
@@ -71,14 +64,9 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "v4l2play",
         options,
-        Box::new(move |cc| {
-            Ok(Box::new(VideoApp::new(
-                cc,
-                rx,
-                VIDEO_WIDTH,
-                VIDEO_HEIGHT,
-                MAX_FPS,
-            )))
-        }),
+        Box::new(move |cc| Ok(Box::new(VideoApp::new(cc, rx, width, height, MAX_FPS)))),
     )
+    .map_err(|e| anyhow::anyhow!("eframe error: {}", e))?;
+
+    Ok(())
 }

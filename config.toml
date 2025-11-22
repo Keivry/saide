@@ -1,0 +1,64 @@
+[scrcpy.v4l2]
+device = "/dev/video0"
+capture_orientation = "90"
+buffer = 0
+
+[scrcpy.video]
+bit_rate = "24M"
+max_fps = 60
+max_size = 1440
+codec = "h264"
+encoder = "c2.mtk.avc.encoder"
+
+[scrcpy.options]
+turn_screen_off = true
+stay_awake = true
+
+[player]
+vsync = true
+backend = "VULKAN"
+
+[kaymapping]
+toggle = "KEY_SCROLLLOCK"
+initial_state = false
+show_notification = true
+
+[[keymappings.profiles]]
+name = "问道手游"
+mappings = [
+    { key = "KEY_A", action = "TAP", pos = { x = 0.9270833333333334, y = 0.9162962962962963 } },
+    { key = "KEY_S", action = "TAP", pos = { x = 0.92734375, y = 0.654228855721393 } },
+    { key = "KEY_2", action = "TAP", pos = { x = 0.85546875, y = 0.49087893864013266 } },
+    { key = "KEY_5", action = "TAP", pos = { x = 0.801953125, y = 0.36401326699834163 } },
+    { key = "KEY_3", action = "TAP", pos = { x = 0.915234375, y = 0.3615257048092869 } },
+    { key = "KEY_5", action = "TAP", pos = { x = 0.801953125, y = 0.36401326699834163 } },
+    { key = "KEY_6", action = "TAP", pos = { x = 0.85703125, y = 0.35903814262023215 } },
+    { key = "KEY_G", action = "TAP", pos = { x = 0.797265625, y = 0.6981757877280266 } },
+    { key = "KEY_SPACE", action = "TAP", pos = { x = 0.57109375, y = 0.6169154228855721 } },
+    { key = "KEY_TAB", action = "TAP", pos = { x = 0.12362362362362363, y = 0.06437291897891231 } },
+    { key = "KEY_GRAVE", action = "TAP", pos = { x = 0.05855855855855856, y = 0.06215316315205328 } },
+    { key = "KEY_F2", action = "TAP", pos = { x = 0.25225225225225223, y = 0.06104328523862375 } },
+    { key = "KEY_F1", action = "TAP", pos = { x = 0.2962962962962963, y = 0.06326304106548279 } },
+    { key = "KEY_D", action = "TAP", pos = { x = 0.10810810810810811, y = 0.6670366259711432 } },
+    { key = "KEY_F", action = "TAP", pos = { x = 0.06156156156156156, y = 0.6637069922308546 } },
+    { key = "KEY_B", action = "TAP", pos = { x = 0.9394394394394394, y = 0.8035516093229744 } },
+    { key = "KEY_C", action = "TAP", pos = { x = 0.8993993993993994, y = 0.05771365149833518 } },
+    { key = "KEY_T", action = "TAP", pos = { x = 0.8123123123123123, y = 0.058823529411764705 } },
+    { key = "KEY_W", action = "TAP", pos = { x = 0.7802802802802803, y = 0.0244173140954495 } },
+    { key = "KEY_Z", action = "TAP", pos = { x = 0.8863863863863863, y = 0.2985571587125416 } },
+    { key = "KEY_V", action = "TAP", pos = { x = 0.8873873873873874, y = 0.4184239733629301 } },
+    { key = "KEY_Q", action = "TAP", pos = { x = 0.9259259259259259, y = 0.4872364039955605 } },
+]
+
+[mouse]
+initial_state = true
+mappings = [
+    { button = "BTN_LEFT", action = "TAP" },
+    { button = "BTN_RIGHT", action = "BACK" },
+    { button = "BTN_MIDDLE", action = "HOME" },
+    { button = "WHEEL_UP", action = "SWIPE", dir = "DOWN" },
+    { button = "WHEEL_DOWN", action = "SWIPE", dir = "UP" },
+]
+
+[logging]
+level = "INFO"

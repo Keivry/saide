@@ -31,8 +31,8 @@ static TOOLBAR_BUTTONS: Lazy<Vec<ToolbarButton>> = Lazy::new(|| {
 
 /// Main application state
 pub struct VideoApp {
-    frame_receiver: crossbeam_channel::Receiver<Arc<Yu12Frame>>,
-    current_frame: Option<Arc<Yu12Frame>>,
+    receiver: crossbeam_channel::Receiver<Arc<Yu12Frame>>,
+    frame: Option<Arc<Yu12Frame>>,
     last_frame_instant: Option<Instant>,
     max_fps: f32,
     fps: f32,
@@ -44,7 +44,7 @@ pub struct VideoApp {
 impl VideoApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        frame_receiver: crossbeam_channel::Receiver<Arc<Yu12Frame>>,
+        receiver: crossbeam_channel::Receiver<Arc<Yu12Frame>>,
         video_width: u32,
         video_height: u32,
         max_fps: f32,
@@ -59,8 +59,8 @@ impl VideoApp {
         }
 
         Self {
-            frame_receiver,
-            current_frame: None,
+            receiver,
+            frame: None,
             last_frame_instant: None,
             max_fps,
             fps: 0.0,
@@ -82,8 +82,8 @@ impl VideoApp {
         }
     }
 
-    fn rotate(&mut self, ctx: &egui::Context) {
-        self.rotation = (self.rotation + 1) % 4;
+    /// Resize the application window to match video dimensions
+    fn resize(&mut self, ctx: &egui::Context) {
         let (w, h) = self.effective_dimensions();
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             w as f32 + TOOLBAR_WIDTH,
@@ -91,6 +91,13 @@ impl VideoApp {
         )));
     }
 
+    /// Rotate video by 90 degrees clockwise
+    fn rotate(&mut self, ctx: &egui::Context) {
+        self.rotation = (self.rotation + 1) % 4;
+        self.resize(ctx);
+    }
+
+    /// Draw the toolbar on the left side
     fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.spacing_mut().item_spacing.y = TOOLBAR_BTN_SPACING;
@@ -120,6 +127,7 @@ impl VideoApp {
         });
     }
 
+    /// Draw the status bar at the top
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             ui.label(format!(
@@ -132,10 +140,11 @@ impl VideoApp {
         });
     }
 
+    /// Draw the main v4l2 player area
     fn draw_v4l2_player(&mut self, ui: &mut egui::Ui) {
         // Receive latest frame
-        while let Ok(frame) = self.frame_receiver.try_recv() {
-            self.current_frame = Some(frame);
+        while let Ok(frame) = self.receiver.try_recv() {
+            self.frame = Some(frame);
         }
         // Update FPS
         if let Some(last_instant) = self.last_frame_instant {
@@ -161,7 +170,8 @@ impl VideoApp {
             egui::Rect::from_center_size(ui.max_rect().center(), eframe::egui::vec2(width, height));
         let _ = ui.allocate_rect(rect, eframe::egui::Sense::hover());
 
-        if let Some(frame) = &self.current_frame {
+        // Draw video frame or placeholder
+        if let Some(frame) = &self.frame {
             let callback = eframe::egui_wgpu::Callback::new_paint_callback(
                 rect,
                 new_yuv_render_callback(Arc::clone(frame), self.rotation),
@@ -199,7 +209,6 @@ impl eframe::App for VideoApp {
                 self.draw_statusbar(ui);
             });
 
-        // Main video panel - fills entire window
         eframe::egui::CentralPanel::default()
             .frame(eframe::egui::Frame::NONE)
             .show(ctx, |ui| {
