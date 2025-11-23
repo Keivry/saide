@@ -1,7 +1,9 @@
+mod config;
 mod ui;
 mod v4l2;
 
 use {
+    config::AppConfig,
     eframe::{egui, egui_wgpu},
     std::{sync::Arc, thread},
     ui::VideoApp,
@@ -10,10 +12,32 @@ use {
 
 const VIDEO_DEVICE: &str = "/dev/video0";
 const MAX_FPS: f32 = 60.0;
+const CONFIG_PATH: &str = "config.toml";
 
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    log::info!("v4l2play starting...");
+    log::info!("SAide starting...");
+
+    let config = match AppConfig::load_from_file(CONFIG_PATH) {
+        Ok(cfg) => {
+            log::info!("Loaded configuration from {}", CONFIG_PATH);
+            cfg
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to load config from {}: {}, using default config",
+                CONFIG_PATH,
+                e
+            );
+            AppConfig::from_toml_value(toml::Value::Table(toml::value::Table::new()))
+                .map_err(|e| anyhow::anyhow!("Failed to create default config: {}", e))?
+        }
+    };
+
+    log::info!("V4L2 device: {}", config.scrcpy.v4l2.device);
+    log::info!("Video backend: {}", config.video.backend);
+    log::info!("Max FPS: {}", config.scrcpy.video.max_fps);
+    log::info!("Logging level: {}", config.logging.level);
 
     // Channel for frame transfer
     let (tx, rx) = crossbeam_channel::bounded::<Arc<Yu12Frame>>(2);

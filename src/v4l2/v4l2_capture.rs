@@ -1,7 +1,7 @@
 use {
     anyhow::{Context, Result},
     std::sync::Arc,
-    v4l::{buffer::Type, io::traits::CaptureStream, prelude::*, video::Capture, Device, FourCC},
+    v4l::{Device, FourCC, buffer::Type, io::traits::CaptureStream, prelude::*, video::Capture},
 };
 
 /// YU12 frame data (Planar YUV 4:2:0)
