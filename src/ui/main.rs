@@ -1,5 +1,5 @@
 use {
-    crate::player::{new_yuv_render_callback, Yu12Frame, YuvRenderResources},
+    crate::v4l2::{new_yuv_render_callback, Yu12Frame, YuvRenderResources},
     eframe::egui::{self, Button, Color32, RichText},
     once_cell::sync::Lazy,
     std::{sync::Arc, time::Instant},

@@ -6,7 +6,7 @@ buffer = 0
 [scrcpy.video]
 bit_rate = "24M"
 max_fps = 60
-max_size = 1440
+max_size = 1280
 codec = "h264"
 encoder = "c2.mtk.avc.encoder"
 
@@ -14,7 +14,7 @@ encoder = "c2.mtk.avc.encoder"
 turn_screen_off = true
 stay_awake = true
 
-[player]
+[video]
 vsync = true
 backend = "VULKAN"
 

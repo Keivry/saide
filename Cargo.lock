@@ -2700,6 +2700,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "saide"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "crossbeam-channel",
+ "eframe",
+ "env_logger",
+ "log",
+ "once_cell",
+ "pollster",
+ "v4l",
+ "wgpu",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3207,22 +3223,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6779878362b9bacadc7893eac76abe69612e8837ef746573c4a5239daf11990b"
 dependencies = [
  "bindgen",
-]
-
-[[package]]
-name = "v4l2play"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytemuck",
- "crossbeam-channel",
- "eframe",
- "env_logger",
- "log",
- "once_cell",
- "pollster",
- "v4l",
- "wgpu",
 ]
 
 [[package]]

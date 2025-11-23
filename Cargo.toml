@@ -1,7 +1,8 @@
 [package]
-name = "v4l2play"
+name = "saide"
+description = "Scrcpy companion app with key/mouse mapping"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 
 [dependencies]

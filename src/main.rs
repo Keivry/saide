@@ -1,11 +1,11 @@
-mod player;
 mod ui;
+mod v4l2;
 
 use {
     eframe::{egui, egui_wgpu},
-    player::{V4l2Capture, Yu12Frame},
     std::{sync::Arc, thread},
     ui::VideoApp,
+    v4l2::{V4l2Capture, Yu12Frame},
 };
 
 const VIDEO_DEVICE: &str = "/dev/video0";
@@ -30,14 +30,16 @@ fn main() -> anyhow::Result<()> {
     log::info!("Capture started: {}x{}", width, height);
 
     // Start capture thread
-    thread::spawn(move || loop {
-        match capture.capture_frame() {
-            Ok(frame) => {
-                let _ = tx.try_send(Arc::new(frame));
-            }
-            Err(e) => {
-                log::error!("Capture error: {}", e);
-                break;
+    thread::spawn(move || {
+        loop {
+            match capture.capture_frame() {
+                Ok(frame) => {
+                    let _ = tx.try_send(Arc::new(frame));
+                }
+                Err(e) => {
+                    log::error!("Capture error: {}", e);
+                    break;
+                }
             }
         }
     });
@@ -45,7 +47,7 @@ fn main() -> anyhow::Result<()> {
     // Run eframe app
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("V4L2 Player")
+            .with_title("SAide")
             .with_inner_size([
                 width as f32 + VideoApp::toolbar_width(),
                 height as f32 + VideoApp::statusbar_height(),
@@ -53,7 +55,7 @@ fn main() -> anyhow::Result<()> {
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             // Use AutoVsync to reduce CPU/GPU usage
-            present_mode: wgpu::PresentMode::AutoNoVsync,
+            present_mode: wgpu::PresentMode::AutoVsync,
             // Request low latency for real-time video
             desired_maximum_frame_latency: Some(1),
             ..Default::default()
