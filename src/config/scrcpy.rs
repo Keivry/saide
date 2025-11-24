@@ -31,7 +31,8 @@ pub struct OptionsConfig {
 
 impl ScrcpyConfig {
     pub fn from_toml_value(value: toml::Value) -> Result<Self, String> {
-        value.try_into()
+        value
+            .try_into()
             .map_err(|e| format!("Failed to parse ScrcpyConfig: {}", e))
     }
 }

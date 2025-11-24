@@ -35,9 +35,9 @@ impl CallbackTrait for YuvRenderCallback {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        _screen_descriptor: &eframe::egui_wgpu::ScreenDescriptor,
+        _screen_descriptor: &egui_wgpu::ScreenDescriptor,
         _encoder: &mut wgpu::CommandEncoder,
-        callback_resources: &mut eframe::egui_wgpu::CallbackResources,
+        callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let resources = callback_resources.get_mut::<YuvRenderResources>().unwrap();
         resources.upload_frame(device, queue, &self.frame, self.rotation);

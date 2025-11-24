@@ -1,3 +1,5 @@
+timeout = 5
+
 [scrcpy.v4l2]
 device = "/dev/video0"
 capture_orientation = "90"

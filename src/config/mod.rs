@@ -5,16 +5,18 @@ pub mod scrcpy;
 use {
     crate::config::{log::LogConfig, mapping::MappingConfig, scrcpy::ScrcpyConfig},
     anyhow::{Result, anyhow},
-    std::path::Path,
+    std::{path::Path, sync::Arc},
 };
 
 #[derive(Debug, Clone)]
-pub struct AppConfig {
-    pub scrcpy: ScrcpyConfig,
+pub struct SAideConfig {
+    pub scrcpy: Arc<ScrcpyConfig>,
     pub video: VideoConfig,
     #[allow(dead_code)]
-    pub keymapping: MappingConfig,
+    pub mappings: MappingConfig,
     pub logging: LogConfig,
+
+    pub timeout: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -24,7 +26,7 @@ pub struct VideoConfig {
     pub backend: String,
 }
 
-impl AppConfig {
+impl SAideConfig {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         if !path.exists() {
@@ -69,11 +71,17 @@ impl AppConfig {
             .and_then(|v| LogConfig::from_toml_value(v.clone()).ok())
             .unwrap_or_default();
 
+        let timeout = value
+            .get("timeout")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(30) as u64;
+
         Ok(Self {
-            scrcpy,
+            scrcpy: Arc::new(scrcpy),
             video,
-            keymapping,
+            mappings: keymapping,
             logging,
+            timeout,
         })
     }
 }

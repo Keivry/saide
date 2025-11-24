@@ -1,6 +1,11 @@
 use {
     anyhow::{Context, Result},
-    std::sync::Arc,
+    std::{
+        mem,
+        sync::Arc,
+        thread,
+        time::{Duration, Instant},
+    },
     v4l::{Device, FourCC, buffer::Type, io::traits::CaptureStream, prelude::*, video::Capture},
 };
 
@@ -22,21 +27,32 @@ pub struct V4l2Capture {
 
 impl V4l2Capture {
     /// Open video device and configure for YU12 capture
-    pub fn new(dev: &str) -> Result<Self> {
+    pub fn new(dev: &str, timeout: Duration) -> Result<Self> {
         let device = Device::with_path(dev).context("Failed to open video device")?;
 
-        // Check format and dimensions
-        let fmt = device.format()?;
-        if fmt.fourcc != FourCC::new(b"YU12") {
-            anyhow::bail!("Device is not in YU12 format");
-        }
+        let start = Instant::now();
+        let fmt = loop {
+            if start.elapsed() > timeout {
+                anyhow::bail!("Timeout waiting for video device to be ready");
+            }
+
+            // Check format and dimensions
+            // (We expect YU12 format from scrcpy)
+            if let Ok(fmt) = device.format() {
+                if fmt.fourcc != FourCC::new(b"YU12") {
+                    anyhow::bail!("Device is not in YU12 format");
+                }
+                break fmt;
+            }
+            thread::sleep(Duration::from_millis(100));
+        };
 
         // Create memory-mapped stream with 4 buffers
         let stream = MmapStream::with_buffers(&device, Type::VideoCapture, 4)
             .context("Failed to create stream")?;
 
         // SAFETY: We ensure device outlives stream by storing both in struct
-        let stream = unsafe { std::mem::transmute::<MmapStream<'_>, MmapStream<'static>>(stream) };
+        let stream = unsafe { mem::transmute::<MmapStream<'_>, MmapStream<'static>>(stream) };
 
         Ok(Self {
             _device: device,
