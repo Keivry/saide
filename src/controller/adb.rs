@@ -1,7 +1,7 @@
 use {
     anyhow::{Context, Result, anyhow},
     std::{
-        io::{BufRead, BufReader, Write},
+        io::Write,
         process::{Child, ChildStdin, Command, Stdio},
         time::{Duration, Instant},
     },
@@ -9,7 +9,7 @@ use {
 };
 
 const ADB_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
-const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
+const RECONNECT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// ADB Shell connection manager for sending input commands to Android device
 pub struct AdbShell {
@@ -29,15 +29,15 @@ pub struct AdbShell {
 #[derive(Debug)]
 pub enum AdbInputCommand {
     Tap {
-        x: i32,
-        y: i32,
+        x: u32,
+        y: u32,
     },
     Swipe {
-        x1: i32,
-        y1: i32,
-        x2: i32,
-        y2: i32,
-        duration: i32,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
+        duration: u32,
     },
     Key {
         keycode: String,
@@ -81,44 +81,16 @@ impl AdbShell {
             .spawn()
             .context("Failed to spawn adb shell process")?;
 
-        let mut stdin = child
+        let stdin = child
             .stdin
             .take()
             .ok_or_else(|| anyhow!("Failed to take stdin from adb shell process"))?;
 
-        // Send a test command to verify connection
-        stdin
-            .write_all(b"echo 'SAIDE_ADB_TEST'\n")
-            .context("Failed to write test command")?;
-        stdin.flush().context("Failed to flush test command")?;
-
-        // Read the response to verify connection
-        if let Some(stdout) = child.stdout.as_mut() {
-            let reader = BufReader::new(stdout);
-            let lines: Vec<String> = reader
-                .lines()
-                .take_while(|line| match line {
-                    Ok(line) => !line.contains("SAIDE_ADB_TEST"),
-                    Err(_) => false,
-                })
-                .filter_map(|line| line.ok())
-                .collect();
-
-            if lines.is_empty() {
-                warn!("ADB shell connection test returned no output");
-            }
-        }
-
         self.child = Some(child);
         self.stdin = Some(stdin);
+
         self.last_activity = Instant::now();
         self.connected = true;
-
-        // Get device screen size
-        if let Ok(size) = self.get_screen_size() {
-            self.screen_size = size;
-            info!("Device screen size: {}x{}", size.0, size.1);
-        }
 
         info!("Successfully connected to ADB shell");
         Ok(())
@@ -134,6 +106,21 @@ impl AdbShell {
 
         self.connected = false;
         info!("Disconnected from ADB shell");
+        Ok(())
+    }
+
+    /// Send a test command to verify connection
+    pub fn test_connection(&mut self) -> Result<()> {
+        let Some(ref mut stdin) = self.stdin else {
+            return Err(anyhow!("ADB shell stdin not available"));
+        };
+
+        stdin
+            .write_all(b"echo 'SAIDE_ADB_TEST'\n")
+            .context("Failed to write test command")?;
+        stdin.flush().context("Failed to flush test command")?;
+
+        self.last_activity = Instant::now();
         Ok(())
     }
 
@@ -192,23 +179,23 @@ impl AdbShell {
     }
 
     /// Keep connection alive by sending periodic test commands
-    pub fn keep_alive(&mut self) {
-        if !self.is_connected() {
-            return;
+    pub fn keep_alive(&mut self) -> Result<()> {
+        if !self.is_connected() || self.last_activity.elapsed() < RECONNECT_INTERVAL {
+            return Ok(());
         }
 
-        if self.last_activity.elapsed() < ADB_SHELL_TIMEOUT {
-            return;
+        if let Err(e) = self.test_connection() {
+            error!("ADB shell keep-alive test failed: {}", e);
+
+            self.connected = false;
+            self.connect()?;
         }
 
-        info!("ADB shell connection timed out, reconnecting...");
-        if let Err(e) = self.connect() {
-            error!("Failed to reconnect to ADB shell: {}", e);
-        }
+        Ok(())
     }
 
     /// Get Android device screen size using separate adb command
-    pub fn get_screen_size(&self) -> Result<(u32, u32)> {
+    pub fn get_screen_size() -> Result<(u32, u32)> {
         // Use separate adb command to get screen size, not through shell session
         let output = Command::new("adb")
             .args(["shell", "wm size"])

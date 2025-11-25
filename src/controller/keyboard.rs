@@ -12,7 +12,7 @@ use {
 /// Keyboard mapping state
 pub struct KeyboardMapper {
     config: MappingConfig,
-    adb: Arc<Mutex<AdbShell>>,
+    adb: AdbShell,
     enabled: Arc<Mutex<bool>>,
     active_profile: Arc<Mutex<usize>>,
     /// Cache of keycode mappings for performance
@@ -21,7 +21,7 @@ pub struct KeyboardMapper {
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(config: MappingConfig, adb: Arc<Mutex<AdbShell>>) -> Self {
+    pub fn new(config: MappingConfig) -> Self {
         let initial_state = config.initial_state;
         let mut keycode_cache = HashMap::new();
         keycode_cache.insert("KEY_A".to_string(), "a".to_string());
@@ -75,7 +75,7 @@ impl KeyboardMapper {
 
         Self {
             config,
-            adb,
+            adb: AdbShell::new(),
             enabled: Arc::new(Mutex::new(initial_state)),
             active_profile: Arc::new(Mutex::new(0)),
             keycode_cache,

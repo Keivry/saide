@@ -1,7 +1,12 @@
 use {
     crate::{
         config::SAideConfig,
-        controller::{adb::AdbShell, keyboard::KeyboardMapper, mouse::MouseMapper, scrcpy::Scrcpy},
+        controller::{
+            adb::AdbShell,
+            keyboard::KeyboardMapper,
+            mouse::{MouseMapper, WheelDirection},
+            scrcpy::Scrcpy,
+        },
         v4l2::{V4l2Capture, Yu12Frame, YuvRenderResources, new_yuv_render_callback},
     },
     anyhow::anyhow,
@@ -476,7 +481,6 @@ impl SAideApp {
                                 self.video_width,
                                 self.video_height,
                                 self.rotation,
-                                &self.config.scrcpy.v4l2.capture_orientation,
                             ) {
                                 error!("Failed to handle mouse event: {}", e);
                             }
@@ -492,16 +496,23 @@ impl SAideApp {
                     ..
                 } = event
                     && let Some(mouse_mapper) = &self.mouse_mapper
-                    && let Err(e) = mouse_mapper.handle_wheel_event(
-                        delta.x,
-                        delta.y,
+                {
+                    // get mouse position
+                    let pos = input.pointer.hover_pos().unwrap_or_default();
+                    let dir = match delta {
+                        egui::Vec2 { x: _, y } if *y > 0.0 => WheelDirection::Up,
+                        _ => WheelDirection::Down,
+                    };
+                    if let Err(e) = mouse_mapper.handle_wheel_event(
+                        pos.x,
+                        pos.y,
                         self.video_width,
                         self.video_height,
                         self.rotation,
-                        &self.config.scrcpy.v4l2.capture_orientation,
-                    )
-                {
-                    error!("Failed to handle wheel event: {}", e);
+                        dir,
+                    ) {
+                        error!("Failed to handle wheel event: {}", e);
+                    }
                 }
             }
         });
