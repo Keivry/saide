@@ -1,6 +1,6 @@
 use {
     crate::{
-        config::mapping::{AdbAction, MouseButton, MouseConfig, WheelDirection},
+        config::mapping::{AdbAction, MouseButton, WheelDirection},
         controller::adb::AdbShell,
     },
     anyhow::Result,
@@ -11,15 +11,12 @@ use {
 
 /// Mouse mapping state
 pub struct MouseMapper {
-    config: Arc<MouseConfig>,
     adb_shell: Arc<RwLock<AdbShell>>,
 }
 
 impl MouseMapper {
     /// Create a new mouse mapper
-    pub fn new(config: Arc<MouseConfig>, adb_shell: Arc<RwLock<AdbShell>>) -> Self {
-        Self { config, adb_shell }
-    }
+    pub fn new(adb_shell: Arc<RwLock<AdbShell>>) -> Self { Self { adb_shell } }
 
     /// Handle mouse button event
     pub fn handle_button_event(

@@ -2,7 +2,7 @@ use {
     crate::{
         config::{
             SAideConfig,
-            mapping::{MouseButton, MouseConfig, WheelDirection},
+            mapping::{MouseButton, WheelDirection},
         },
         controller::{adb::AdbShell, keyboard::KeyboardMapper, mouse::MouseMapper, scrcpy::Scrcpy},
         v4l2::{V4l2Capture, Yu12Frame, YuvRenderResources, new_yuv_render_callback},
@@ -88,15 +88,20 @@ pub struct SAideApp {
 
     last_frame_instant: Option<Instant>,
 
-    phisical_size: Option<(u32, u32)>,
+    // Android device physical screen size
+    physical_size: Option<(u32, u32)>,
 
+    // V4l2 video dimensions
     video_width: u32,
     video_height: u32,
 
     /// Video display rectangle
     video_rect: Option<egui::Rect>,
 
+    // Video rotation state (0-3)
     rotation: u32,
+
+    // Current FPS
     fps: f32,
 
     /// Initialization state machine
@@ -125,13 +130,13 @@ impl SAideApp {
             .mappings
             .keyboard
             .as_ref()
-            .map_or(false, |k| k.initial_state);
+            .is_some_and(|k| k.initial_state);
 
         let mouse_mapping_enabled = config
             .mappings
             .mouse
             .as_ref()
-            .map_or(true, |m| m.initial_state);
+            .is_none_or(|m| m.initial_state);
 
         Self {
             config: Arc::new(config),
@@ -144,7 +149,7 @@ impl SAideApp {
             last_frame_instant: None,
             video_width: 0,
             video_height: 0,
-            phisical_size: None,
+            physical_size: None,
             video_rect: None,
             rotation: 0,
             fps: 0.0,
@@ -310,26 +315,24 @@ impl SAideApp {
             let adb_shell = Arc::new(RwLock::new(adb_shell));
 
             // Initialize keyboard mapper
-            let keyboard_mapper = if let Some(keyboard_config) = config.mappings.keyboard.clone() {
-                Some(KeyboardMapper::new(
-                    keyboard_config.clone(),
-                    adb_shell.clone(),
-                ))
-            } else {
-                None
-            };
+            let keyboard_mapper = config.mappings.keyboard.clone().map(|keyboard_config| {
+                KeyboardMapper::new(keyboard_config.clone(), adb_shell.clone())
+            });
 
             // Initialize mouse mapper
-            let mouse_mapper = MouseMapper::new(
-                config
-                    .mappings
-                    .mouse
-                    .clone()
-                    .unwrap_or(Arc::new(MouseConfig::default())),
-                adb_shell.clone(),
-            );
+            let mouse_mapper = config
+                .mappings
+                .mouse
+                .clone()
+                .unwrap_or_default()
+                .initial_state
+                .then_some(MouseMapper::new(adb_shell.clone()));
 
-            let physical_size = AdbShell::get_physical_screen_size()?;
+            let physical_size = {
+                adb_shell.read().get_screen_size().ok_or_else(|| {
+                    anyhow!("Failed to get device physical screen size from ADB shell")
+                })
+            }?;
 
             // Channel for frame transfer
             let (tx, rx) = bounded::<Arc<Yu12Frame>>(2);
@@ -373,7 +376,7 @@ impl SAideApp {
                 scrcpy,
                 adb_shell,
                 keyboard_mapper,
-                Some(mouse_mapper),
+                mouse_mapper,
                 rx,
                 physical_size,
                 width,
@@ -528,8 +531,8 @@ impl SAideApp {
         };
 
         // Direct mapping from video space to device space
-        let device_x = rotated_x as f32 / video_width as f32 * screen_size.0 as f32;
-        let device_y = rotated_y as f32 / video_height as f32 * screen_size.1 as f32;
+        let device_x = rotated_x / video_width * screen_size.0 as f32;
+        let device_y = rotated_y / video_height * screen_size.1 as f32;
 
         Some((device_x as u32, device_y as u32))
     }
@@ -537,101 +540,102 @@ impl SAideApp {
     /// Process input events for mouse and keyboard
     fn process_input_events(&mut self, ctx: &egui::Context) {
         if self.init_state != InitState::Ready {
+            info!("Skipping input processing - not initialized");
             return;
         }
 
         ctx.input(|input| {
             // Handle mouse button events
             for event in &input.events {
-                if let Some(adb_shell) = &self.adb_shell
-                    && let Some(phisical_size) = self.phisical_size
-                    && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
-                    && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
+                if let Some(physical_size) = self.physical_size
                     && self.video_rect.is_some()
                 {
-                    if let egui::Event::PointerButton {
-                        button,
-                        pressed,
-                        pos,
-                        ..
-                    } = event
+                    info!("Processing event: {:?}", event);
+
+                    // Process keyboard events
+                    if self.keyboard_mapping_enabled
+                        && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
+                        && let egui::Event::Key {
+                            key,
+                            pressed,
+                            modifiers: _,
+                            repeat: _,
+                            physical_key: _,
+                        } = event
+                        && let Err(e) = keyboard_mapper.handle_key_event(key, *pressed)
                     {
-                        if !self.mouse_mapping_enabled {
-                            continue;
-                        }
-                        if !self.in_video_rect(pos) {
-                            continue;
-                        }
+                        error!("Failed to handle keyboard event: {}", e);
+                    }
 
-                        let screen_size = match self.phisical_size {
-                            Some(size) => size,
-                            None => continue,
-                        };
-
-                        let (rel_x, rel_y) = self.video_relative_coords(*pos).unwrap();
-                        if let Some((device_x, device_y)) =
-                            self.coordinate_transform(rel_x, rel_y, screen_size)
+                    // Process mouse events
+                    if self.mouse_mapping_enabled
+                        && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
+                    {
+                        if let egui::Event::PointerButton {
+                            button,
+                            pressed,
+                            pos,
+                            ..
+                        } = event
                         {
-                            let button = MouseButton::from(*button);
-                            mouse_mapper.handle_button_event(button, *pressed, device_x, device_y);
-                        }
-                    } else if let egui::Event::MouseWheel {
-                        modifiers: _,
-                        unit: _,
-                        delta,
-                        ..
-                    } = event
-                    {
-                        if !self.mouse_mapping_enabled {
-                            continue;
-                        }
+                            if !self.mouse_mapping_enabled {
+                                continue;
+                            }
+                            if !self.in_video_rect(pos) {
+                                continue;
+                            }
 
-                        // get mouse position
-                        let pos = input.pointer.hover_pos().unwrap_or_default();
+                            let (rel_x, rel_y) = self.video_relative_coords(*pos).unwrap();
+                            if let Some((device_x, device_y)) =
+                                self.coordinate_transform(rel_x, rel_y, physical_size)
+                            {
+                                let button = MouseButton::from(*button);
+                                let _ = mouse_mapper
+                                    .handle_button_event(button, *pressed, device_x, device_y)
+                                    .or_else(|e| {
+                                        error!("Failed to handle mouse button event: {}", e);
+                                        anyhow::Ok(())
+                                    });
+                            }
+                        } else if let egui::Event::MouseWheel {
+                            modifiers: _,
+                            unit: _,
+                            delta,
+                            ..
+                        } = event
+                        {
+                            if !self.mouse_mapping_enabled {
+                                continue;
+                            }
 
-                        if !self.in_video_rect(&pos) {
-                            continue;
-                        }
+                            // get mouse position
+                            let pos = input.pointer.hover_pos().unwrap_or_default();
 
-                        let screen_size = match self.phisical_size {
-                            Some(size) => size,
-                            None => continue,
-                        };
-                        let (rel_x, rel_y) = self.video_relative_coords(pos).unwrap();
-                        let (device_x, device_y) =
-                            match self.coordinate_transform(rel_x, rel_y, screen_size) {
-                                Some(coords) => coords,
-                                None => continue,
+                            if !self.in_video_rect(&pos) {
+                                continue;
+                            }
+
+                            let (rel_x, rel_y) = self.video_relative_coords(pos).unwrap();
+                            let (device_x, device_y) =
+                                match self.coordinate_transform(rel_x, rel_y, physical_size) {
+                                    Some(coords) => coords,
+                                    None => continue,
+                                };
+
+                            let dir = match delta {
+                                egui::Vec2 { x: _, y } if *y > 0.0 => WheelDirection::Up,
+                                _ => WheelDirection::Down,
                             };
 
-                        let dir = match delta {
-                            egui::Vec2 { x: _, y } if *y > 0.0 => WheelDirection::Up,
-                            _ => WheelDirection::Down,
-                        };
-
-                        if let Err(e) = mouse_mapper.handle_wheel_event(device_x, device_y, dir) {
-                            error!("Failed to handle wheel event: {}", e);
-                        }
-                    } else if let egui::Event::Key {
-                        key,
-                        pressed,
-                        modifiers: _,
-                        repeat: _,
-                        physical_key: _,
-                    } = event
-                    {
-                        if let Err(e) = keyboard_mapper.handle_key_event(key, *pressed) {
-                            error!("Failed to handle keyboard event: {}", e);
+                            if let Err(e) = mouse_mapper.handle_wheel_event(device_x, device_y, dir)
+                            {
+                                error!("Failed to handle wheel event: {}", e);
+                            }
                         }
                     }
                 }
             }
         });
-
-        // Keep ADB connection alive
-        // if let Some(adb) = &self.adb {
-        //     adb.keep_alive();
-        // }
     }
 }
 
@@ -664,15 +668,29 @@ impl eframe::App for SAideApp {
             && let Ok(init_result) = rx.try_recv()
         {
             match init_result {
-                Ok((scrcpy, adb, frame_rx, width, height)) => {
+                Ok((
+                    scrcpy,
+                    adb_shell,
+                    keyboard_mapper,
+                    mouse_mapper,
+                    frame_rx,
+                    physical_size,
+                    width,
+                    height,
+                )) => {
                     // Initialization successful
                     self.scrcpy = Some(scrcpy);
 
-                    self.mouse_mapper = Some(mouse_mapper);
+                    self.adb_shell = Some(adb_shell);
 
-                    self.keyboard_mapper = Some(keyboard_mapper);
+                    self.keyboard_mapper = keyboard_mapper;
+
+                    self.mouse_mapper = mouse_mapper;
 
                     self.frame_rx = Some(frame_rx);
+
+                    self.physical_size = Some(physical_size);
+
                     self.video_width = width;
                     self.video_height = height;
 
@@ -703,13 +721,6 @@ impl Drop for SAideApp {
             } else {
                 info!("Scrcpy process terminated");
             }
-        }
-
-        // Disconnect ADB shell
-        if let Some(adb) = &self.adb
-            && let Err(e) = adb.lock().unwrap().disconnect()
-        {
-            error!("Failed to disconnect ADB shell: {}", e);
         }
     }
 }

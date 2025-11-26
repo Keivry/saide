@@ -4,13 +4,10 @@ use {
     std::{
         io::Write,
         process::{Child, ChildStdin, Command, Stdio},
-        time::{Duration, Instant},
+        time::Instant,
     },
     tracing::{info, warn},
 };
-
-const ADB_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
-const RECONNECT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// ADB Shell connection manager for sending input commands to Android device
 pub struct AdbShell {
