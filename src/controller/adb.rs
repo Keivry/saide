@@ -1,11 +1,12 @@
 use {
+    crate::config::mapping::AdbAction,
     anyhow::{Context, Result, anyhow},
     std::{
         io::Write,
         process::{Child, ChildStdin, Command, Stdio},
         time::{Duration, Instant},
     },
-    tracing::{error, info, warn},
+    tracing::{info, warn},
 };
 
 const ADB_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -21,34 +22,8 @@ pub struct AdbShell {
     connected: bool,
     /// Last activity timestamp
     last_activity: Instant,
-    /// Android device screen dimensions
-    screen_size: (u32, u32),
-}
-
-/// ADB input command types
-#[derive(Debug)]
-pub enum AdbInputCommand {
-    Tap {
-        x: u32,
-        y: u32,
-    },
-    Swipe {
-        x1: u32,
-        y1: u32,
-        x2: u32,
-        y2: u32,
-        duration: u32,
-    },
-    Key {
-        keycode: String,
-    },
-    Text {
-        text: String,
-    },
-    Back,
-    Home,
-    Menu,
-    Power,
+    /// Device physical screen size
+    screen_size: Option<(u32, u32)>,
 }
 
 impl AdbShell {
@@ -59,7 +34,7 @@ impl AdbShell {
             stdin: None,
             connected: false,
             last_activity: Instant::now(),
-            screen_size: (0, 0),
+            screen_size: None,
         }
     }
 
@@ -89,6 +64,8 @@ impl AdbShell {
         self.child = Some(child);
         self.stdin = Some(stdin);
 
+        self.screen_size = Some(Self::get_physical_screen_size()?);
+
         self.last_activity = Instant::now();
         self.connected = true;
 
@@ -109,26 +86,14 @@ impl AdbShell {
         Ok(())
     }
 
-    /// Send a test command to verify connection
-    pub fn test_connection(&mut self) -> Result<()> {
-        let Some(ref mut stdin) = self.stdin else {
-            return Err(anyhow!("ADB shell stdin not available"));
-        };
-
-        stdin
-            .write_all(b"echo 'SAIDE_ADB_TEST'\n")
-            .context("Failed to write test command")?;
-        stdin.flush().context("Failed to flush test command")?;
-
-        self.last_activity = Instant::now();
-        Ok(())
-    }
-
     /// Check if connected to ADB shell
     pub fn is_connected(&self) -> bool { self.connected }
 
+    /// Get device screen size
+    pub fn get_screen_size(&self) -> Option<(u32, u32)> { self.screen_size }
+
     /// Send input command to Android device
-    pub fn send_input(&mut self, command: AdbInputCommand) -> Result<()> {
+    pub fn send_input(&mut self, command: &AdbAction) -> Result<()> {
         if !self.is_connected() {
             warn!("ADB shell not connected, attempting to reconnect...");
             if let Err(e) = self.connect() {
@@ -141,10 +106,10 @@ impl AdbShell {
         };
 
         let cmd_str = match command {
-            AdbInputCommand::Tap { x, y } => {
+            AdbAction::Tap { x, y } => {
                 format!("input tap {} {}\n", x, y)
             }
-            AdbInputCommand::Swipe {
+            AdbAction::Swipe {
                 x1,
                 y1,
                 x2,
@@ -153,17 +118,20 @@ impl AdbShell {
             } => {
                 format!("input swipe {} {} {} {} {}\n", x1, y1, x2, y2, duration)
             }
-            AdbInputCommand::Key { keycode } => {
+            AdbAction::Key { keycode } => {
                 format!("input keyevent {}\n", keycode)
             }
-            AdbInputCommand::Text { text } => {
+            AdbAction::Text { text } => {
                 let escaped = text.replace(' ', "%s");
                 format!("input text {}\n", escaped)
             }
-            AdbInputCommand::Back => "input keyevent BACK\n".to_string(),
-            AdbInputCommand::Home => "input keyevent HOME\n".to_string(),
-            AdbInputCommand::Menu => "input keyevent MENU\n".to_string(),
-            AdbInputCommand::Power => "input keyevent POWER\n".to_string(),
+            AdbAction::Back => "input keyevent BACK\n".to_string(),
+            AdbAction::Home => "input keyevent HOME\n".to_string(),
+            AdbAction::Menu => "input keyevent MENU\n".to_string(),
+            AdbAction::Power => "input keyevent POWER\n".to_string(),
+            AdbAction::Ignore => {
+                return Ok(());
+            }
         };
 
         stdin
@@ -178,24 +146,8 @@ impl AdbShell {
         Ok(())
     }
 
-    /// Keep connection alive by sending periodic test commands
-    pub fn keep_alive(&mut self) -> Result<()> {
-        if !self.is_connected() || self.last_activity.elapsed() < RECONNECT_INTERVAL {
-            return Ok(());
-        }
-
-        if let Err(e) = self.test_connection() {
-            error!("ADB shell keep-alive test failed: {}", e);
-
-            self.connected = false;
-            self.connect()?;
-        }
-
-        Ok(())
-    }
-
     /// Get Android device screen size using separate adb command
-    pub fn get_screen_size() -> Result<(u32, u32)> {
+    pub fn get_physical_screen_size() -> Result<(u32, u32)> {
         // Use separate adb command to get screen size, not through shell session
         let output = Command::new("adb")
             .args(["shell", "wm size"])
@@ -225,7 +177,8 @@ impl AdbShell {
             output_str.trim()
         ))
     }
+}
 
-    /// Get the cached screen size
-    pub fn get_cached_screen_size(&self) -> (u32, u32) { self.screen_size }
+impl Drop for AdbShell {
+    fn drop(&mut self) { let _ = self.disconnect(); }
 }

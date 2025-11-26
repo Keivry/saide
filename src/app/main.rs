@@ -1,12 +1,10 @@
 use {
     crate::{
-        config::SAideConfig,
-        controller::{
-            adb::AdbShell,
-            keyboard::KeyboardMapper,
-            mouse::{MouseMapper, WheelDirection},
-            scrcpy::Scrcpy,
+        config::{
+            SAideConfig,
+            mapping::{MouseButton, MouseConfig, WheelDirection},
         },
+        controller::{adb::AdbShell, keyboard::KeyboardMapper, mouse::MouseMapper, scrcpy::Scrcpy},
         v4l2::{V4l2Capture, Yu12Frame, YuvRenderResources, new_yuv_render_callback},
     },
     anyhow::anyhow,
@@ -16,12 +14,13 @@ use {
         egui_wgpu,
     },
     once_cell::sync::Lazy,
+    parking_lot::RwLock,
     std::{
-        sync::{Arc, Mutex},
+        sync::Arc,
         thread,
         time::{Duration, Instant},
     },
-    tracing::{error, info, warn},
+    tracing::{error, info},
 };
 
 const DEFAULT_WIDTH: u32 = 1280;
@@ -41,8 +40,11 @@ const TOOLBAR_BTN_SPACING: f32 = 2.0;
 type InitResult = Result<
     (
         Scrcpy,
-        Arc<Mutex<AdbShell>>,
+        Arc<RwLock<AdbShell>>,
+        Option<KeyboardMapper>,
+        Option<MouseMapper>,
         Receiver<Arc<Yu12Frame>>,
+        (u32, u32),
         u32,
         u32,
     ),
@@ -76,20 +78,23 @@ static TOOLBAR_BUTTONS: Lazy<Vec<ToolbarButton>> = Lazy::new(|| {
 pub struct SAideApp {
     config: Arc<SAideConfig>,
     scrcpy: Option<Scrcpy>,
-    adb: Option<Arc<Mutex<AdbShell>>>,
-    mouse_mapper: Option<Arc<MouseMapper>>,
-    keyboard_mapper: Option<Arc<KeyboardMapper>>,
+
+    adb_shell: Option<Arc<RwLock<AdbShell>>>,
+    mouse_mapper: Option<MouseMapper>,
+    keyboard_mapper: Option<KeyboardMapper>,
 
     frame_rx: Option<Receiver<Arc<Yu12Frame>>>,
     frame: Option<Arc<Yu12Frame>>,
 
     last_frame_instant: Option<Instant>,
 
+    phisical_size: Option<(u32, u32)>,
+
     video_width: u32,
     video_height: u32,
 
-    // Video display rectangle
-    rect: Option<egui::Rect>,
+    /// Video display rectangle
+    video_rect: Option<egui::Rect>,
 
     rotation: u32,
     fps: f32,
@@ -97,6 +102,12 @@ pub struct SAideApp {
     /// Initialization state machine
     init_state: InitState,
     init_rx: Option<Receiver<InitResult>>,
+
+    /// Keyboard mapping switch
+    keyboard_mapping_enabled: bool,
+
+    /// Mouse mapping switch
+    mouse_mapping_enabled: bool,
 }
 
 impl SAideApp {
@@ -110,10 +121,22 @@ impl SAideApp {
                 .insert(resources);
         }
 
+        let keyboard_mapping_enabled = config
+            .mappings
+            .keyboard
+            .as_ref()
+            .map_or(false, |k| k.initial_state);
+
+        let mouse_mapping_enabled = config
+            .mappings
+            .mouse
+            .as_ref()
+            .map_or(true, |m| m.initial_state);
+
         Self {
             config: Arc::new(config),
             scrcpy: None,
-            adb: None,
+            adb_shell: None,
             mouse_mapper: None,
             keyboard_mapper: None,
             frame_rx: None,
@@ -121,11 +144,14 @@ impl SAideApp {
             last_frame_instant: None,
             video_width: 0,
             video_height: 0,
-            rect: None,
+            phisical_size: None,
+            video_rect: None,
             rotation: 0,
             fps: 0.0,
             init_state: InitState::NotStarted,
             init_rx: None,
+            keyboard_mapping_enabled,
+            mouse_mapping_enabled,
         }
     }
 
@@ -229,7 +255,7 @@ impl SAideApp {
 
         // Create centered rectangle
         let rect = egui::Rect::from_center_size(ui.max_rect().center(), egui::vec2(width, height));
-        self.rect = Some(rect);
+        self.video_rect = Some(rect);
 
         // Draw video frame or placeholder
         if let Some(frame) = &self.frame {
@@ -278,13 +304,32 @@ impl SAideApp {
                 return Err(e);
             }
 
-            // Initialize ADB shell connection
-            let mut adb = AdbShell::new();
-            if let Err(e) = adb.connect() {
-                warn!("Failed to connect to ADB shell: {}", e);
+            // Initialize ADB shell
+            let mut adb_shell = AdbShell::new();
+            adb_shell.connect()?;
+            let adb_shell = Arc::new(RwLock::new(adb_shell));
+
+            // Initialize keyboard mapper
+            let keyboard_mapper = if let Some(keyboard_config) = config.mappings.keyboard.clone() {
+                Some(KeyboardMapper::new(
+                    keyboard_config.clone(),
+                    adb_shell.clone(),
+                ))
             } else {
-                info!("ADB shell connected successfully");
-            }
+                None
+            };
+
+            // Initialize mouse mapper
+            let mouse_mapper = MouseMapper::new(
+                config
+                    .mappings
+                    .mouse
+                    .clone()
+                    .unwrap_or(Arc::new(MouseConfig::default())),
+                adb_shell.clone(),
+            );
+
+            let physical_size = AdbShell::get_physical_screen_size()?;
 
             // Channel for frame transfer
             let (tx, rx) = bounded::<Arc<Yu12Frame>>(2);
@@ -324,7 +369,16 @@ impl SAideApp {
                 }
             });
 
-            Ok((scrcpy, Arc::new(Mutex::new(adb)), rx, width, height))
+            Ok((
+                scrcpy,
+                adb_shell,
+                keyboard_mapper,
+                Some(mouse_mapper),
+                rx,
+                physical_size,
+                width,
+                height,
+            ))
         })();
 
         let _ = result_tx.send(result);
@@ -428,6 +482,58 @@ impl SAideApp {
         });
     }
 
+    // Check if position is within video rectangle
+    fn in_video_rect(&self, pos: &egui::Pos2) -> bool {
+        if let Some(video_rect) = &self.video_rect {
+            pos.x >= video_rect.left()
+                && pos.x <= video_rect.right()
+                && pos.y >= video_rect.top()
+                && pos.y <= video_rect.bottom()
+        } else {
+            false
+        }
+    }
+
+    // Convert absolute position to video-relative coordinates
+    fn video_relative_coords(&self, pos: egui::Pos2) -> Option<(f32, f32)> {
+        if let Some(video_rect) = &self.video_rect {
+            let rel_x = pos.x - video_rect.left();
+            let rel_y = pos.y - video_rect.top();
+            Some((rel_x, rel_y))
+        } else {
+            None
+        }
+    }
+
+    pub fn coordinate_transform(
+        &self,
+        rel_x: f32,
+        rel_y: f32,
+        screen_size: (u32, u32),
+    ) -> Option<(u32, u32)> {
+        let video_width = self.video_width as f32;
+        let video_height = self.video_height as f32;
+
+        // Apply rotation transform to video coordinates
+        let (rotated_x, rotated_y) = match self.rotation % 4 {
+            // 0 degrees - no rotation
+            0 => (rel_x, rel_y),
+            // 90 degrees clockwise - transpose and flip X
+            1 => (video_height - rel_y, rel_x),
+            // 180 degrees - flip both axes
+            2 => (video_width - rel_x, video_height - rel_y),
+            // 270 degrees clockwise - transpose and flip Y
+            3 => (rel_y, video_width - rel_x),
+            _ => (rel_x, rel_y),
+        };
+
+        // Direct mapping from video space to device space
+        let device_x = rotated_x as f32 / video_width as f32 * screen_size.0 as f32;
+        let device_y = rotated_y as f32 / video_height as f32 * screen_size.1 as f32;
+
+        Some((device_x as u32, device_y as u32))
+    }
+
     /// Process input events for mouse and keyboard
     fn process_input_events(&mut self, ctx: &egui::Context) {
         if self.init_state != InitState::Ready {
@@ -437,81 +543,86 @@ impl SAideApp {
         ctx.input(|input| {
             // Handle mouse button events
             for event in &input.events {
-                if let egui::Event::PointerButton {
-                    button,
-                    pressed,
-                    pos,
-                    ..
-                } = event
-                    && let Some(mouse_mapper) = &self.mouse_mapper
-                    && let Some(video_rect) = &self.rect
+                if let Some(adb_shell) = &self.adb_shell
+                    && let Some(phisical_size) = self.phisical_size
+                    && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
+                    && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
+                    && self.video_rect.is_some()
                 {
-                    let button_str = match button {
-                        egui::PointerButton::Primary => "BTN_LEFT",
-                        egui::PointerButton::Secondary => "BTN_RIGHT",
-                        egui::PointerButton::Middle => "BTN_MIDDLE",
-                        _ => "",
-                    };
-
-                    if !button_str.is_empty() {
-                        // Only handle clicks within the video rectangle
-                        if pos.x >= video_rect.left()
-                            && pos.x <= video_rect.right()
-                            && pos.y >= video_rect.top()
-                            && pos.y <= video_rect.bottom()
-                        {
-                            // TODO: fix wrong coordinates mapping
-                            // Convert to video-relative coordinates
-                            let rel_x = pos.x - video_rect.left();
-                            let rel_y = pos.y - video_rect.top();
-
-                            // Get display dimensions
-                            let display_w = video_rect.width();
-                            let display_h = video_rect.height();
-
-                            // Scale to actual video dimensions
-                            let video_x = rel_x / display_w * self.video_width as f32;
-                            let video_y = rel_y / display_h * self.video_height as f32;
-
-                            if let Err(e) = mouse_mapper.handle_button_event(
-                                button_str,
-                                *pressed,
-                                video_x,
-                                video_y,
-                                self.video_width,
-                                self.video_height,
-                                self.rotation,
-                            ) {
-                                error!("Failed to handle mouse event: {}", e);
-                            }
+                    if let egui::Event::PointerButton {
+                        button,
+                        pressed,
+                        pos,
+                        ..
+                    } = event
+                    {
+                        if !self.mouse_mapping_enabled {
+                            continue;
                         }
-                    }
-                }
+                        if !self.in_video_rect(pos) {
+                            continue;
+                        }
 
-                // Handle scroll events
-                if let egui::Event::MouseWheel {
-                    modifiers: _,
-                    unit: _,
-                    delta,
-                    ..
-                } = event
-                    && let Some(mouse_mapper) = &self.mouse_mapper
-                {
-                    // get mouse position
-                    let pos = input.pointer.hover_pos().unwrap_or_default();
-                    let dir = match delta {
-                        egui::Vec2 { x: _, y } if *y > 0.0 => WheelDirection::Up,
-                        _ => WheelDirection::Down,
-                    };
-                    if let Err(e) = mouse_mapper.handle_wheel_event(
-                        pos.x,
-                        pos.y,
-                        self.video_width,
-                        self.video_height,
-                        self.rotation,
-                        dir,
-                    ) {
-                        error!("Failed to handle wheel event: {}", e);
+                        let screen_size = match self.phisical_size {
+                            Some(size) => size,
+                            None => continue,
+                        };
+
+                        let (rel_x, rel_y) = self.video_relative_coords(*pos).unwrap();
+                        if let Some((device_x, device_y)) =
+                            self.coordinate_transform(rel_x, rel_y, screen_size)
+                        {
+                            let button = MouseButton::from(*button);
+                            mouse_mapper.handle_button_event(button, *pressed, device_x, device_y);
+                        }
+                    } else if let egui::Event::MouseWheel {
+                        modifiers: _,
+                        unit: _,
+                        delta,
+                        ..
+                    } = event
+                    {
+                        if !self.mouse_mapping_enabled {
+                            continue;
+                        }
+
+                        // get mouse position
+                        let pos = input.pointer.hover_pos().unwrap_or_default();
+
+                        if !self.in_video_rect(&pos) {
+                            continue;
+                        }
+
+                        let screen_size = match self.phisical_size {
+                            Some(size) => size,
+                            None => continue,
+                        };
+                        let (rel_x, rel_y) = self.video_relative_coords(pos).unwrap();
+                        let (device_x, device_y) =
+                            match self.coordinate_transform(rel_x, rel_y, screen_size) {
+                                Some(coords) => coords,
+                                None => continue,
+                            };
+
+                        let dir = match delta {
+                            egui::Vec2 { x: _, y } if *y > 0.0 => WheelDirection::Up,
+                            _ => WheelDirection::Down,
+                        };
+
+                        if let Err(e) = mouse_mapper.handle_wheel_event(device_x, device_y, dir) {
+                            error!("Failed to handle wheel event: {}", e);
+                        }
+                    } else if let egui::Event::Key {
+                        key,
+                        pressed,
+                        modifiers: _,
+                        repeat: _,
+                        physical_key: _,
+                    } = event
+                    {
+                        if let Err(e) = keyboard_mapper.handle_key_event(key, *pressed) {
+                            error!("Failed to handle keyboard event: {}", e);
+                        }
                     }
                 }
             }
@@ -556,26 +667,17 @@ impl eframe::App for SAideApp {
                 Ok((scrcpy, adb, frame_rx, width, height)) => {
                     // Initialization successful
                     self.scrcpy = Some(scrcpy);
-                    self.adb = Some(adb.clone());
 
-                    // Initialize mouse mapper
-                    let mouse_mapper = Arc::new(MouseMapper::new(
-                        self.config.mappings.mouse.clone(),
-                        adb.clone(),
-                    ));
                     self.mouse_mapper = Some(mouse_mapper);
 
-                    // Initialize keyboard mapper
-                    let keyboard_mapper = Arc::new(KeyboardMapper::new(
-                        self.config.mappings.clone(),
-                        adb.clone(),
-                    ));
                     self.keyboard_mapper = Some(keyboard_mapper);
 
                     self.frame_rx = Some(frame_rx);
                     self.video_width = width;
                     self.video_height = height;
+
                     self.init_state = InitState::Ready;
+
                     self.resize(ctx);
                 }
                 Err(e) => {

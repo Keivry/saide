@@ -7,6 +7,7 @@ edition = "2024"
 
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }
+egui = { version = "0.33", features = ["serde"] }
 wgpu = "27"
 
 crossbeam-channel = "0.5"
@@ -27,6 +28,7 @@ nix = { version = "0.30", features = ["process", "signal"] }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+parking_lot = "0.12.5"
 
 [profile.dev]
 opt-level = 0

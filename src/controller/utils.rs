@@ -4,16 +4,18 @@ use {
         sys::signal::{Signal, killpg},
         unistd::{Pid, setpgid},
     },
+    serde::{Deserialize, Deserializer, Serialize, Serializer},
     std::{
         ffi::OsStr,
-        io::{Error, Result},
+        io,
         os::unix::process::CommandExt,
         process::{Child, Command, Stdio},
+        sync::Arc,
     },
 };
 
 /// Spawns a process in its own process group and returns the Child process and its PGID.
-pub fn spawn_pg<I>(cmd: &str, args: &[I]) -> Result<(Child, i32)>
+pub fn spawn_pg<I>(cmd: &str, args: &[I]) -> io::Result<(Child, i32)>
 where
     I: AsRef<OsStr>,
 {
@@ -30,7 +32,7 @@ where
     unsafe {
         command.pre_exec(|| {
             setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                .map_err(|e| Error::from_raw_os_error(e as i32))
+                .map_err(|e| io::Error::from_raw_os_error(e as i32))
         });
     }
 
@@ -69,5 +71,42 @@ pub fn kill_pg(pgid: i32, force: bool) -> nix::Result<()> {
             })
         }
         Err(e) => Err(e),
+    }
+}
+
+pub fn deserialize_arc<'de, D, T>(deserializer: D) -> Result<Arc<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let value = T::deserialize(deserializer)?;
+    Ok(Arc::new(value))
+}
+
+pub fn serialize_arc<T, S>(value: &Arc<T>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: Serialize,
+    S: Serializer,
+{
+    value.serialize(serializer)
+}
+
+pub fn deserialize_option_arc<'de, D, T>(deserializer: D) -> Result<Option<Arc<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let opt = Option::<T>::deserialize(deserializer)?;
+    Ok(opt.map(Arc::new))
+}
+
+pub fn serialize_option_arc<T, S>(value: &Option<Arc<T>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: Serialize,
+    S: Serializer,
+{
+    match value {
+        Some(arc) => arc.serialize(serializer),
+        None => serializer.serialize_none(),
     }
 }
