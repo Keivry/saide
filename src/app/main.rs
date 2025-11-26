@@ -20,7 +20,7 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    tracing::{error, info},
+    tracing::{debug, error, info},
 };
 
 const DEFAULT_WIDTH: u32 = 1280;
@@ -45,6 +45,7 @@ type InitResult = Result<
         Option<MouseMapper>,
         Receiver<Arc<Yu12Frame>>,
         (u32, u32),
+        u32,
         u32,
         u32,
     ),
@@ -94,6 +95,9 @@ pub struct SAideApp {
     // V4l2 video dimensions
     video_width: u32,
     video_height: u32,
+
+    // V4l2 capture orientation
+    capture_orientation: u32,
 
     /// Video display rectangle
     video_rect: Option<egui::Rect>,
@@ -149,6 +153,7 @@ impl SAideApp {
             last_frame_instant: None,
             video_width: 0,
             video_height: 0,
+            capture_orientation: 0,
             physical_size: None,
             video_rect: None,
             rotation: 0,
@@ -354,8 +359,17 @@ impl SAideApp {
                 }
             };
 
+            // Get capture dimensions and orientation
             let (width, height) = capture.dimensions();
             info!("Capture started: {}x{}", width, height);
+            let capture_orientation = config
+                .scrcpy
+                .v4l2
+                .capture_orientation
+                .parse::<u32>()
+                .unwrap_or(0)
+                / 90;
+            info!("Capture orientation: {}°", capture_orientation * 90);
 
             // Start capture thread
             let _ = thread::spawn(move || {
@@ -381,6 +395,7 @@ impl SAideApp {
                 physical_size,
                 width,
                 height,
+                capture_orientation,
             ))
         })();
 
@@ -517,16 +532,30 @@ impl SAideApp {
         let video_width = self.video_width as f32;
         let video_height = self.video_height as f32;
 
+        let rotation = self.rotation % 4;
+
         // Apply rotation transform to video coordinates
-        let (rotated_x, rotated_y) = match self.rotation % 4 {
+        let (rotated_x, rotated_y) = match rotation {
             // 0 degrees - no rotation
             0 => (rel_x, rel_y),
             // 90 degrees clockwise - transpose and flip X
-            1 => (video_height - rel_y, rel_x),
+            1 => {
+                let x = video_height - rel_y;
+                let y = rel_x;
+                let device_x = x / video_height * screen_size.1 as f32;
+                let device_y = y / video_width * screen_size.0 as f32;
+                (device_x, device_y)
+            }
             // 180 degrees - flip both axes
             2 => (video_width - rel_x, video_height - rel_y),
             // 270 degrees clockwise - transpose and flip Y
-            3 => (rel_y, video_width - rel_x),
+            3 => {
+                let x = rel_y;
+                let y = video_width - rel_x;
+                let device_x = x / video_height * screen_size.1 as f32;
+                let device_y = y / video_width * screen_size.0 as f32;
+                (device_x, device_y)
+            }
             _ => (rel_x, rel_y),
         };
 
@@ -540,7 +569,7 @@ impl SAideApp {
     /// Process input events for mouse and keyboard
     fn process_input_events(&mut self, ctx: &egui::Context) {
         if self.init_state != InitState::Ready {
-            info!("Skipping input processing - not initialized");
+            debug!("Skipping input processing - not initialized");
             return;
         }
 
@@ -550,21 +579,22 @@ impl SAideApp {
                 if let Some(physical_size) = self.physical_size
                     && self.video_rect.is_some()
                 {
-                    info!("Processing event: {:?}", event);
-
                     // Process keyboard events
                     if self.keyboard_mapping_enabled
                         && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
-                        && let egui::Event::Key {
+                    {
+                        info!("Processing keyboard event: {:?}", event);
+                        if let egui::Event::Key {
                             key,
                             pressed,
                             modifiers: _,
                             repeat: _,
                             physical_key: _,
                         } = event
-                        && let Err(e) = keyboard_mapper.handle_key_event(key, *pressed)
-                    {
-                        error!("Failed to handle keyboard event: {}", e);
+                            && let Err(e) = keyboard_mapper.handle_key_event(key, *pressed)
+                        {
+                            error!("Failed to handle keyboard event: {}", e);
+                        }
                     }
 
                     // Process mouse events
@@ -585,7 +615,11 @@ impl SAideApp {
                                 continue;
                             }
 
+                            info!("Processing mouse button event: {:?} at {:?}", button, pos);
+
                             let (rel_x, rel_y) = self.video_relative_coords(*pos).unwrap();
+                            info!("Relative video coords: ({}, {})", rel_x, rel_y);
+
                             if let Some((device_x, device_y)) =
                                 self.coordinate_transform(rel_x, rel_y, physical_size)
                             {
@@ -596,6 +630,11 @@ impl SAideApp {
                                         error!("Failed to handle mouse button event: {}", e);
                                         anyhow::Ok(())
                                     });
+
+                                info!(
+                                    "Mouse button event at device coords: ({}, {})",
+                                    device_x, device_y
+                                );
                             }
                         } else if let egui::Event::MouseWheel {
                             modifiers: _,
@@ -677,6 +716,7 @@ impl eframe::App for SAideApp {
                     physical_size,
                     width,
                     height,
+                    capture_orientation,
                 )) => {
                     // Initialization successful
                     self.scrcpy = Some(scrcpy);
@@ -693,6 +733,8 @@ impl eframe::App for SAideApp {
 
                     self.video_width = width;
                     self.video_height = height;
+
+                    self.capture_orientation = capture_orientation;
 
                     self.init_state = InitState::Ready;
 
