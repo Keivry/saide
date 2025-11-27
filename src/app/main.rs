@@ -589,7 +589,7 @@ impl SAideApp {
                     if self.keyboard_mapping_enabled
                         && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
                     {
-                        info!("Processing keyboard event: {:?}", event);
+                        debug!("Processing keyboard event: {:?}", event);
                         if let egui::Event::Key {
                             key,
                             pressed,
@@ -618,7 +618,7 @@ impl SAideApp {
                                 continue;
                             }
 
-                            info!("Processing mouse button event: {:?} at {:?}", button, pos);
+                            debug!("Processing mouse button event: {:?} at {:?}", button, pos);
 
                             if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
                                 let button = MouseButton::from(*button);
@@ -629,7 +629,7 @@ impl SAideApp {
                                         anyhow::Ok(())
                                     });
 
-                                info!(
+                                debug!(
                                     "Mouse button event at device coords: ({}, {})",
                                     device_x, device_y
                                 );
@@ -648,7 +648,7 @@ impl SAideApp {
                                 continue;
                             }
 
-                            info!("Processing mouse wheel event: {:?} at {:?}", delta, pos);
+                            debug!("Processing mouse wheel event: {:?} at {:?}", delta, pos);
 
                             if self.in_video_rect(&pos)
                                 && let Some((device_x, device_y)) = self.coordinate_transform(&pos)
@@ -664,7 +664,7 @@ impl SAideApp {
                                     error!("Failed to handle wheel event: {}", e);
                                 }
 
-                                info!(
+                                debug!(
                                     "Mouse wheel event at device coords: ({}, {})",
                                     device_x, device_y
                                 );
