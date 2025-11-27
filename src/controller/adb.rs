@@ -3,8 +3,10 @@ use {
     anyhow::{Context, Result, anyhow},
     parking_lot::RwLock,
     std::{
-        io::Write,
+        io::{BufRead, BufReader, Write},
         process::{Child, ChildStdin, Command, Stdio},
+        sync::{Arc, Condvar, Mutex},
+        thread,
         time::Instant,
     },
     tracing::{info, warn},
@@ -22,6 +24,12 @@ pub struct AdbShell {
     last_activity: RwLock<Instant>,
     /// Device physical screen size
     screen_size: RwLock<Option<(u32, u32)>>,
+    /// Output buffer for shell responses (thread-safe)
+    output_buffer: Arc<Mutex<Vec<String>>>,
+    /// Condition variable for signaling new output
+    output_condvar: Arc<Condvar>,
+    /// Background thread handle
+    reader_thread: RwLock<Option<thread::JoinHandle<()>>>,
 }
 
 impl AdbShell {
@@ -33,6 +41,9 @@ impl AdbShell {
             connected: RwLock::new(false),
             last_activity: RwLock::new(Instant::now()),
             screen_size: RwLock::new(None),
+            output_buffer: Arc::new(Mutex::new(Vec::new())),
+            output_condvar: Arc::new(Condvar::new()),
+            reader_thread: RwLock::new(None),
         }
     }
 
@@ -63,6 +74,35 @@ impl AdbShell {
             .take()
             .ok_or_else(|| anyhow!("Failed to take stdin from adb shell process"))?;
 
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("Failed to take stdout from adb shell process"))?;
+
+        // Clear output buffer
+        {
+            let mut buffer = self.output_buffer.lock().unwrap();
+            buffer.clear();
+        }
+
+        // Start background reader thread (take ownership of stdout)
+        let output_buffer = Arc::clone(&self.output_buffer);
+        let output_condvar = Arc::clone(&self.output_condvar);
+        let reader_thread = thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                match line {
+                    Ok(line) => {
+                        let mut buffer = output_buffer.lock().unwrap();
+                        buffer.push(line);
+                        // Notify waiting threads
+                        output_condvar.notify_one();
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
         {
             self.child.write().replace(child);
             self.stdin.write().replace(stdin);
@@ -73,6 +113,7 @@ impl AdbShell {
 
             *self.last_activity.write() = Instant::now();
             *self.connected.write() = true;
+            *self.reader_thread.write() = Some(reader_thread);
         }
 
         info!("Successfully connected to ADB shell");
@@ -89,6 +130,14 @@ impl AdbShell {
             }
         }
 
+        // Join the reader thread
+        {
+            let mut reader_thread = self.reader_thread.write();
+            if let Some(thread) = reader_thread.take() {
+                drop(thread);
+            }
+        }
+
         {
             *self.connected.write() = false;
         }
@@ -98,10 +147,10 @@ impl AdbShell {
     }
 
     /// Check if connected to ADB shell
-    pub fn is_connected(&self) -> bool { self.connected.read().clone() }
+    pub fn is_connected(&self) -> bool { *self.connected.read() }
 
     /// Get device screen size
-    pub fn get_screen_size(&self) -> Option<(u32, u32)> { self.screen_size.read().clone() }
+    pub fn get_screen_size(&self) -> Option<(u32, u32)> { *self.screen_size.read() }
 
     /// Send input command to Android device
     pub fn send_input(&self, command: &AdbAction) -> Result<()> {
@@ -194,47 +243,119 @@ impl AdbShell {
         ))
     }
 
+    /// Get Android device screen orientation using existing shell connection
     pub fn get_screen_orientation(&self) -> Result<u32> {
+        // Check if shell is connected
+        if !self.is_connected() {
+            return Err(anyhow!("ADB shell not connected"));
+        }
+
+        // Generate unique marker using timestamp
+        static COUNTER: parking_lot::Mutex<u64> = parking_lot::Mutex::new(0);
+        let counter = {
+            let mut c = COUNTER.lock();
+            *c = c.wrapping_add(1);
+            *c
+        };
+
+        let marker = format!(
+            "SAIDE_ROTATION_{}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            counter
+        );
         {
             let mut stdin = self.stdin.write();
-            if let Some(stdin) = stdin.as_mut() {
-                stdin.write_all(b"dumpsys window displays | grep 'mCurrentRotation'\n")?;
-                stdin.flush()?;
-            }
-        }
-
-        {
-            let child = self.child.write();
-            let Some(child) = child.as_ref() else {
-                return Err(anyhow!("ADB shell child process not available"));
+            let Some(stdin) = stdin.as_mut() else {
+                return Err(anyhow!("ADB shell stdin not available"));
             };
 
-            let output = child
-                .wait_with_output()
-                .context("Failed to read dumpsys output")?;
-
-            let output_str = String::from_utf8_lossy(&output.stdout);
-
-            // Parse the output to find the current rotation
-            for line in output_str.lines() {
-                if line.contains("mCurrentRotation") {
-                    if let Some(rotation_part) = line.split('=').nth(1) {
-                        let rotation_str = rotation_part.trim();
-                        if let Ok(rotation) = rotation_str.parse::<u32>() {
-                            return Ok(match rotation {
-                                0 => 0,
-                                90 => 1,
-                                180 => 2,
-                                270 => 3,
-                                _ => return Err(anyhow!("Unknown rotation value: {}", rotation)),
-                            });
-                        }
-                    }
-                }
-            }
+            // Send command with unique marker
+            let cmd = format!(
+                "echo '{}'; dumpsys window displays | grep mCurrentRotation; echo 'SAIDE_END'\n",
+                marker
+            );
+            stdin.write_all(cmd.as_bytes())?;
+            stdin.flush()?;
         }
 
-        Ok(0) // Placeholder: Implement actual parsing of orientation from dumpsys output
+        // Wait for and parse response
+        let rotation =
+            self.wait_for_response_with_marker(&marker, std::time::Duration::from_millis(500))?;
+
+        Ok(rotation)
+    }
+
+    /// Wait for shell response with specific marker
+    fn wait_for_response_with_marker(
+        &self,
+        marker: &str,
+        timeout: std::time::Duration,
+    ) -> Result<u32> {
+        let start = std::time::Instant::now();
+
+        loop {
+            // Check timeout
+            if start.elapsed() > timeout {
+                return Err(anyhow!("Timeout waiting for shell response"));
+            }
+
+            // Lock buffer and check for marker
+            let buffer = self.output_buffer.lock().unwrap();
+            let lines: Vec<String> = buffer.clone();
+            drop(buffer);
+
+            // Look for our marker in recent output
+            let marker_idx = lines.iter().position(|line: &String| line.contains(marker));
+
+            if let Some(idx) = marker_idx {
+                // Found marker, collect all lines after it
+                let mut response_lines: Vec<String> = Vec::new();
+                for line in lines.iter().skip(idx + 1) {
+                    if line.contains("SAIDE_END") {
+                        break;
+                    }
+                    if !line.is_empty() {
+                        response_lines.push(line.clone());
+                    }
+                }
+
+                // Clear processed lines from buffer
+                {
+                    let mut buffer = self.output_buffer.lock().unwrap();
+                    if idx > 0 {
+                        buffer.drain(0..idx);
+                    }
+                }
+
+                // Parse rotation from response
+                for line in &response_lines {
+                    if line.contains("mCurrentRotation")
+                        && let Some(rotation_part) = line.split('=').nth(1)
+                    {
+                        let rotation_str = rotation_part.trim();
+                        // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
+                        return Ok(match rotation_str {
+                            "ROTATION_0" => 0,
+                            "ROTATION_90" => 1,
+                            "ROTATION_180" => 2,
+                            "ROTATION_270" => 3,
+                            other => return Err(anyhow!("Unknown rotation value: {}", other)),
+                        });
+                    }
+                }
+
+                return Err(anyhow!(
+                    "Failed to parse rotation from response: {:?}",
+                    response_lines
+                ));
+            }
+
+            // Wait a bit before checking again
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
 

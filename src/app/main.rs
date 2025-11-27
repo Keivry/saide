@@ -53,21 +53,6 @@ enum InitResult {
     Error(anyhow::Error),
 }
 
-// type InitResult = Result<
-//     (
-//         Scrcpy,
-//         Arc<RwLock<AdbShell>>,
-//         Option<KeyboardMapper>,
-//         Option<MouseMapper>,
-//         Receiver<Arc<Yu12Frame>>,
-//         (u32, u32),
-//         u32,
-//         u32,
-//         u32,
-//     ),
-//     anyhow::Error,
-// >;
-
 /// Initialization state enum
 #[derive(PartialEq)]
 enum InitState {

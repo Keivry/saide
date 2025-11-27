@@ -18,12 +18,6 @@ pub struct Device {
     pub model: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Position {
-    pub x: u32,
-    pub y: u32,
-}
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     Left,
@@ -58,17 +52,6 @@ impl Display for MouseButton {
         };
         write!(f, "{}", s)
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum AdbActionType {
-    Tap,
-    Swipe,
-    Key,
-    Back,
-    Home,
-    Menu,
-    Power,
 }
 
 /// ADB input command types
