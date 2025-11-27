@@ -493,40 +493,108 @@ impl SAideApp {
         }
     }
 
-    /// transform egui position to device coordinates
+    /// Transform egui position to device logical coordinates for ADB input
+    ///
+    /// Coordinate transformation chain:
+    /// 1. egui screen coords -> video display coords (considering user rotation)
+    /// 2. Inverse apply user rotation -> video original coords (scrcpy fixed output)
+    /// 3. Transform from video orientation to device current orientation -> ADB logical coords
+    ///
+    /// Note: ADB automatically handles the mapping from logical coords to physical touch coords,
+    /// so we only need to provide coords relative to the device's current display orientation.
     pub fn coordinate_transform(&self, pos: &egui::Pos2) -> Option<(u32, u32)> {
         if let Some(physical_size) = self.physical_size
             && let Some(video_rect) = &self.video_rect
         {
+            // Step 1: Get relative coordinates in video display rect
             let rel_x = pos.x - video_rect.left();
             let rel_y = pos.y - video_rect.top();
 
             let video_width = video_rect.width();
             let video_height = video_rect.height();
 
-            let physical_width = physical_size.0 as f32;
-
-            let scale = if self.rotation & 1 == 0 {
-                physical_width / video_height
-            } else {
-                physical_width / video_width
-            };
-
-            // Apply rotation transform to video coordinates
-            // let (rotate_x, rotate_y) = match (self.capture_orientation + self.rotation) % 4 {
-            let (rotate_x, rotate_y) = match self.rotation % 4 {
+            // Step 2: Inverse apply user rotation to get video original coordinates
+            // This transforms from rotated display back to scrcpy's fixed output orientation
+            //
+            // Note: video_width/height here are display rect dimensions (after rotation)
+            // Original video dimensions need to be reconstructed based on rotation
+            let (video_x, video_y, video_w, video_h) = match self.rotation % 4 {
                 // 0 degrees - no rotation
-                0 => (rel_x, rel_y),
-                // 90 degrees clockwise - transpose and flip X
-                1 => (rel_y, video_width - rel_x),
-                // 180 degrees - flip both axes
-                2 => (video_width - rel_x, video_height - rel_y),
-                // 270 degrees clockwise - transpose and flip Y
-                3 => (video_height - rel_y, rel_x),
+                // Display: W×H, Original: W×H
+                0 => (rel_x, rel_y, video_width, video_height),
+
+                // 90 degrees clockwise rotation
+                // Display: H×W, Original: W×H
+                // Inverse transform: (x', y') => (y', H - x')
+                1 => (rel_y, video_width - rel_x, video_height, video_width),
+
+                // 180 degrees rotation
+                // Display: W×H, Original: W×H
+                // Inverse transform: (x', y') => (W - x', H - y')
+                2 => (
+                    video_width - rel_x,
+                    video_height - rel_y,
+                    video_width,
+                    video_height,
+                ),
+
+                // 270 degrees clockwise rotation
+                // Display: H×W, Original: W×H
+                // Inverse transform: (x', y') => (W - y', x')
+                3 => (video_height - rel_y, rel_x, video_height, video_width),
+
                 _ => return None,
             };
 
-            return Some(((rotate_x * scale) as u32, (rotate_y * scale) as u32));
+            // Step 3: Transform from video orientation to device current orientation
+            //
+            // Video orientation: natural orientation + counter-clockwise capture_orientation
+            // Device current orientation: natural orientation + clockwise orientation
+            // Total rotation needed: clockwise (capture_orientation + orientation)
+            //
+            // This accounts for:
+            // - Video is captured with fixed orientation (capture_orientation counter-clockwise)
+            // - Device may be rotated to different orientation (orientation clockwise)
+            // - ADB expects coords relative to device's current display orientation
+            let total_rotation = (self.capture_orientation + self.orientation) % 4;
+
+            // Calculate device logical size at current orientation
+            let (device_w, device_h) = if self.orientation & 1 == 0 {
+                (physical_size.0 as f32, physical_size.1 as f32)
+            } else {
+                (physical_size.1 as f32, physical_size.0 as f32)
+            };
+
+            // Apply rotation and scaling
+            let (device_x, device_y) = match total_rotation {
+                // 0 degrees - direct scale
+                0 => {
+                    let scale_x = device_w / video_w;
+                    let scale_y = device_h / video_h;
+                    (video_x * scale_x, video_y * scale_y)
+                }
+                // 90 degrees clockwise - transpose and flip X
+                1 => {
+                    let scale_x = device_w / video_h;
+                    let scale_y = device_h / video_w;
+                    (video_y * scale_x, device_h - video_x * scale_y)
+                }
+                // 180 degrees - flip both axes
+                2 => {
+                    let scale_x = device_w / video_w;
+                    let scale_y = device_h / video_h;
+                    (device_w - video_x * scale_x, device_h - video_y * scale_y)
+                }
+                // 270 degrees clockwise - transpose and flip Y
+                3 => {
+                    let scale_x = device_w / video_h;
+                    let scale_y = device_h / video_w;
+                    (device_w - video_y * scale_x, video_x * scale_y)
+                }
+                _ => return None,
+            };
+
+            return Some((device_x as u32, device_y as u32));
         }
 
         None
