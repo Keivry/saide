@@ -78,31 +78,38 @@ static TOOLBAR_BUTTONS: Lazy<Vec<ToolbarButton>> = Lazy::new(|| {
 /// Main UI state
 pub struct SAideApp {
     config: Arc<SAideConfig>,
+
+    /// Scrcpy process manager
     scrcpy: Option<Scrcpy>,
 
+    /// ADB shell interface
     adb_shell: Option<Arc<RwLock<AdbShell>>>,
+
+    /// Mouse input mapper
     mouse_mapper: Option<MouseMapper>,
+    /// Keyboard input mapper
     keyboard_mapper: Option<KeyboardMapper>,
 
+    /// Video frame receiver
     frame_rx: Option<Receiver<Arc<Yu12Frame>>>,
+    /// Latest video frame
     frame: Option<Arc<Yu12Frame>>,
-
+    /// Timestamp of last received frame
     last_frame_instant: Option<Instant>,
 
-    // Android device physical screen size
+    /// Device physical screen size
     physical_size: Option<(u32, u32)>,
 
-    // V4l2 video dimensions
     video_width: u32,
     video_height: u32,
 
-    // V4l2 capture orientation
+    // V4l2 capture orientation (0-3)
     capture_orientation: u32,
 
-    /// Video display rectangle
+    /// Video display rectangle in egui coordinates
     video_rect: Option<egui::Rect>,
 
-    // Video rotation state (0-3)
+    // Video rotation state (0-3) without capture orientation
     rotation: u32,
 
     // Current FPS
@@ -121,6 +128,7 @@ pub struct SAideApp {
 
 impl SAideApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: SAideConfig) -> Self {
+        // Register YUV render resources with wgpu renderer
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
             let resources = YuvRenderResources::new(&wgpu_state.device, wgpu_state.target_format);
             wgpu_state
@@ -130,6 +138,7 @@ impl SAideApp {
                 .insert(resources);
         }
 
+        // Determine initial mapping states
         let keyboard_mapping_enabled = config
             .mappings
             .keyboard
@@ -165,6 +174,7 @@ impl SAideApp {
         }
     }
 
+    /// Get effective video dimensions considering rotation
     fn effective_dimensions(&self) -> (u32, u32) {
         if self.rotation & 1 == 0 {
             (self.video_width, self.video_height)
@@ -313,16 +323,19 @@ impl SAideApp {
                 scrcpy.terminate().ok();
                 return Err(e);
             }
+            debug!("Scrcpy process is ready");
 
             // Initialize ADB shell
             let mut adb_shell = AdbShell::new();
             adb_shell.connect()?;
             let adb_shell = Arc::new(RwLock::new(adb_shell));
+            debug!("ADB shell connected");
 
             // Initialize keyboard mapper
             let keyboard_mapper = config.mappings.keyboard.clone().map(|keyboard_config| {
                 KeyboardMapper::new(keyboard_config.clone(), adb_shell.clone())
             });
+            debug!("Keyboard mapper initialized");
 
             // Initialize mouse mapper
             let mouse_mapper = config
@@ -332,12 +345,17 @@ impl SAideApp {
                 .unwrap_or_default()
                 .initial_state
                 .then_some(MouseMapper::new(adb_shell.clone()));
+            debug!("Mouse mapper initialized");
 
             let physical_size = {
                 adb_shell.read().get_screen_size().ok_or_else(|| {
                     anyhow!("Failed to get device physical screen size from ADB shell")
                 })
             }?;
+            debug!(
+                "Device physical screen size: {}x{}",
+                physical_size.0, physical_size.1
+            );
 
             // Channel for frame transfer
             let (tx, rx) = bounded::<Arc<Yu12Frame>>(2);
@@ -358,10 +376,10 @@ impl SAideApp {
                     return Err(e);
                 }
             };
+            debug!("V4L2 capture initialized");
 
             // Get capture dimensions and orientation
             let (width, height) = capture.dimensions();
-            info!("Capture started: {}x{}", width, height);
             let capture_orientation = config
                 .scrcpy
                 .v4l2
@@ -369,7 +387,12 @@ impl SAideApp {
                 .parse::<u32>()
                 .unwrap_or(0)
                 / 90;
-            info!("Capture orientation: {}°", capture_orientation * 90);
+            debug!(
+                "V4L2 capture dimensions: {}x{}, orientation: {}",
+                width,
+                height,
+                capture_orientation * 90
+            );
 
             // Start capture thread
             let _ = thread::spawn(move || {
@@ -385,6 +408,7 @@ impl SAideApp {
                     }
                 }
             });
+            debug!("V4L2 capture thread started");
 
             Ok((
                 scrcpy,
@@ -523,20 +547,24 @@ impl SAideApp {
             let video_width = video_rect.width();
             let video_height = video_rect.height();
 
-            let scale = physical_size.0 as f32 / video_width;
+            let physical_width = physical_size.0 as f32;
 
-            let rotation = ((self.rotation * 90 + self.capture_orientation) % 360) % 4;
+            let scale = if self.rotation & 1 == 0 {
+                physical_width / video_height
+            } else {
+                physical_width / video_width
+            };
 
             // Apply rotation transform to video coordinates
-            let (rotate_x, rotate_y) = match rotation {
+            let (rotate_x, rotate_y) = match (self.capture_orientation + self.rotation) % 4 {
                 // 0 degrees - no rotation
                 0 => (rel_x, rel_y),
                 // 90 degrees clockwise - transpose and flip X
-                1 => (video_height - rel_y, rel_x),
+                1 => (rel_y, video_width - rel_x),
                 // 180 degrees - flip both axes
                 2 => (video_width - rel_x, video_height - rel_y),
                 // 270 degrees clockwise - transpose and flip Y
-                3 => (rel_y, video_width - rel_x),
+                3 => (video_height - rel_y, rel_x),
                 _ => return None,
             };
 
@@ -626,7 +654,7 @@ impl SAideApp {
                                 && let Some((device_x, device_y)) = self.coordinate_transform(&pos)
                             {
                                 let dir = match delta {
-                                    egui::Vec2 { x: _, y } if *y > 0.0 => WheelDirection::Up,
+                                    egui::Vec2 { x: _, y } if *y < 0.0 => WheelDirection::Up,
                                     _ => WheelDirection::Down,
                                 };
 
