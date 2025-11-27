@@ -9,7 +9,7 @@ use {
         thread,
         time::Instant,
     },
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 /// ADB Shell connection manager for sending input commands to Android device
@@ -250,7 +250,7 @@ impl AdbShell {
             return Err(anyhow!("ADB shell not connected"));
         }
 
-        // Generate unique marker using timestamp
+        // Generate unique marker using timestamp and counter
         static COUNTER: parking_lot::Mutex<u64> = parking_lot::Mutex::new(0);
         let counter = {
             let mut c = COUNTER.lock();
@@ -258,14 +258,8 @@ impl AdbShell {
             *c
         };
 
-        let marker = format!(
-            "SAIDE_ROTATION_{}_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-            counter
-        );
+        let marker = format!("SAIDE_ROTATION_{}", counter);
+
         {
             let mut stdin = self.stdin.write();
             let Some(stdin) = stdin.as_mut() else {
@@ -274,16 +268,19 @@ impl AdbShell {
 
             // Send command with unique marker
             let cmd = format!(
-                "echo '{}'; dumpsys window displays | grep mCurrentRotation; echo 'SAIDE_END'\n",
-                marker
+                "echo {}\n dumpsys window displays | grep mCurrentRotation\n echo END_{}\n",
+                marker, counter
             );
             stdin.write_all(cmd.as_bytes())?;
             stdin.flush()?;
         }
 
         // Wait for and parse response
-        let rotation =
-            self.wait_for_response_with_marker(&marker, std::time::Duration::from_millis(500))?;
+        let rotation = self.wait_for_response_with_marker(
+            &marker,
+            &counter,
+            std::time::Duration::from_millis(1500),
+        )?;
 
         Ok(rotation)
     }
@@ -292,9 +289,11 @@ impl AdbShell {
     fn wait_for_response_with_marker(
         &self,
         marker: &str,
+        counter: &u64,
         timeout: std::time::Duration,
     ) -> Result<u32> {
         let start = std::time::Instant::now();
+        let end_marker = format!("END_{}", counter);
 
         loop {
             // Check timeout
@@ -307,43 +306,56 @@ impl AdbShell {
             let lines: Vec<String> = buffer.clone();
             drop(buffer);
 
+            // Debug: print all lines in buffer
+            if lines.len() > 0 {
+                debug!("Buffer content: {:?}", lines);
+            }
+
             // Look for our marker in recent output
-            let marker_idx = lines.iter().position(|line: &String| line.contains(marker));
+            let marker_idx = lines.iter().position(|line: &String| line.trim() == marker);
 
             if let Some(idx) = marker_idx {
+                debug!("Found marker at index {}, collecting response...", idx);
+
                 // Found marker, collect all lines after it
                 let mut response_lines: Vec<String> = Vec::new();
                 for line in lines.iter().skip(idx + 1) {
-                    if line.contains("SAIDE_END") {
+                    let line_trimmed = line.trim();
+                    if line_trimmed == end_marker {
+                        debug!("Found end marker, stopping collection");
                         break;
                     }
-                    if !line.is_empty() {
-                        response_lines.push(line.clone());
+                    if !line_trimmed.is_empty() {
+                        debug!("Adding response line: {}", line_trimmed);
+                        response_lines.push(line_trimmed.to_string());
                     }
                 }
 
-                // Clear processed lines from buffer
+                // Clear processed lines from buffer (including marker and end marker)
                 {
                     let mut buffer = self.output_buffer.lock().unwrap();
-                    if idx > 0 {
-                        buffer.drain(0..idx);
+                    let clear_to = (idx + response_lines.len() + 2).min(buffer.len());
+                    if clear_to > 0 {
+                        buffer.drain(0..clear_to);
                     }
                 }
+
+                debug!("Response lines collected: {:?}", response_lines);
 
                 // Parse rotation from response
                 for line in &response_lines {
-                    if line.contains("mCurrentRotation")
-                        && let Some(rotation_part) = line.split('=').nth(1)
-                    {
-                        let rotation_str = rotation_part.trim();
-                        // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
-                        return Ok(match rotation_str {
-                            "ROTATION_0" => 0,
-                            "ROTATION_90" => 1,
-                            "ROTATION_180" => 2,
-                            "ROTATION_270" => 3,
-                            other => return Err(anyhow!("Unknown rotation value: {}", other)),
-                        });
+                    if line.contains("mCurrentRotation") {
+                        if let Some(rotation_part) = line.split('=').nth(1) {
+                            let rotation_str = rotation_part.trim();
+                            // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
+                            return Ok(match rotation_str {
+                                "ROTATION_0" => 0,
+                                "ROTATION_90" => 1,
+                                "ROTATION_180" => 2,
+                                "ROTATION_270" => 3,
+                                other => return Err(anyhow!("Unknown rotation value: {}", other)),
+                            });
+                        }
                     }
                 }
 
@@ -354,7 +366,7 @@ impl AdbShell {
             }
 
             // Wait a bit before checking again
-            thread::sleep(std::time::Duration::from_millis(10));
+            thread::sleep(std::time::Duration::from_millis(30));
         }
     }
 }
