@@ -6,45 +6,31 @@ mod v4l2;
 use {
     app::SAideApp,
     config::SAideConfig,
-    tracing::{info, warn},
+    std::fs::read_to_string,
+    tracing::info,
     tracing_subscriber::{EnvFilter, fmt, prelude::*},
 };
 
 const CONFIG_PATH: &str = "config.toml";
 
+const WGPU_LOG_LEVEL: &str = "error";
+
 fn main() -> anyhow::Result<()> {
+    let config = toml::from_str::<SAideConfig>(&read_to_string(CONFIG_PATH)?)?;
+
     tracing_subscriber::registry()
+        .with(EnvFilter::new(
+            config.logging.level.clone() + ",wgpu_hal=" + WGPU_LOG_LEVEL,
+        ))
         .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
         .init();
 
     info!("SAide starting...");
 
-    let config = match SAideConfig::load_from_file(CONFIG_PATH) {
-        Ok(cfg) => {
-            info!("Loaded configuration from {}", CONFIG_PATH);
-            cfg
-        }
-        Err(e) => {
-            warn!(
-                "Failed to load config from {}: {}, using default config",
-                CONFIG_PATH, e
-            );
-            SAideConfig::from_toml_value(toml::Value::Table(toml::value::Table::new()))
-                .map_err(|e| anyhow::anyhow!("Failed to create default config: {}", e))?
-        }
-    };
-
     info!("V4L2 device: {}", config.scrcpy.v4l2.device);
-    info!("Video backend: {}", config.video.backend);
+    info!("Video backend: {}", config.gpu.backend);
     info!("Max FPS: {}", config.scrcpy.video.max_fps);
     info!("Logging level: {}", config.logging.level);
 
-    // Re-initialize tracing with the configured logging level
-    tracing_subscriber::registry()
-        .with(EnvFilter::new(config.logging.level.clone()))
-        .try_init()
-        .ok();
-
-    SAideApp::start(&config)
+    SAideApp::start(config)
 }

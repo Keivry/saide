@@ -10,6 +10,8 @@ use {
     },
 };
 
+pub type Key = egui::Key;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
     pub id: String,
@@ -58,8 +60,6 @@ impl Display for MouseButton {
     }
 }
 
-pub type Key = egui::Key;
-
 #[derive(Debug, Serialize, Deserialize)]
 pub enum AdbActionType {
     Tap,
@@ -99,10 +99,51 @@ pub enum AdbAction {
 
     Ignore,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct KeyMapping {
-    #[serde(flatten)]
     inner: HashMap<Key, AdbAction>,
+}
+
+impl<'de> Deserialize<'de> for KeyMapping {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawMapping {
+            key: Key,
+            #[serde(flatten)]
+            action: AdbAction,
+        }
+
+        let raw_mappings: Vec<RawMapping> = Deserialize::deserialize(deserializer)?;
+        let mut inner = HashMap::new();
+        raw_mappings.into_iter().for_each(|rm| {
+            inner.insert(rm.key, rm.action);
+        });
+        Ok(KeyMapping { inner })
+    }
+}
+
+impl Serialize for KeyMapping {
+    fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
+    where
+        Ser: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct RawMapping<'a> {
+            key: &'a Key,
+            #[serde(flatten)]
+            action: &'a AdbAction,
+        }
+
+        let raw_mappings: Vec<RawMapping> = self
+            .inner
+            .iter()
+            .map(|(key, action)| RawMapping { key, action })
+            .collect();
+        raw_mappings.serialize(serializer)
+    }
 }
 
 impl Deref for KeyMapping {
@@ -139,33 +180,20 @@ impl Default for MouseConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MappingConfig {
     #[serde(
         serialize_with = "serialize_option_arc",
         deserialize_with = "deserialize_option_arc"
     )]
+    #[serde(default)]
     pub keyboard: Option<Arc<KeyboardConfig>>,
     #[serde(
         serialize_with = "serialize_option_arc",
         deserialize_with = "deserialize_option_arc"
     )]
+    #[serde(default = "default_mouse_config")]
     pub mouse: Option<Arc<MouseConfig>>,
 }
 
-impl MappingConfig {
-    pub fn from_toml_value(value: toml::Value) -> Result<Self, String> {
-        value
-            .try_into()
-            .map_err(|e| format!("Failed to parse MappingConfig: {}", e))
-    }
-}
-
-impl Default for MappingConfig {
-    fn default() -> Self {
-        Self {
-            keyboard: None,
-            mouse: Some(Arc::new(MouseConfig::default())),
-        }
-    }
-}
+fn default_mouse_config() -> Option<Arc<MouseConfig>> { Some(Arc::new(MouseConfig::default())) }

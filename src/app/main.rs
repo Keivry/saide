@@ -8,7 +8,7 @@ use {
         v4l2::{V4l2Capture, Yu12Frame, YuvRenderResources, new_yuv_render_callback},
     },
     anyhow::anyhow,
-    crossbeam_channel::{Receiver, Sender, bounded},
+    crossbeam_channel::{Receiver, bounded},
     eframe::{
         egui::{self, Button, Color32, RichText},
         egui_wgpu,
@@ -37,20 +37,32 @@ const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
 
 /// Initialization result type
-type InitResult = Result<
-    (
-        Scrcpy,
-        Arc<RwLock<AdbShell>>,
-        Option<KeyboardMapper>,
-        Option<MouseMapper>,
-        Receiver<Arc<Yu12Frame>>,
-        (u32, u32),
-        u32,
-        u32,
-        u32,
-    ),
-    anyhow::Error,
->;
+enum InitResult {
+    Scrcpy(Scrcpy),
+    AdbShell(Arc<RwLock<AdbShell>>),
+    KeyboardMapper(Option<KeyboardMapper>),
+    MouseMapper(Option<MouseMapper>),
+    FrameReceiver(Receiver<Arc<Yu12Frame>>),
+    PhysicalSize((u32, u32)),
+    VideoDimensions((u32, u32)),
+    CaptureOrientation(u32),
+    Error(anyhow::Error),
+}
+
+// type InitResult = Result<
+//     (
+//         Scrcpy,
+//         Arc<RwLock<AdbShell>>,
+//         Option<KeyboardMapper>,
+//         Option<MouseMapper>,
+//         Receiver<Arc<Yu12Frame>>,
+//         (u32, u32),
+//         u32,
+//         u32,
+//         u32,
+//     ),
+//     anyhow::Error,
+// >;
 
 /// Initialization state enum
 #[derive(PartialEq)]
@@ -117,6 +129,7 @@ pub struct SAideApp {
 
     /// Initialization state machine
     init_state: InitState,
+    init_instant: Option<Instant>,
     init_rx: Option<Receiver<InitResult>>,
 
     /// Keyboard mapping switch
@@ -168,9 +181,201 @@ impl SAideApp {
             rotation: 0,
             fps: 0.0,
             init_state: InitState::NotStarted,
+            init_instant: None,
             init_rx: None,
             keyboard_mapping_enabled,
             mouse_mapping_enabled,
+        }
+    }
+
+    /// Background initialization function
+    fn init(&mut self) {
+        self.init_state = InitState::InProgress;
+        self.init_instant = Some(Instant::now());
+
+        let (tx, rx) = bounded::<InitResult>(8);
+        self.init_rx = Some(rx);
+
+        // Scrcpy initialization
+        let config = self.config.clone();
+        let mapper_config = self.config.clone();
+        let scrcpy_tx = tx.clone();
+        let mapper_tx = tx.clone();
+        thread::spawn(move || -> Result<(), anyhow::Error> {
+            // Initialize scrcpy manager
+            let mut scrcpy = Scrcpy::new(config.scrcpy.clone());
+
+            if let Err(e) = scrcpy
+                .spawn()?
+                .wait_for_ready(Duration::from_secs(config.timeout))
+            {
+                scrcpy.terminate().ok();
+                scrcpy_tx.send(InitResult::Error(anyhow!("Failed to start scrcpy: {}", e)))?;
+            }
+            debug!("Scrcpy process started and ready");
+
+            scrcpy_tx.send(InitResult::Scrcpy(scrcpy))?;
+            Ok(())
+        });
+
+        // ADB shell and input mappers initialization
+        thread::spawn(move || -> Result<(), anyhow::Error> {
+            // Initialize ADB shell
+            let mut adb_shell = AdbShell::new();
+            adb_shell.connect()?;
+            let adb_shell = Arc::new(RwLock::new(adb_shell));
+            debug!("ADB shell connected");
+
+            // Initialize keyboard mapper
+            let mut keyboard_mapper =
+                mapper_config
+                    .mappings
+                    .keyboard
+                    .clone()
+                    .map(|keyboard_config| {
+                        KeyboardMapper::new(keyboard_config.clone(), adb_shell.clone())
+                    });
+            debug!("Keyboard mapper initialized");
+
+            // TODO: Set default profile if specified
+            if let Some(keyboard_mapper) = keyboard_mapper.as_mut()
+                && keyboard_mapper.get_profile_count() > 0
+            {
+                info!("Setting default keyboard profile to index 0");
+                keyboard_mapper.set_active_profile(0);
+            }
+
+            // Initialize mouse mapper
+            let mouse_mapper = mapper_config
+                .mappings
+                .mouse
+                .clone()
+                .unwrap_or_default()
+                .initial_state
+                .then_some(MouseMapper::new(adb_shell.clone()));
+            debug!("Mouse mapper initialized");
+
+            // Get device physical screen size
+            let physical_size = {
+                adb_shell.read().get_screen_size().ok_or_else(|| {
+                    anyhow!("Failed to get device physical screen size from ADB shell")
+                })
+            }?;
+            debug!(
+                "Device physical screen size: {}x{}",
+                physical_size.0, physical_size.1
+            );
+
+            mapper_tx.send(InitResult::AdbShell(adb_shell))?;
+            mapper_tx.send(InitResult::KeyboardMapper(keyboard_mapper))?;
+            mapper_tx.send(InitResult::MouseMapper(mouse_mapper))?;
+            mapper_tx.send(InitResult::PhysicalSize(physical_size))?;
+            Ok(())
+        });
+
+        // V4L2 capture initialization
+        let v4l2_tx = tx.clone();
+        let v4l2_config = self.config.clone();
+        thread::spawn(move || -> Result<(), anyhow::Error> {
+            // Channel for frame transfer
+            let (tx, rx) = bounded::<Arc<Yu12Frame>>(2);
+
+            let mut capture = match V4l2Capture::new(
+                &v4l2_config.scrcpy.v4l2.device,
+                Duration::from_secs(v4l2_config.timeout),
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Failed to initialize V4L2 capture");
+                    return Err(e);
+                }
+            };
+            debug!("V4L2 capture initialized");
+
+            // Get capture dimensions and orientation
+            let (width, height) = capture.dimensions();
+            let capture_orientation = v4l2_config.scrcpy.v4l2.capture_orientation / 90;
+            debug!(
+                "V4L2 capture dimensions: {}x{}, orientation: {}",
+                width,
+                height,
+                capture_orientation * 90
+            );
+
+            // Start capture thread
+            let _ = thread::spawn(move || {
+                loop {
+                    match capture.capture_frame() {
+                        Ok(frame) => {
+                            let _ = tx.try_send(Arc::new(frame));
+                        }
+                        Err(e) => {
+                            error!("Capture error: {}", e);
+                            break;
+                        }
+                    }
+                }
+            });
+            debug!("V4L2 capture thread started");
+
+            v4l2_tx.send(InitResult::FrameReceiver(rx))?;
+            v4l2_tx.send(InitResult::VideoDimensions((width, height)))?;
+            v4l2_tx.send(InitResult::CaptureOrientation(capture_orientation))?;
+            Ok(())
+        });
+    }
+
+    /// Check initialization progress and update state
+    fn check_init_stage(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.init_rx {
+            while let Ok(result) = rx.try_recv() {
+                match result {
+                    InitResult::Scrcpy(scrcpy) => {
+                        self.scrcpy = Some(scrcpy);
+                    }
+                    InitResult::AdbShell(adb_shell) => {
+                        self.adb_shell = Some(adb_shell);
+                    }
+                    InitResult::KeyboardMapper(keyboard_mapper) => {
+                        self.keyboard_mapper = keyboard_mapper;
+                    }
+                    InitResult::MouseMapper(mouse_mapper) => {
+                        self.mouse_mapper = mouse_mapper;
+                    }
+                    InitResult::FrameReceiver(frame_rx) => {
+                        self.frame_rx = Some(frame_rx);
+                    }
+                    InitResult::PhysicalSize(size) => {
+                        self.physical_size = Some(size);
+                    }
+                    InitResult::VideoDimensions((width, height)) => {
+                        self.video_width = width;
+                        self.video_height = height;
+                    }
+                    InitResult::CaptureOrientation(orientation) => {
+                        self.capture_orientation = orientation;
+                    }
+                    InitResult::Error(e) => {
+                        error!("Initialization error: {}", e);
+                        self.init_state = InitState::Failed;
+                        return;
+                    }
+                }
+            }
+
+            // Check if all components are initialized
+            if self.scrcpy.is_some()
+                && self.adb_shell.is_some()
+                && self.frame_rx.is_some()
+                && self.video_width > 0
+                && self.video_height > 0
+            {
+                self.init_state = InitState::Ready;
+                info!("Initialization completed successfully");
+
+                // Resize window to match video dimensions
+                self.resize(ctx);
+            }
         }
     }
 
@@ -196,6 +401,200 @@ impl SAideApp {
     fn rotate(&mut self, ctx: &egui::Context) {
         self.rotation = (self.rotation + 1) % 4;
         self.resize(ctx);
+    }
+
+    pub fn start(config: SAideConfig) -> anyhow::Result<()> {
+        // Run main GUI application
+        let options = eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_title("SAide")
+                .with_inner_size([
+                    DEFAULT_WIDTH as f32 + TOOLBAR_WIDTH,
+                    DEFAULT_HEIGHT as f32 + STATUSBAR_HEIGHT,
+                ]),
+            renderer: eframe::Renderer::Wgpu,
+            wgpu_options: egui_wgpu::WgpuConfiguration {
+                // Use AutoVsync/AutoNoVsync based on config
+                present_mode: if config.gpu.vsync {
+                    wgpu::PresentMode::AutoVsync
+                } else {
+                    wgpu::PresentMode::AutoNoVsync
+                },
+
+                wgpu_setup: egui_wgpu::WgpuSetup::from(egui_wgpu::WgpuSetupCreateNew {
+                    instance_descriptor: wgpu::InstanceDescriptor {
+                        backends: (&config.gpu.backend).into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+
+                // Request low latency for real-time video
+                desired_maximum_frame_latency: Some(1),
+
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        eframe::run_native(
+            "SAide",
+            options,
+            Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, config)))),
+        )
+        .map_err(|e| anyhow!("eframe error: {}", e))
+    }
+
+    // Check if position is within video rectangle
+    fn is_in_video_rect(&self, pos: &egui::Pos2) -> bool {
+        if let Some(video_rect) = &self.video_rect {
+            pos.x >= video_rect.left()
+                && pos.x <= video_rect.right()
+                && pos.y >= video_rect.top()
+                && pos.y <= video_rect.bottom()
+        } else {
+            false
+        }
+    }
+
+    /// transform egui position to device coordinates
+    pub fn coordinate_transform(&self, pos: &egui::Pos2) -> Option<(u32, u32)> {
+        if let Some(physical_size) = self.physical_size
+            && let Some(video_rect) = &self.video_rect
+        {
+            let rel_x = pos.x - video_rect.left();
+            let rel_y = pos.y - video_rect.top();
+
+            let video_width = video_rect.width();
+            let video_height = video_rect.height();
+
+            let physical_width = physical_size.0 as f32;
+
+            let scale = if self.rotation & 1 == 0 {
+                physical_width / video_height
+            } else {
+                physical_width / video_width
+            };
+
+            // Apply rotation transform to video coordinates
+            let (rotate_x, rotate_y) = match (self.capture_orientation + self.rotation) % 4 {
+                // 0 degrees - no rotation
+                0 => (rel_x, rel_y),
+                // 90 degrees clockwise - transpose and flip X
+                1 => (rel_y, video_width - rel_x),
+                // 180 degrees - flip both axes
+                2 => (video_width - rel_x, video_height - rel_y),
+                // 270 degrees clockwise - transpose and flip Y
+                3 => (video_height - rel_y, rel_x),
+                _ => return None,
+            };
+
+            return Some(((rotate_x * scale) as u32, (rotate_y * scale) as u32));
+        }
+
+        None
+    }
+
+    /// Process input events for mouse and keyboard
+    fn process_input_events(&mut self, ctx: &egui::Context) {
+        if self.init_state != InitState::Ready {
+            debug!("Skipping input processing - not initialized");
+            return;
+        }
+
+        ctx.input(|input| {
+            // Handle mouse button events
+            for event in &input.events {
+                if self.init_state == InitState::Ready {
+                    // Process keyboard events
+                    if self.keyboard_mapping_enabled
+                        && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
+                    {
+                        debug!("Processing keyboard event: {:?}", event);
+                        if let egui::Event::Key {
+                            key,
+                            pressed,
+                            modifiers: _,
+                            repeat: _,
+                            physical_key: _,
+                        } = event
+                            && let Err(e) = keyboard_mapper.handle_key_event(key, *pressed)
+                        {
+                            error!("Failed to handle keyboard event: {}", e);
+                        }
+                    }
+
+                    // Process mouse events
+                    if self.mouse_mapping_enabled
+                        && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
+                    {
+                        if let egui::Event::PointerButton {
+                            button,
+                            pressed,
+                            pos,
+                            ..
+                        } = event
+                        {
+                            if !self.is_in_video_rect(pos) {
+                                continue;
+                            }
+
+                            debug!("Processing mouse button event: {:?} at {:?}", button, pos);
+
+                            if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
+                                let button = MouseButton::from(*button);
+                                let _ = mouse_mapper
+                                    .handle_button_event(button, *pressed, device_x, device_y)
+                                    .or_else(|e| {
+                                        error!("Failed to handle mouse button event: {}", e);
+                                        anyhow::Ok(())
+                                    });
+
+                                debug!(
+                                    "Mouse button event at device coords: ({}, {})",
+                                    device_x, device_y
+                                );
+                            }
+                        } else if let egui::Event::MouseWheel {
+                            modifiers: _,
+                            unit: _,
+                            delta,
+                            ..
+                        } = event
+                        {
+                            // get mouse position
+                            let pos = input.pointer.hover_pos().unwrap_or_default();
+
+                            if !self.is_in_video_rect(&pos) {
+                                continue;
+                            }
+
+                            debug!("Processing mouse wheel event: {:?} at {:?}", delta, pos);
+
+                            if self.is_in_video_rect(&pos)
+                                && let Some((device_x, device_y)) = self.coordinate_transform(&pos)
+                            {
+                                let dir = match delta {
+                                    egui::Vec2 { x: _, y } if *y < 0.0 => WheelDirection::Up,
+                                    _ => WheelDirection::Down,
+                                };
+
+                                if let Err(e) =
+                                    mouse_mapper.handle_wheel_event(device_x, device_y, dir)
+                                {
+                                    error!("Failed to handle wheel event: {}", e);
+                                }
+
+                                debug!(
+                                    "Mouse wheel event at device coords: ({}, {})",
+                                    device_x, device_y
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Draw the toolbar on the left side
@@ -297,135 +696,6 @@ impl SAideApp {
         }
     }
 
-    /// Start background initialization
-    fn start_init(&mut self) {
-        self.init_state = InitState::InProgress;
-
-        let config = self.config.clone();
-        let (tx, rx) = bounded::<InitResult>(1);
-        self.init_rx = Some(rx);
-
-        thread::spawn(move || {
-            Self::background_init(config, tx);
-        });
-    }
-
-    /// Background initialization function
-    fn background_init(config: Arc<SAideConfig>, result_tx: Sender<InitResult>) {
-        let result = (|| -> anyhow::Result<_> {
-            // Initialize scrcpy manager
-            let mut scrcpy = Scrcpy::new(config.scrcpy.clone());
-
-            if let Err(e) = scrcpy
-                .spawn()?
-                .wait_for_ready(Duration::from_secs(config.timeout))
-            {
-                scrcpy.terminate().ok();
-                return Err(e);
-            }
-            debug!("Scrcpy process is ready");
-
-            // Initialize ADB shell
-            let mut adb_shell = AdbShell::new();
-            adb_shell.connect()?;
-            let adb_shell = Arc::new(RwLock::new(adb_shell));
-            debug!("ADB shell connected");
-
-            // Initialize keyboard mapper
-            let keyboard_mapper = config.mappings.keyboard.clone().map(|keyboard_config| {
-                KeyboardMapper::new(keyboard_config.clone(), adb_shell.clone())
-            });
-            debug!("Keyboard mapper initialized");
-
-            // Initialize mouse mapper
-            let mouse_mapper = config
-                .mappings
-                .mouse
-                .clone()
-                .unwrap_or_default()
-                .initial_state
-                .then_some(MouseMapper::new(adb_shell.clone()));
-            debug!("Mouse mapper initialized");
-
-            let physical_size = {
-                adb_shell.read().get_screen_size().ok_or_else(|| {
-                    anyhow!("Failed to get device physical screen size from ADB shell")
-                })
-            }?;
-            debug!(
-                "Device physical screen size: {}x{}",
-                physical_size.0, physical_size.1
-            );
-
-            // Channel for frame transfer
-            let (tx, rx) = bounded::<Arc<Yu12Frame>>(2);
-
-            let mut capture = match V4l2Capture::new(
-                &config.scrcpy.v4l2.device,
-                Duration::from_secs(config.timeout),
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to initialize V4L2 capture");
-
-                    // Terminate scrcpy process
-                    if let Err(te) = scrcpy.terminate() {
-                        error!("Failed to terminate scrcpy process: {}", te);
-                    }
-
-                    return Err(e);
-                }
-            };
-            debug!("V4L2 capture initialized");
-
-            // Get capture dimensions and orientation
-            let (width, height) = capture.dimensions();
-            let capture_orientation = config
-                .scrcpy
-                .v4l2
-                .capture_orientation
-                .parse::<u32>()
-                .unwrap_or(0)
-                / 90;
-            debug!(
-                "V4L2 capture dimensions: {}x{}, orientation: {}",
-                width,
-                height,
-                capture_orientation * 90
-            );
-
-            // Start capture thread
-            let _ = thread::spawn(move || {
-                loop {
-                    match capture.capture_frame() {
-                        Ok(frame) => {
-                            let _ = tx.try_send(Arc::new(frame));
-                        }
-                        Err(e) => {
-                            error!("Capture error: {}", e);
-                            break;
-                        }
-                    }
-                }
-            });
-            debug!("V4L2 capture thread started");
-
-            Ok((
-                scrcpy,
-                adb_shell,
-                keyboard_mapper,
-                mouse_mapper,
-                rx,
-                physical_size,
-                width,
-                height,
-                capture_orientation,
-            ))
-        })();
-
-        let _ = result_tx.send(result);
-    }
-
     /// Draw the base UI panels (toolbar and status bar)
     fn draw_base_ui(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("Toolbar")
@@ -452,34 +722,6 @@ impl SAideApp {
             .show(ctx, |ui| {
                 self.draw_v4l2_player(ui);
             });
-    }
-
-    pub fn start(config: &SAideConfig) -> anyhow::Result<()> {
-        // Run main GUI application
-        let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_title("SAide")
-                .with_inner_size([
-                    DEFAULT_WIDTH as f32 + TOOLBAR_WIDTH,
-                    DEFAULT_HEIGHT as f32 + STATUSBAR_HEIGHT,
-                ]),
-            renderer: eframe::Renderer::Wgpu,
-            wgpu_options: egui_wgpu::WgpuConfiguration {
-                // Use AutoVsync to reduce CPU/GPU usage
-                present_mode: wgpu::PresentMode::AutoVsync,
-                // Request low latency for real-time video
-                desired_maximum_frame_latency: Some(1),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        eframe::run_native(
-            "SAide",
-            options,
-            Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, config.clone())))),
-        )
-        .map_err(|e| anyhow!("eframe error: {}", e))
     }
 
     fn draw_loading_overlay(&mut self, ctx: &egui::Context, message: &str) {
@@ -523,158 +765,6 @@ impl SAideApp {
             )
         });
     }
-
-    // Check if position is within video rectangle
-    fn in_video_rect(&self, pos: &egui::Pos2) -> bool {
-        if let Some(video_rect) = &self.video_rect {
-            pos.x >= video_rect.left()
-                && pos.x <= video_rect.right()
-                && pos.y >= video_rect.top()
-                && pos.y <= video_rect.bottom()
-        } else {
-            false
-        }
-    }
-
-    /// transform egui position to device coordinates
-    pub fn coordinate_transform(&self, pos: &egui::Pos2) -> Option<(u32, u32)> {
-        if let Some(physical_size) = self.physical_size
-            && let Some(video_rect) = &self.video_rect
-        {
-            let rel_x = pos.x - video_rect.left();
-            let rel_y = pos.y - video_rect.top();
-
-            let video_width = video_rect.width();
-            let video_height = video_rect.height();
-
-            let physical_width = physical_size.0 as f32;
-
-            let scale = if self.rotation & 1 == 0 {
-                physical_width / video_height
-            } else {
-                physical_width / video_width
-            };
-
-            // Apply rotation transform to video coordinates
-            let (rotate_x, rotate_y) = match (self.capture_orientation + self.rotation) % 4 {
-                // 0 degrees - no rotation
-                0 => (rel_x, rel_y),
-                // 90 degrees clockwise - transpose and flip X
-                1 => (rel_y, video_width - rel_x),
-                // 180 degrees - flip both axes
-                2 => (video_width - rel_x, video_height - rel_y),
-                // 270 degrees clockwise - transpose and flip Y
-                3 => (video_height - rel_y, rel_x),
-                _ => return None,
-            };
-
-            return Some(((rotate_x * scale) as u32, (rotate_y * scale) as u32));
-        }
-
-        None
-    }
-
-    /// Process input events for mouse and keyboard
-    fn process_input_events(&mut self, ctx: &egui::Context) {
-        if self.init_state != InitState::Ready {
-            debug!("Skipping input processing - not initialized");
-            return;
-        }
-
-        ctx.input(|input| {
-            // Handle mouse button events
-            for event in &input.events {
-                if self.init_state == InitState::Ready {
-                    // Process keyboard events
-                    if self.keyboard_mapping_enabled
-                        && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
-                    {
-                        debug!("Processing keyboard event: {:?}", event);
-                        if let egui::Event::Key {
-                            key,
-                            pressed,
-                            modifiers: _,
-                            repeat: _,
-                            physical_key: _,
-                        } = event
-                            && let Err(e) = keyboard_mapper.handle_key_event(key, *pressed)
-                        {
-                            error!("Failed to handle keyboard event: {}", e);
-                        }
-                    }
-
-                    // Process mouse events
-                    if self.mouse_mapping_enabled
-                        && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
-                    {
-                        if let egui::Event::PointerButton {
-                            button,
-                            pressed,
-                            pos,
-                            ..
-                        } = event
-                        {
-                            if !self.in_video_rect(pos) {
-                                continue;
-                            }
-
-                            debug!("Processing mouse button event: {:?} at {:?}", button, pos);
-
-                            if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
-                                let button = MouseButton::from(*button);
-                                let _ = mouse_mapper
-                                    .handle_button_event(button, *pressed, device_x, device_y)
-                                    .or_else(|e| {
-                                        error!("Failed to handle mouse button event: {}", e);
-                                        anyhow::Ok(())
-                                    });
-
-                                debug!(
-                                    "Mouse button event at device coords: ({}, {})",
-                                    device_x, device_y
-                                );
-                            }
-                        } else if let egui::Event::MouseWheel {
-                            modifiers: _,
-                            unit: _,
-                            delta,
-                            ..
-                        } = event
-                        {
-                            // get mouse position
-                            let pos = input.pointer.hover_pos().unwrap_or_default();
-
-                            if !self.in_video_rect(&pos) {
-                                continue;
-                            }
-
-                            debug!("Processing mouse wheel event: {:?} at {:?}", delta, pos);
-
-                            if self.in_video_rect(&pos)
-                                && let Some((device_x, device_y)) = self.coordinate_transform(&pos)
-                            {
-                                let dir = match delta {
-                                    egui::Vec2 { x: _, y } if *y < 0.0 => WheelDirection::Up,
-                                    _ => WheelDirection::Down,
-                                };
-
-                                if let Err(e) =
-                                    mouse_mapper.handle_wheel_event(device_x, device_y, dir)
-                                {
-                                    error!("Failed to handle wheel event: {}", e);
-                                }
-
-                                debug!(
-                                    "Mouse wheel event at device coords: ({}, {})",
-                                    device_x, device_y
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
 }
 
 impl eframe::App for SAideApp {
@@ -686,10 +776,13 @@ impl eframe::App for SAideApp {
         match self.init_state {
             InitState::NotStarted => {
                 // UI is ready, now start background initialization
-                self.start_init();
+                self.init();
             }
             InitState::InProgress => {
                 self.draw_loading_overlay(ctx, "Initializing...");
+
+                // Check initialization progress
+                self.check_init_stage(ctx);
             }
             InitState::Ready => {
                 // Fully initialized, show main UI
@@ -698,52 +791,6 @@ impl eframe::App for SAideApp {
             InitState::Failed => {
                 // Failed state, waiting for user action
                 self.draw_error_overlay(ctx, "Initialization failed.");
-            }
-        }
-
-        // Check for initialization results
-        if let Some(rx) = &self.init_rx
-            && let Ok(init_result) = rx.try_recv()
-        {
-            match init_result {
-                Ok((
-                    scrcpy,
-                    adb_shell,
-                    keyboard_mapper,
-                    mouse_mapper,
-                    frame_rx,
-                    physical_size,
-                    width,
-                    height,
-                    capture_orientation,
-                )) => {
-                    // Initialization successful
-                    self.scrcpy = Some(scrcpy);
-
-                    self.adb_shell = Some(adb_shell);
-
-                    self.keyboard_mapper = keyboard_mapper;
-
-                    self.mouse_mapper = mouse_mapper;
-
-                    self.frame_rx = Some(frame_rx);
-
-                    self.physical_size = Some(physical_size);
-
-                    self.video_width = width;
-                    self.video_height = height;
-
-                    self.capture_orientation = capture_orientation;
-
-                    self.init_state = InitState::Ready;
-
-                    self.resize(ctx);
-                }
-                Err(e) => {
-                    // Initialization failed
-                    error!("Failed to initialize application: {}", e);
-                    self.init_state = InitState::Failed;
-                }
             }
         }
 

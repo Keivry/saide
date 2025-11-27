@@ -151,10 +151,8 @@ impl Scrcpy {
         args.push("--v4l2-buffer".to_string());
         args.push(self.config.v4l2.buffer.to_string());
 
-        if !self.config.v4l2.capture_orientation.is_empty() {
-            args.push("--capture-orientation".to_string());
-            args.push("@".to_string() + &self.config.v4l2.capture_orientation);
-        }
+        args.push("--capture-orientation".to_string());
+        args.push("@".to_string() + &self.config.v4l2.capture_orientation.to_string());
 
         // Video encoding parameters
         if !self.config.video.bit_rate.is_empty() {
@@ -177,9 +175,9 @@ impl Scrcpy {
             args.push(self.config.video.codec.clone());
         }
 
-        if !self.config.video.encoder.is_empty() {
+        if self.config.video.encoder.is_some() {
             args.push("--video-encoder".to_string());
-            args.push(self.config.video.encoder.clone());
+            args.push(self.config.video.encoder.clone().unwrap());
         }
 
         // Other options

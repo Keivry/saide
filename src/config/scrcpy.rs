@@ -1,92 +1,68 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ScrcpyConfig {
     pub v4l2: V4l2Config,
     pub video: VideoConfig,
     pub options: OptionsConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct V4l2Config {
+    #[serde(default = "default_v4l2_device")]
     pub device: String,
-    pub capture_orientation: String,
+    #[serde(default, deserialize_with = "deserialize_capture_orientation")]
+    pub capture_orientation: u32,
+    #[serde(default)]
     pub buffer: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VideoConfig {
-    pub bit_rate: String,
-    pub max_fps: u32,
-    pub max_size: u32,
-    pub codec: String,
-    pub encoder: String,
+fn deserialize_capture_orientation<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: Option<u32> = Option::deserialize(deserializer)?;
+    match s {
+        Some(0) => Ok(0),
+        Some(90) => Ok(90),
+        Some(180) => Ok(180),
+        Some(270) => Ok(270),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "invalid capture_orientation: {}",
+            other
+        ))),
+        None => Ok(0),
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn default_v4l2_device() -> String { "/dev/video0".to_string() }
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct VideoConfig {
+    #[serde(default = "default_bitrate")]
+    pub bit_rate: String,
+    #[serde(default = "default_max_fps")]
+    pub max_fps: u32,
+    #[serde(default = "default_max_size")]
+    pub max_size: u32,
+    #[serde(default = "default_codec")]
+    pub codec: String,
+    #[serde(default = "default_encoder")]
+    pub encoder: Option<String>,
+}
+
+fn default_bitrate() -> String { "8M".to_string() }
+fn default_max_fps() -> u32 { 60 }
+fn default_max_size() -> u32 { 1280 }
+fn default_codec() -> String { "h264".to_string() }
+fn default_encoder() -> Option<String> { None }
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OptionsConfig {
+    #[serde(default = "default_true")]
     pub turn_screen_off: bool,
+    #[serde(default = "default_true")]
     pub stay_awake: bool,
 }
 
-impl ScrcpyConfig {
-    pub fn from_toml_value(value: toml::Value) -> Result<Self, String> {
-        value
-            .try_into()
-            .map_err(|e| format!("Failed to parse ScrcpyConfig: {}", e))
-    }
-}
-
-impl Default for ScrcpyConfig {
-    fn default() -> Self {
-        Self {
-            v4l2: V4l2Config {
-                device: "/dev/video0".to_string(),
-                capture_orientation: "90".to_string(),
-                buffer: 0,
-            },
-            video: VideoConfig {
-                bit_rate: "24M".to_string(),
-                max_fps: 60,
-                max_size: 1280,
-                codec: "h264".to_string(),
-                encoder: "c2.mtk.avc.encoder".to_string(),
-            },
-            options: OptionsConfig {
-                turn_screen_off: true,
-                stay_awake: true,
-            },
-        }
-    }
-}
-
-impl Default for V4l2Config {
-    fn default() -> Self {
-        Self {
-            device: "/dev/video0".to_string(),
-            capture_orientation: "90".to_string(),
-            buffer: 0,
-        }
-    }
-}
-
-impl Default for VideoConfig {
-    fn default() -> Self {
-        Self {
-            bit_rate: "24M".to_string(),
-            max_fps: 60,
-            max_size: 1280,
-            codec: "h264".to_string(),
-            encoder: "c2.mtk.avc.encoder".to_string(),
-        }
-    }
-}
-
-impl Default for OptionsConfig {
-    fn default() -> Self {
-        Self {
-            turn_screen_off: true,
-            stay_awake: true,
-        }
-    }
-}
+fn default_true() -> bool { true }
