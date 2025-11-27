@@ -19,7 +19,7 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    tracing::{debug, error, info, warn},
+    tracing::{debug, error, info, trace, warn},
 };
 
 const DEFAULT_WIDTH: u32 = 1280;
@@ -690,10 +690,10 @@ impl SAideApp {
                             }
                         } else if let egui::Event::PointerMoved(pos) = event {
                             // Handle mouse move for drag detection
-                            debug!("PointerMoved event at {:?}", pos);
+                            trace!("PointerMoved event at {:?}", pos);
 
                             if !self.is_in_video_rect(pos) {
-                                debug!("PointerMoved outside video rect");
+                                trace!("PointerMoved outside video rect");
                                 continue;
                             }
 
