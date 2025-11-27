@@ -19,7 +19,7 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    tracing::{debug, error, info},
+    tracing::{debug, error, info, warn},
 };
 
 const DEFAULT_WIDTH: u32 = 1280;
@@ -231,7 +231,41 @@ impl SAideApp {
                 physical_size.0, physical_size.1
             );
 
+            // Create channel for rotation events
+            let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(10);
             dm_tx.send(InitResult::PhysicalSize(physical_size))?;
+            dm_tx.send(InitResult::DeviceMonitor(event_rx))?;
+
+            // Start rotation monitoring
+            let mut last_rotation = None;
+            loop {
+                // Poll rotation state every 500ms
+                match adb_shell.get_screen_orientation() {
+                    Ok(current_rotation) => {
+                        if Some(current_rotation) != last_rotation {
+                            debug!(
+                                "Rotation changed: {:?} -> {}",
+                                last_rotation, current_rotation
+                            );
+                            last_rotation = Some(current_rotation);
+
+                            // Send rotation event
+                            if let Err(e) =
+                                event_tx.send(DeviceMonitorEvent::Rotated(current_rotation))
+                            {
+                                error!("Failed to send rotation event: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to get screen orientation: {}", e);
+                    }
+                }
+
+                thread::sleep(Duration::from_millis(500));
+            }
+
             Ok(())
         });
 
