@@ -17,12 +17,14 @@ pub struct KeyboardMapper {
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(config: Arc<KeyboardConfig>) -> Self {
-        Self {
+    pub fn new(config: Arc<KeyboardConfig>) -> Result<Self> {
+        let adb = AdbShell::new();
+        adb.connect()?;
+        Ok(Self {
             config,
-            adb_shell: AdbShell::new(),
+            adb_shell: adb,
             active_profile: None,
-        }
+        })
     }
 
     /// Set active profile by index

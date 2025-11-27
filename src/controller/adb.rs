@@ -7,7 +7,7 @@ use {
         process::{Child, ChildStdin, Command, Stdio},
         sync::{Arc, Condvar},
         thread,
-        time::Instant,
+        time::{Duration, Instant},
     },
     tracing::{debug, info, trace, warn},
 };
@@ -260,7 +260,7 @@ impl AdbShell {
         }
 
         // Generate unique marker using timestamp and counter
-        static COUNTER: parking_lot::Mutex<u64> = parking_lot::Mutex::new(0);
+        static COUNTER: Mutex<u64> = Mutex::new(0);
         let counter = {
             let mut c = COUNTER.lock();
             *c = c.wrapping_add(1);
@@ -285,11 +285,8 @@ impl AdbShell {
         }
 
         // Wait for and parse response
-        let rotation = self.wait_for_response_with_marker(
-            &marker,
-            &counter,
-            std::time::Duration::from_millis(1500),
-        )?;
+        let rotation =
+            self.wait_for_response_with_marker(&marker, &counter, Duration::from_millis(3000))?;
 
         Ok(rotation)
     }
@@ -299,9 +296,9 @@ impl AdbShell {
         &self,
         marker: &str,
         counter: &u64,
-        timeout: std::time::Duration,
+        timeout: Duration,
     ) -> Result<u32> {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let end_marker = format!("END_{}", counter);
 
         loop {
@@ -315,44 +312,22 @@ impl AdbShell {
             let lines: Vec<String> = buffer.clone();
             drop(buffer);
 
-            // Debug: print all lines in buffer
-            if !lines.is_empty() {
-                trace!("Buffer content: {:?}", lines);
-            }
-
             // Look for our marker in recent output
             let marker_idx = lines.iter().position(|line: &String| line.trim() == marker);
 
             if let Some(idx) = marker_idx {
-                trace!("Found marker at index {}, collecting response...", idx);
+                trace!("Found marker at index {}, parse response...", idx);
 
-                // Found marker, collect all lines after it
-                let mut response_lines: Vec<String> = Vec::new();
+                // Parse lines after marker until end marker
+                let mut counted_lines = 0;
                 for line in lines.iter().skip(idx + 1) {
-                    let line_trimmed = line.trim();
-                    if line_trimmed == end_marker {
-                        trace!("Found end marker, stopping collection");
+                    let line = line.trim();
+
+                    if line == end_marker {
+                        trace!("Found end marker, stopping parsing");
                         break;
                     }
-                    if !line_trimmed.is_empty() {
-                        trace!("Adding response line: {}", line_trimmed);
-                        response_lines.push(line_trimmed.to_string());
-                    }
-                }
 
-                // Clear processed lines from buffer (including marker and end marker)
-                {
-                    let mut buffer = self.output_buffer.lock();
-                    let clear_to = (idx + response_lines.len() + 2).min(buffer.len());
-                    if clear_to > 0 {
-                        buffer.drain(0..clear_to);
-                    }
-                }
-
-                trace!("Response lines collected: {:?}", response_lines);
-
-                // Parse rotation from response
-                for line in &response_lines {
                     if line.contains("mCurrentRotation")
                         && let Some(rotation_part) = line.split('=').nth(1)
                     {
@@ -366,16 +341,22 @@ impl AdbShell {
                             other => return Err(anyhow!("Unknown rotation value: {}", other)),
                         });
                     }
+
+                    counted_lines += 1;
                 }
 
-                return Err(anyhow!(
-                    "Failed to parse rotation from response: {:?}",
-                    response_lines
-                ));
+                // Clear processed lines from buffer (including marker and end marker)
+                {
+                    let mut buffer = self.output_buffer.lock();
+                    let clear_to = (idx + counted_lines + 2).min(buffer.len());
+                    if clear_to > 0 {
+                        buffer.drain(0..clear_to);
+                    }
+                }
             }
 
             // Wait a bit before checking again
-            thread::sleep(std::time::Duration::from_millis(30));
+            thread::sleep(Duration::from_millis(30));
         }
     }
 }

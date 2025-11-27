@@ -9,6 +9,13 @@ use {
     tracing::debug,
 };
 
+/// Movement threshold to distinguish drag from click (in pixels)
+const DRAG_THRESHOLD: f32 = 2.0;
+/// Long press duration threshold (in milliseconds)
+const LONG_PRESS_DURATION_MS: u128 = 200;
+/// Drag update interval (in milliseconds) - balance between smoothness and performance
+const DRAG_UPDATE_INTERVAL_MS: u128 = 50;
+
 /// Mouse button state for tracking press/drag/long-press
 #[derive(Debug, Clone, Copy)]
 enum MouseState {
@@ -35,20 +42,15 @@ pub struct MouseMapper {
     left_button_state: Mutex<MouseState>,
 }
 
-/// Movement threshold to distinguish drag from click (in pixels)
-const DRAG_THRESHOLD: f32 = 2.0;
-/// Long press duration threshold (in milliseconds)
-const LONG_PRESS_DURATION_MS: u128 = 200;
-/// Drag update interval (in milliseconds) - balance between smoothness and performance
-const DRAG_UPDATE_INTERVAL_MS: u128 = 50;
-
 impl MouseMapper {
     /// Create a new mouse mapper
-    pub fn new() -> Self {
-        Self {
-            adb_shell: AdbShell::new(),
+    pub fn new() -> Result<Self> {
+        let adb_shell = AdbShell::new();
+        adb_shell.connect()?;
+        Ok(Self {
+            adb_shell,
             left_button_state: Mutex::new(MouseState::Idle),
-        }
+        })
     }
 
     /// Update mouse state - call this every frame

@@ -277,7 +277,8 @@ impl SAideApp {
                 .mappings
                 .keyboard
                 .clone()
-                .map(|keyboard_config| KeyboardMapper::new(keyboard_config.clone()));
+                .map(|keyboard_config| KeyboardMapper::new(keyboard_config.clone()))
+                .transpose()?;
             debug!("Keyboard mapper initialized");
 
             // TODO: Set default profile if specified
@@ -302,7 +303,8 @@ impl SAideApp {
                 .clone()
                 .unwrap_or_default()
                 .initial_state
-                .then_some(MouseMapper::new());
+                .then_some(MouseMapper::new())
+                .transpose()?;
             debug!("Mouse mapper initialized");
 
             mouse_tx.send(InitResult::MouseMapper(mouse_mapper))?;
