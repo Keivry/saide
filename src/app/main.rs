@@ -565,17 +565,16 @@ impl SAideApp {
                     // Process keyboard events
                     if self.keyboard_mapping_enabled
                         && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
-                    {
-                        debug!("Processing keyboard event: {:?}", event);
-                        if let egui::Event::Key {
+                        && let egui::Event::Key {
                             key,
                             pressed,
                             modifiers: _,
                             repeat: _,
                             physical_key: _,
                         } = event
-                            && let Err(e) = keyboard_mapper.handle_key_event(key, *pressed)
-                        {
+                    {
+                        debug!("Processing keyboard event: {:?}", event);
+                        if let Err(e) = keyboard_mapper.handle_key_event(key, *pressed) {
                             error!("Failed to handle keyboard event: {}", e);
                         }
                     }
@@ -687,10 +686,12 @@ impl SAideApp {
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             ui.label(format!(
-                "Resolution: {}x{} | FPS: {} |Rotation: {}°",
+                "Resolution: {}x{} | FPS: {} | Device Rotation: {}° | Capture Orientation: {}° | Video Rotation: {}°",
                 self.video_width,
                 self.video_height,
                 self.fps.min(self.config.scrcpy.video.max_fps as f32) as u32,
+                self.orientation * 90,
+                self.capture_orientation * 90,
                 self.rotation * 90
             ));
         });

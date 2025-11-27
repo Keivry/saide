@@ -9,7 +9,7 @@ use {
         thread,
         time::Instant,
     },
-    tracing::{debug, info, warn},
+    tracing::{info, trace, warn},
 };
 
 /// ADB Shell connection manager for sending input commands to Android device
@@ -307,26 +307,26 @@ impl AdbShell {
             drop(buffer);
 
             // Debug: print all lines in buffer
-            if lines.len() > 0 {
-                debug!("Buffer content: {:?}", lines);
+            if !lines.is_empty() {
+                trace!("Buffer content: {:?}", lines);
             }
 
             // Look for our marker in recent output
             let marker_idx = lines.iter().position(|line: &String| line.trim() == marker);
 
             if let Some(idx) = marker_idx {
-                debug!("Found marker at index {}, collecting response...", idx);
+                trace!("Found marker at index {}, collecting response...", idx);
 
                 // Found marker, collect all lines after it
                 let mut response_lines: Vec<String> = Vec::new();
                 for line in lines.iter().skip(idx + 1) {
                     let line_trimmed = line.trim();
                     if line_trimmed == end_marker {
-                        debug!("Found end marker, stopping collection");
+                        trace!("Found end marker, stopping collection");
                         break;
                     }
                     if !line_trimmed.is_empty() {
-                        debug!("Adding response line: {}", line_trimmed);
+                        trace!("Adding response line: {}", line_trimmed);
                         response_lines.push(line_trimmed.to_string());
                     }
                 }
@@ -340,22 +340,22 @@ impl AdbShell {
                     }
                 }
 
-                debug!("Response lines collected: {:?}", response_lines);
+                trace!("Response lines collected: {:?}", response_lines);
 
                 // Parse rotation from response
                 for line in &response_lines {
-                    if line.contains("mCurrentRotation") {
-                        if let Some(rotation_part) = line.split('=').nth(1) {
-                            let rotation_str = rotation_part.trim();
-                            // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
-                            return Ok(match rotation_str {
-                                "ROTATION_0" => 0,
-                                "ROTATION_90" => 1,
-                                "ROTATION_180" => 2,
-                                "ROTATION_270" => 3,
-                                other => return Err(anyhow!("Unknown rotation value: {}", other)),
-                            });
-                        }
+                    if line.contains("mCurrentRotation")
+                        && let Some(rotation_part) = line.split('=').nth(1)
+                    {
+                        let rotation_str = rotation_part.trim();
+                        // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
+                        return Ok(match rotation_str {
+                            "ROTATION_0" => 0,
+                            "ROTATION_90" => 1,
+                            "ROTATION_180" => 2,
+                            "ROTATION_270" => 3,
+                            other => return Err(anyhow!("Unknown rotation value: {}", other)),
+                        });
                     }
                 }
 
