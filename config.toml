@@ -1,8 +1,8 @@
-timeout = 5
+timeout = 15
 
 [scrcpy.v4l2]
 device = "/dev/video0"
-capture_orientation = 90
+capture_orientation = 270
 buffer = 0
 
 [scrcpy.video]
@@ -29,28 +29,26 @@ show_notification = true
 name = "问道手游"
 mappings = [
     { key = "A", action = "Tap", x = 2596, y = 1155 },
-    # { key = "A", action = "Tap", x = 0.9270833333333334, y = 0.9162962962962963 },
-    # { KEY_S = { action = "Tap", pos = { x = 0.92734375, y = 0.654228855721393 } } },
-    # { KEY_2 = { action = "Tap", pos = { x = 0.85546875, y = 0.49087893864013266 } } },
-    # { KEY_5 = { action = "Tap", pos = { x = 0.801953125, y = 0.36401326699834163 } } },
-    # { KEY_3 = { action = "Tap", pos = { x = 0.915234375, y = 0.3615257048092869 } } },
-    # { KEY_5 = { action = "Tap", pos = { x = 0.801953125, y = 0.36401326699834163 } } },
-    # { KEY_6 = { action = "Tap", pos = { x = 0.85703125, y = 0.35903814262023215 } } },
-    # { KEY_G = { action = "Tap", pos = { x = 0.797265625, y = 0.6981757877280266 } } },
-    # { KEY_SPACE = { action = "Tap", pos = { x = 0.57109375, y = 0.6169154228855721 } } },
-    # { KEY_TAB = { action = "Tap", pos = { x = 0.12362362362362363, y = 0.06437291897891231 } } },
-    # { KEY_GRAVE = { action = "Tap", pos = { x = 0.05855855855855856, y = 0.06215316315205328 } } },
-    # { KEY_F2 = { action = "Tap", pos = { x = 0.25225225225225223, y = 0.06104328523862375 } } },
-    # { KEY_F1 = { action = "Tap", pos = { x = 0.2962962962962963, y = 0.06326304106548279 } } },
-    # { KEY_D = { action = "Tap", pos = { x = 0.10810810810810811, y = 0.6670366259711432 } } },
-    # { KEY_F = { action = "Tap", pos = { x = 0.06156156156156156, y = 0.6637069922308546 } } },
-    # { KEY_B = { action = "Tap", pos = { x = 0.9394394394394394, y = 0.8035516093229744 } } },
-    # { KEY_C = { action = "Tap", pos = { x = 0.8993993993993994, y = 0.05771365149833518 } } },
-    # { KEY_T = { action = "Tap", pos = { x = 0.8123123123123123, y = 0.058823529411764705 } } },
-    # { KEY_W = { action = "Tap", pos = { x = 0.7802802802802803, y = 0.0244173140954495 } } },
-    # { KEY_Z = { action = "Tap", pos = { x = 0.8863863863863863, y = 0.2985571587125416 } } },
-    # { KEY_V = { action = "Tap", pos = { x = 0.8873873873873874, y = 0.4184239733629301 } } },
-    # { KEY_Q = { action = "Tap", pos = { x = 0.9259259259259259, y = 0.4872364039955605 } } },
+    { key = "S", action = "Tap", x = 2597, y = 824 },
+    { key = "2", action = "Tap", x = 2395, y = 619 },
+    { key = "3", action = "Tap", x = 2563, y = 456 },
+    { key = "5", action = "Tap", x = 2245, y = 459 },
+    { key = "6", action = "Tap", x = 2400, y = 452 },
+    { key = "G", action = "Tap", x = 2232, y = 880 },
+    { key = "SPACE", action = "Tap", x = 1599, y = 777 },
+    { key = "TAB", action = "Tap", x = 346, y = 81 },
+    { key = "GRAVE", action = "Tap", x = 164, y = 78 },
+    { key = "F2", action = "Tap", x = 706, y = 77 },
+    { key = "F1", action = "Tap", x = 830, y = 80 },
+    { key = "D", action = "Tap", x = 303, y = 840 },
+    { key = "F", action = "Tap", x = 172, y = 836 },
+    { key = "B", action = "Tap", x = 2630, y = 1012 },
+    { key = "C", action = "Tap", x = 2518, y = 73 },
+    { key = "T", action = "Tap", x = 2274, y = 74 },
+    { key = "W", action = "Tap", x = 2185, y = 31 },
+    { key = "Z", action = "Tap", x = 2482, y = 376 },
+    { key = "V", action = "Tap", x = 2485, y = 527 },
+    { key = "Q", action = "Tap", x = 2593, y = 614 },
 ]
 
 [mappings.mouse]
