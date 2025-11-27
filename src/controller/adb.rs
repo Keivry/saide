@@ -286,7 +286,7 @@ impl AdbShell {
 
         // Wait for and parse response
         let rotation =
-            self.wait_for_response_with_marker(&marker, &counter, Duration::from_millis(3000))?;
+            self.wait_for_response_with_marker(&marker, &counter, Duration::from_millis(2000))?;
 
         Ok(rotation)
     }
