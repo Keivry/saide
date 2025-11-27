@@ -477,7 +477,8 @@ impl SAideApp {
             };
 
             // Apply rotation transform to video coordinates
-            let (rotate_x, rotate_y) = match (self.capture_orientation + self.rotation) % 4 {
+            // let (rotate_x, rotate_y) = match (self.capture_orientation + self.rotation) % 4 {
+            let (rotate_x, rotate_y) = match self.rotation % 4 {
                 // 0 degrees - no rotation
                 0 => (rel_x, rel_y),
                 // 90 degrees clockwise - transpose and flip X
