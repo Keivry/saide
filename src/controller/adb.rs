@@ -9,7 +9,7 @@ use {
         thread,
         time::Instant,
     },
-    tracing::{info, trace, warn},
+    tracing::{debug, info, trace, warn},
 };
 
 /// ADB Shell connection manager for sending input commands to Android device
@@ -216,7 +216,7 @@ impl AdbShell {
             *self.last_activity.lock() = Instant::now();
         }
 
-        info!("Sent ADB input command: {}", cmd_str.trim());
+        debug!("Sent ADB input command: {}", cmd_str.trim());
         Ok(())
     }
 
