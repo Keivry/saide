@@ -2,7 +2,7 @@ timeout = 15
 
 [scrcpy.v4l2]
 device = "/dev/video0"
-capture_orientation = 0
+capture_orientation = 270
 buffer = 0
 
 [scrcpy.video]

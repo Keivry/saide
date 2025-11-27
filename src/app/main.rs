@@ -626,6 +626,14 @@ impl SAideApp {
             return;
         }
 
+        // Update mouse state (check for long press and send drag updates)
+        if self.mouse_mapping_enabled
+            && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
+            && let Err(e) = mouse_mapper.update()
+        {
+            error!("Failed to update mouse mapper: {}", e);
+        }
+
         ctx.input(|input| {
             // Handle mouse button events
             for event in &input.events {
@@ -676,6 +684,25 @@ impl SAideApp {
                                 debug!(
                                     "Mouse button event at device coords: ({}, {})",
                                     device_x, device_y
+                                );
+                            }
+                        } else if let egui::Event::PointerMoved(pos) = event {
+                            // Handle mouse move for drag detection
+                            debug!("PointerMoved event at {:?}", pos);
+
+                            if !self.is_in_video_rect(pos) {
+                                debug!("PointerMoved outside video rect");
+                                continue;
+                            }
+
+                            if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
+                                if let Err(e) = mouse_mapper.handle_move_event(device_x, device_y) {
+                                    error!("Failed to handle mouse move event: {}", e);
+                                }
+                            } else {
+                                debug!(
+                                    "Failed to transform coordinates for PointerMoved at {:?}",
+                                    pos
                                 );
                             }
                         } else if let egui::Event::MouseWheel {

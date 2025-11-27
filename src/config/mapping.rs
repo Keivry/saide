@@ -69,6 +69,21 @@ pub enum AdbAction {
         y2: u32,
         duration: u32,
     },
+    /// Touch down event (start of drag)
+    TouchDown {
+        x: u32,
+        y: u32,
+    },
+    /// Touch move event (during drag)
+    TouchMove {
+        x: u32,
+        y: u32,
+    },
+    /// Touch up event (end of drag)
+    TouchUp {
+        x: u32,
+        y: u32,
+    },
     Key {
         keycode: String,
     },

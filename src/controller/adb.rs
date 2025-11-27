@@ -174,6 +174,15 @@ impl AdbShell {
             } => {
                 format!("input swipe {} {} {} {} {}\n", x1, y1, x2, y2, duration)
             }
+            AdbAction::TouchDown { x, y } => {
+                format!("input motionevent DOWN {} {}\n", x, y)
+            }
+            AdbAction::TouchMove { x, y } => {
+                format!("input motionevent MOVE {} {}\n", x, y)
+            }
+            AdbAction::TouchUp { x, y } => {
+                format!("input motionevent UP {} {}\n", x, y)
+            }
             AdbAction::Key { keycode } => {
                 format!("input keyevent {}\n", keycode)
             }

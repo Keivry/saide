@@ -4,20 +4,112 @@ use {
         controller::adb::AdbShell,
     },
     anyhow::Result,
+    parking_lot::Mutex,
+    std::time::Instant,
     tracing::debug,
 };
+
+/// Mouse button state for tracking press/drag/long-press
+#[derive(Debug, Clone, Copy)]
+enum MouseState {
+    /// No button pressed
+    Idle,
+    /// Button pressed at position (x, y) at time
+    Pressed { x: u32, y: u32, time: Instant },
+    /// Dragging from (x1, y1), currently at (x, y)
+    Dragging {
+        start_x: u32,
+        start_y: u32,
+        current_x: u32,
+        current_y: u32,
+        last_update: Instant,
+    },
+    /// Long pressing at (x, y) - event already sent
+    LongPressing { x: u32, y: u32 },
+}
 
 /// Mouse mapping state
 pub struct MouseMapper {
     adb_shell: AdbShell,
+    /// Current mouse state for left button
+    left_button_state: Mutex<MouseState>,
 }
+
+/// Movement threshold to distinguish drag from click (in pixels)
+const DRAG_THRESHOLD: f32 = 2.0;
+/// Long press duration threshold (in milliseconds)
+const LONG_PRESS_DURATION_MS: u128 = 200;
+/// Drag update interval (in milliseconds) - balance between smoothness and performance
+const DRAG_UPDATE_INTERVAL_MS: u128 = 50;
 
 impl MouseMapper {
     /// Create a new mouse mapper
     pub fn new() -> Self {
         Self {
             adb_shell: AdbShell::new(),
+            left_button_state: Mutex::new(MouseState::Idle),
         }
+    }
+
+    /// Update mouse state - call this every frame
+    /// Checks for long press timeout and sends drag updates
+    pub fn update(&self) -> Result<()> {
+        let mut state = self.left_button_state.lock();
+
+        match *state {
+            MouseState::Pressed {
+                x,
+                y,
+                time: start_time,
+            } => {
+                // Check if long press duration exceeded
+                let elapsed = start_time.elapsed().as_millis();
+                if elapsed >= LONG_PRESS_DURATION_MS {
+                    // Long press triggered - don't send any ADB event
+                    // Android will detect the sustained touch and trigger long press automatically
+                    // The TouchDown is already being held, so Android knows it's a long press
+                    debug!("Long press triggered at ({}, {}) [from update]", x, y);
+
+                    // Transition to LongPressing state
+                    *state = MouseState::LongPressing { x, y };
+                }
+            }
+            MouseState::Dragging {
+                start_x,
+                start_y,
+                current_x,
+                current_y,
+                last_update,
+            } => {
+                // Only send update if position changed and enough time passed
+                let elapsed = last_update.elapsed().as_millis();
+                if elapsed >= DRAG_UPDATE_INTERVAL_MS
+                    && (start_x != current_x || start_y != current_y)
+                {
+                    // Send TouchMove event for drag updates
+                    self.adb_shell.send_input(&AdbAction::TouchMove {
+                        x: current_x,
+                        y: current_y,
+                    })?;
+                    debug!(
+                        "UPDATE: Drag move to ({}, {}) [elapsed={}ms]",
+                        current_x, current_y, elapsed
+                    );
+
+                    // Update state: new start position is current position
+                    *state = MouseState::Dragging {
+                        start_x: current_x,
+                        start_y: current_y,
+                        current_x,
+                        current_y,
+                        last_update: Instant::now(),
+                    };
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 
     /// Handle mouse button event
@@ -28,23 +120,201 @@ impl MouseMapper {
         x: u32,
         y: u32,
     ) -> Result<()> {
-        // TODO: handle button hold actions
-        if !pressed {
-            return Ok(());
+        match button {
+            MouseButton::Left => {
+                if pressed {
+                    self.handle_left_button_press(x, y)?;
+                } else {
+                    self.handle_left_button_release(x, y)?;
+                }
+            }
+            MouseButton::Right if pressed => {
+                self.adb_shell.send_input(&AdbAction::Back)?;
+                debug!("Mouse right button -> Back");
+            }
+            MouseButton::Middle if pressed => {
+                self.adb_shell.send_input(&AdbAction::Home)?;
+                debug!("Mouse middle button -> Home");
+            }
+            _ => {}
         }
 
-        // Execute action based on mapping
-        let action = match button {
-            MouseButton::Left => AdbAction::Tap { x, y },
-            MouseButton::Right => AdbAction::Back,
-            MouseButton::Middle => AdbAction::Home,
+        Ok(())
+    }
+
+    /// Handle left button press
+    fn handle_left_button_press(&self, x: u32, y: u32) -> Result<()> {
+        let mut state = self.left_button_state.lock();
+        *state = MouseState::Pressed {
+            x,
+            y,
+            time: Instant::now(),
         };
-        self.adb_shell.send_input(&action)?;
+
+        // Send TouchDown event immediately
+        self.adb_shell.send_input(&AdbAction::TouchDown { x, y })?;
+        debug!("Left button pressed at ({}, {}), sent TouchDown", x, y);
+        Ok(())
+    }
+
+    /// Handle left button release
+    fn handle_left_button_release(&self, x: u32, y: u32) -> Result<()> {
+        let mut state = self.left_button_state.lock();
+        let prev_state = *state;
 
         debug!(
-            "Mouse button {} (pressed: {}) at ({}, {}) -> {:?}",
-            button, pressed, x, y, action
+            "Button release at ({}, {}), prev_state={:?}",
+            x, y, prev_state
         );
+
+        *state = MouseState::Idle;
+
+        match prev_state {
+            MouseState::Pressed {
+                x: start_x,
+                y: start_y,
+                time: start_time,
+            } => {
+                let elapsed = start_time.elapsed().as_millis();
+                let distance = ((x as f32 - start_x as f32).powi(2)
+                    + (y as f32 - start_y as f32).powi(2))
+                .sqrt();
+
+                debug!(
+                    "Release in Pressed state: distance={:.1}px, elapsed={}ms",
+                    distance, elapsed
+                );
+
+                // Send TouchUp to complete the touch sequence
+                self.adb_shell.send_input(&AdbAction::TouchUp { x, y })?;
+
+                if distance >= DRAG_THRESHOLD {
+                    // Fast drag that didn't trigger Dragging state transition
+                    debug!(
+                        "ACTION: Fast drag/flick from ({}, {}) to ({}, {}), distance={:.1}px",
+                        start_x, start_y, x, y, distance
+                    );
+                } else if elapsed >= LONG_PRESS_DURATION_MS {
+                    // Long press was already handled in update()
+                    debug!(
+                        "ACTION: Long press completed at ({}, {}) after {}ms",
+                        start_x, start_y, elapsed
+                    );
+                } else {
+                    // Normal tap
+                    debug!(
+                        "ACTION: Tap at ({}, {}) after {}ms",
+                        start_x, start_y, elapsed
+                    );
+                }
+            }
+            MouseState::Dragging {
+                current_x,
+                current_y,
+                ..
+            } => {
+                // Dragging ended - send TouchUp to complete the touch sequence
+                self.adb_shell.send_input(&AdbAction::TouchUp { x, y })?;
+                debug!(
+                    "ACTION: Drag completed, ended at ({}, {})",
+                    current_x, current_y
+                );
+            }
+            MouseState::LongPressing { x: lp_x, y: lp_y } => {
+                // Long press event was already sent, send TouchUp to complete
+                self.adb_shell.send_input(&AdbAction::TouchUp { x, y })?;
+                debug!("ACTION: Long press released at ({}, {})", lp_x, lp_y);
+            }
+            MouseState::Idle => {
+                // Spurious release, but still send TouchUp to be safe
+                self.adb_shell.send_input(&AdbAction::TouchUp { x, y })?;
+                debug!("Spurious left button release at ({}, {})", x, y);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle mouse move event (for drag detection)
+    pub fn handle_move_event(&self, x: u32, y: u32) -> Result<()> {
+        let mut state = self.left_button_state.lock();
+
+        match *state {
+            MouseState::Pressed {
+                x: start_x,
+                y: start_y,
+                time: _start_time,
+            } => {
+                let distance = ((x as f32 - start_x as f32).powi(2)
+                    + (y as f32 - start_y as f32).powi(2))
+                .sqrt();
+
+                debug!(
+                    "Move during Pressed: from ({}, {}) to ({}, {}), distance={:.1}px",
+                    start_x, start_y, x, y, distance
+                );
+
+                if distance >= DRAG_THRESHOLD {
+                    // Transition to dragging state
+                    // Don't send initial swipe here - let update() handle it
+                    *state = MouseState::Dragging {
+                        start_x,
+                        start_y,
+                        current_x: x,
+                        current_y: y,
+                        last_update: Instant::now(),
+                    };
+                    debug!(
+                        "STATE TRANSITION: Pressed -> Dragging (distance={:.1}px >= {}px)",
+                        distance, DRAG_THRESHOLD
+                    );
+                }
+                // Note: Long press is now checked in update() method
+            }
+            MouseState::Dragging {
+                start_x,
+                start_y,
+                current_x: _,
+                current_y: _,
+                last_update,
+            } => {
+                // Update current position
+                *state = MouseState::Dragging {
+                    start_x,
+                    start_y,
+                    current_x: x,
+                    current_y: y,
+                    last_update,
+                };
+                // Actual drag updates are sent in update() method
+            }
+            MouseState::LongPressing { x: lp_x, y: lp_y } => {
+                // Long press detected, start dragging
+                debug!(
+                    "STATE TRANSITION: LongPressing -> Dragging (moving from ({}, {}) to ({}, {}))",
+                    lp_x, lp_y, x, y
+                );
+
+                // Transition to dragging state without sending TouchDown
+                // (Long press Swipe event is already being processed by Android)
+                *state = MouseState::Dragging {
+                    start_x: lp_x,
+                    start_y: lp_y,
+                    current_x: x,
+                    current_y: y,
+                    last_update: Instant::now(),
+                };
+
+                debug!(
+                    "Drag started from long press: ({}, {}) -> ({}, {})",
+                    lp_x, lp_y, x, y
+                );
+            }
+            _ => {
+                // Ignore movement in other states (Pressed is handled separately, Idle is
+                // impossible here)
+            }
+        }
 
         Ok(())
     }
