@@ -512,58 +512,38 @@ impl SAideApp {
         }
     }
 
-    // Convert absolute position to video-relative coordinates
-    fn video_relative_coords(&self, pos: egui::Pos2) -> Option<(f32, f32)> {
-        if let Some(video_rect) = &self.video_rect {
+    /// transform egui position to device coordinates
+    pub fn coordinate_transform(&self, pos: &egui::Pos2) -> Option<(u32, u32)> {
+        if let Some(physical_size) = self.physical_size
+            && let Some(video_rect) = &self.video_rect
+        {
             let rel_x = pos.x - video_rect.left();
             let rel_y = pos.y - video_rect.top();
-            Some((rel_x, rel_y))
-        } else {
-            None
+
+            let video_width = video_rect.width();
+            let video_height = video_rect.height();
+
+            let scale = physical_size.0 as f32 / video_width;
+
+            let rotation = ((self.rotation * 90 + self.capture_orientation) % 360) % 4;
+
+            // Apply rotation transform to video coordinates
+            let (rotate_x, rotate_y) = match rotation {
+                // 0 degrees - no rotation
+                0 => (rel_x, rel_y),
+                // 90 degrees clockwise - transpose and flip X
+                1 => (video_height - rel_y, rel_x),
+                // 180 degrees - flip both axes
+                2 => (video_width - rel_x, video_height - rel_y),
+                // 270 degrees clockwise - transpose and flip Y
+                3 => (rel_y, video_width - rel_x),
+                _ => return None,
+            };
+
+            return Some(((rotate_x * scale) as u32, (rotate_y * scale) as u32));
         }
-    }
 
-    pub fn coordinate_transform(
-        &self,
-        rel_x: f32,
-        rel_y: f32,
-        screen_size: (u32, u32),
-    ) -> Option<(u32, u32)> {
-        let video_width = self.video_width as f32;
-        let video_height = self.video_height as f32;
-
-        let rotation = self.rotation % 4;
-
-        // Apply rotation transform to video coordinates
-        let (rotated_x, rotated_y) = match rotation {
-            // 0 degrees - no rotation
-            0 => (rel_x, rel_y),
-            // 90 degrees clockwise - transpose and flip X
-            1 => {
-                let x = video_height - rel_y;
-                let y = rel_x;
-                let device_x = x / video_height * screen_size.1 as f32;
-                let device_y = y / video_width * screen_size.0 as f32;
-                (device_x, device_y)
-            }
-            // 180 degrees - flip both axes
-            2 => (video_width - rel_x, video_height - rel_y),
-            // 270 degrees clockwise - transpose and flip Y
-            3 => {
-                let x = rel_y;
-                let y = video_width - rel_x;
-                let device_x = x / video_height * screen_size.1 as f32;
-                let device_y = y / video_width * screen_size.0 as f32;
-                (device_x, device_y)
-            }
-            _ => (rel_x, rel_y),
-        };
-
-        // Direct mapping from video space to device space
-        let device_x = rotated_x / video_width * screen_size.0 as f32;
-        let device_y = rotated_y / video_height * screen_size.1 as f32;
-
-        Some((device_x as u32, device_y as u32))
+        None
     }
 
     /// Process input events for mouse and keyboard
@@ -576,9 +556,7 @@ impl SAideApp {
         ctx.input(|input| {
             // Handle mouse button events
             for event in &input.events {
-                if let Some(physical_size) = self.physical_size
-                    && self.video_rect.is_some()
-                {
+                if self.init_state == InitState::Ready {
                     // Process keyboard events
                     if self.keyboard_mapping_enabled
                         && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
@@ -608,21 +586,13 @@ impl SAideApp {
                             ..
                         } = event
                         {
-                            if !self.mouse_mapping_enabled {
-                                continue;
-                            }
                             if !self.in_video_rect(pos) {
                                 continue;
                             }
 
                             info!("Processing mouse button event: {:?} at {:?}", button, pos);
 
-                            let (rel_x, rel_y) = self.video_relative_coords(*pos).unwrap();
-                            info!("Relative video coords: ({}, {})", rel_x, rel_y);
-
-                            if let Some((device_x, device_y)) =
-                                self.coordinate_transform(rel_x, rel_y, physical_size)
-                            {
+                            if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
                                 let button = MouseButton::from(*button);
                                 let _ = mouse_mapper
                                     .handle_button_event(button, *pressed, device_x, device_y)
@@ -643,10 +613,6 @@ impl SAideApp {
                             ..
                         } = event
                         {
-                            if !self.mouse_mapping_enabled {
-                                continue;
-                            }
-
                             // get mouse position
                             let pos = input.pointer.hover_pos().unwrap_or_default();
 
@@ -654,21 +620,26 @@ impl SAideApp {
                                 continue;
                             }
 
-                            let (rel_x, rel_y) = self.video_relative_coords(pos).unwrap();
-                            let (device_x, device_y) =
-                                match self.coordinate_transform(rel_x, rel_y, physical_size) {
-                                    Some(coords) => coords,
-                                    None => continue,
+                            info!("Processing mouse wheel event: {:?} at {:?}", delta, pos);
+
+                            if self.in_video_rect(&pos)
+                                && let Some((device_x, device_y)) = self.coordinate_transform(&pos)
+                            {
+                                let dir = match delta {
+                                    egui::Vec2 { x: _, y } if *y > 0.0 => WheelDirection::Up,
+                                    _ => WheelDirection::Down,
                                 };
 
-                            let dir = match delta {
-                                egui::Vec2 { x: _, y } if *y > 0.0 => WheelDirection::Up,
-                                _ => WheelDirection::Down,
-                            };
+                                if let Err(e) =
+                                    mouse_mapper.handle_wheel_event(device_x, device_y, dir)
+                                {
+                                    error!("Failed to handle wheel event: {}", e);
+                                }
 
-                            if let Err(e) = mouse_mapper.handle_wheel_event(device_x, device_y, dir)
-                            {
-                                error!("Failed to handle wheel event: {}", e);
+                                info!(
+                                    "Mouse wheel event at device coords: ({}, {})",
+                                    device_x, device_y
+                                );
                             }
                         }
                     }
