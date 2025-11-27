@@ -1,11 +1,11 @@
 use {
     crate::config::mapping::AdbAction,
     anyhow::{Context, Result, anyhow},
-    parking_lot::RwLock,
+    parking_lot::Mutex,
     std::{
         io::{BufRead, BufReader, Write},
         process::{Child, ChildStdin, Command, Stdio},
-        sync::{Arc, Condvar, Mutex},
+        sync::{Arc, Condvar},
         thread,
         time::Instant,
     },
@@ -15,35 +15,35 @@ use {
 /// ADB Shell connection manager for sending input commands to Android device
 pub struct AdbShell {
     /// ADB shell child process
-    child: RwLock<Option<Child>>,
+    child: Mutex<Option<Child>>,
     /// Stdin of the shell process for sending commands
-    stdin: RwLock<Option<ChildStdin>>,
+    stdin: Mutex<Option<ChildStdin>>,
     /// Connection state
-    connected: RwLock<bool>,
+    connected: Mutex<bool>,
     /// Last activity timestamp
-    last_activity: RwLock<Instant>,
+    last_activity: Mutex<Instant>,
     /// Device physical screen size
-    screen_size: RwLock<Option<(u32, u32)>>,
+    screen_size: Mutex<Option<(u32, u32)>>,
     /// Output buffer for shell responses (thread-safe)
     output_buffer: Arc<Mutex<Vec<String>>>,
     /// Condition variable for signaling new output
     output_condvar: Arc<Condvar>,
     /// Background thread handle
-    reader_thread: RwLock<Option<thread::JoinHandle<()>>>,
+    reader_thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl AdbShell {
     /// Create a new ADB shell connection manager
     pub fn new() -> Self {
         Self {
-            child: RwLock::new(None),
-            stdin: RwLock::new(None),
-            connected: RwLock::new(false),
-            last_activity: RwLock::new(Instant::now()),
-            screen_size: RwLock::new(None),
+            child: Mutex::new(None),
+            stdin: Mutex::new(None),
+            connected: Mutex::new(false),
+            last_activity: Mutex::new(Instant::now()),
+            screen_size: Mutex::new(None),
             output_buffer: Arc::new(Mutex::new(Vec::new())),
             output_condvar: Arc::new(Condvar::new()),
-            reader_thread: RwLock::new(None),
+            reader_thread: Mutex::new(None),
         }
     }
 
@@ -53,7 +53,7 @@ impl AdbShell {
 
         {
             // Kill any existing connection
-            if let Some(mut child) = self.child.write().take() {
+            if let Some(mut child) = self.child.lock().take() {
                 let _ = child.kill();
             }
         }
@@ -81,7 +81,7 @@ impl AdbShell {
 
         // Clear output buffer
         {
-            let mut buffer = self.output_buffer.lock().unwrap();
+            let mut buffer = self.output_buffer.lock();
             buffer.clear();
         }
 
@@ -93,7 +93,7 @@ impl AdbShell {
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
-                        let mut buffer = output_buffer.lock().unwrap();
+                        let mut buffer = output_buffer.lock();
                         buffer.push(line);
                         // Notify waiting threads
                         output_condvar.notify_one();
@@ -104,16 +104,16 @@ impl AdbShell {
         });
 
         {
-            self.child.write().replace(child);
-            self.stdin.write().replace(stdin);
+            self.child.lock().replace(child);
+            self.stdin.lock().replace(stdin);
 
             self.screen_size
-                .write()
+                .lock()
                 .replace(Self::get_physical_screen_size()?);
 
-            *self.last_activity.write() = Instant::now();
-            *self.connected.write() = true;
-            *self.reader_thread.write() = Some(reader_thread);
+            *self.last_activity.lock() = Instant::now();
+            *self.connected.lock() = true;
+            *self.reader_thread.lock() = Some(reader_thread);
         }
 
         info!("Successfully connected to ADB shell");
@@ -125,21 +125,21 @@ impl AdbShell {
         info!("Disconnecting from ADB shell...");
 
         {
-            if let Some(mut child) = self.child.write().take() {
+            if let Some(mut child) = self.child.lock().take() {
                 let _ = child.kill();
             }
         }
 
         // Join the reader thread
         {
-            let mut reader_thread = self.reader_thread.write();
+            let mut reader_thread = self.reader_thread.lock();
             if let Some(thread) = reader_thread.take() {
                 drop(thread);
             }
         }
 
         {
-            *self.connected.write() = false;
+            *self.connected.lock() = false;
         }
 
         info!("Disconnected from ADB shell");
@@ -147,10 +147,10 @@ impl AdbShell {
     }
 
     /// Check if connected to ADB shell
-    pub fn is_connected(&self) -> bool { *self.connected.read() }
+    pub fn is_connected(&self) -> bool { *self.connected.lock() }
 
     /// Get device screen size
-    pub fn get_screen_size(&self) -> Option<(u32, u32)> { *self.screen_size.read() }
+    pub fn get_screen_size(&self) -> Option<(u32, u32)> { *self.screen_size.lock() }
 
     /// Send input command to Android device
     pub fn send_input(&self, command: &AdbAction) -> Result<()> {
@@ -200,7 +200,7 @@ impl AdbShell {
         };
 
         {
-            let mut stdin = self.stdin.write();
+            let mut stdin = self.stdin.lock();
             let Some(stdin) = stdin.as_mut() else {
                 return Err(anyhow!("ADB shell stdin not available"));
             };
@@ -213,7 +213,7 @@ impl AdbShell {
         }
 
         {
-            *self.last_activity.write() = Instant::now();
+            *self.last_activity.lock() = Instant::now();
         }
 
         info!("Sent ADB input command: {}", cmd_str.trim());
@@ -270,7 +270,7 @@ impl AdbShell {
         let marker = format!("SAIDE_ROTATION_{}", counter);
 
         {
-            let mut stdin = self.stdin.write();
+            let mut stdin = self.stdin.lock();
             let Some(stdin) = stdin.as_mut() else {
                 return Err(anyhow!("ADB shell stdin not available"));
             };
@@ -311,7 +311,7 @@ impl AdbShell {
             }
 
             // Lock buffer and check for marker
-            let buffer = self.output_buffer.lock().unwrap();
+            let buffer = self.output_buffer.lock();
             let lines: Vec<String> = buffer.clone();
             drop(buffer);
 
@@ -342,7 +342,7 @@ impl AdbShell {
 
                 // Clear processed lines from buffer (including marker and end marker)
                 {
-                    let mut buffer = self.output_buffer.lock().unwrap();
+                    let mut buffer = self.output_buffer.lock();
                     let clear_to = (idx + response_lines.len() + 2).min(buffer.len());
                     if clear_to > 0 {
                         buffer.drain(0..clear_to);

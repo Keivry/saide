@@ -55,4 +55,4 @@ mappings = [
 initial_state = true
 
 [logging]
-level = "debug"
+level = "info"
