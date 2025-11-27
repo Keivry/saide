@@ -4,19 +4,21 @@ use {
         controller::adb::AdbShell,
     },
     anyhow::Result,
-    parking_lot::RwLock,
-    std::sync::Arc,
     tracing::debug,
 };
 
 /// Mouse mapping state
 pub struct MouseMapper {
-    adb_shell: Arc<RwLock<AdbShell>>,
+    adb_shell: AdbShell,
 }
 
 impl MouseMapper {
     /// Create a new mouse mapper
-    pub fn new(adb_shell: Arc<RwLock<AdbShell>>) -> Self { Self { adb_shell } }
+    pub fn new() -> Self {
+        Self {
+            adb_shell: AdbShell::new(),
+        }
+    }
 
     /// Handle mouse button event
     pub fn handle_button_event(
@@ -37,7 +39,7 @@ impl MouseMapper {
             MouseButton::Right => AdbAction::Back,
             MouseButton::Middle => AdbAction::Home,
         };
-        self.adb_shell.write().send_input(&action)?;
+        self.adb_shell.send_input(&action)?;
 
         debug!(
             "Mouse button {} (pressed: {}) at ({}, {}) -> {:?}",
@@ -49,10 +51,7 @@ impl MouseMapper {
 
     /// Handle mouse wheel event
     pub fn handle_wheel_event(&self, x: u32, y: u32, dir: WheelDirection) -> Result<()> {
-        if let Some(screen_size) = {
-            // immediately release the lock after getting screen size
-            self.adb_shell.read().get_screen_size()
-        } {
+        if let Some(screen_size) = self.adb_shell.get_screen_size() {
             let action = match dir {
                 WheelDirection::Up => AdbAction::Swipe {
                     x1: x,
@@ -69,7 +68,7 @@ impl MouseMapper {
                     duration: 100,
                 },
             };
-            self.adb_shell.write().send_input(&action)?;
+            self.adb_shell.send_input(&action)?;
 
             debug!("Mouse wheel {:?} at ({}, {}) -> {:?}", dir, x, y, action);
         }

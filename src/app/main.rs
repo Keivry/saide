@@ -14,7 +14,6 @@ use {
         egui_wgpu,
     },
     once_cell::sync::Lazy,
-    parking_lot::RwLock,
     std::{
         sync::Arc,
         thread,
@@ -36,12 +35,17 @@ const TOOLBAR_BTN_COUNT: usize = 1;
 const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
 
+enum DeviceMonitorEvent {
+    /// Device rotated event with new orientation (0-3), clockwise
+    Rotated(u32),
+}
+
 /// Initialization result type
 enum InitResult {
     Scrcpy(Scrcpy),
-    AdbShell(Arc<RwLock<AdbShell>>),
     KeyboardMapper(Option<KeyboardMapper>),
     MouseMapper(Option<MouseMapper>),
+    DeviceMonitor(Receiver<DeviceMonitorEvent>),
     FrameReceiver(Receiver<Arc<Yu12Frame>>),
     PhysicalSize((u32, u32)),
     VideoDimensions((u32, u32)),
@@ -94,13 +98,13 @@ pub struct SAideApp {
     /// Scrcpy process manager
     scrcpy: Option<Scrcpy>,
 
-    /// ADB shell interface
-    adb_shell: Option<Arc<RwLock<AdbShell>>>,
-
     /// Mouse input mapper
     mouse_mapper: Option<MouseMapper>,
     /// Keyboard input mapper
     keyboard_mapper: Option<KeyboardMapper>,
+
+    /// Device monitor receiver
+    device_monitor_rx: Option<Receiver<DeviceMonitorEvent>>,
 
     /// Video frame receiver
     frame_rx: Option<Receiver<Arc<Yu12Frame>>>,
@@ -112,16 +116,19 @@ pub struct SAideApp {
     /// Device physical screen size
     physical_size: Option<(u32, u32)>,
 
+    /// Device orientation (0-3), clockwise
+    orientation: u32,
+
     video_width: u32,
     video_height: u32,
 
-    // V4l2 capture orientation (0-3)
+    // V4l2 capture orientation (0-3), counter-clockwise
     capture_orientation: u32,
 
     /// Video display rectangle in egui coordinates
     video_rect: Option<egui::Rect>,
 
-    // Video rotation state (0-3) without capture orientation
+    // Video render rotation state (0-3), clockwise
     rotation: u32,
 
     // Current FPS
@@ -167,16 +174,17 @@ impl SAideApp {
         Self {
             config: Arc::new(config),
             scrcpy: None,
-            adb_shell: None,
             mouse_mapper: None,
             keyboard_mapper: None,
+            device_monitor_rx: None,
             frame_rx: None,
             frame: None,
             last_frame_instant: None,
+            physical_size: None,
+            orientation: 0,
             video_width: 0,
             video_height: 0,
             capture_orientation: 0,
-            physical_size: None,
             video_rect: None,
             rotation: 0,
             fps: 0.0,
@@ -198,9 +206,7 @@ impl SAideApp {
 
         // Scrcpy initialization
         let config = self.config.clone();
-        let mapper_config = self.config.clone();
         let scrcpy_tx = tx.clone();
-        let mapper_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize scrcpy manager
             let mut scrcpy = Scrcpy::new(config.scrcpy.clone());
@@ -218,23 +224,41 @@ impl SAideApp {
             Ok(())
         });
 
-        // ADB shell and input mappers initialization
+        // Delay to allow scrcpy to start ADB server
+        thread::sleep(Duration::from_millis(500));
+
+        // Device monitor initialization
+        let dm_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize ADB shell
-            let mut adb_shell = AdbShell::new();
+            let adb_shell = AdbShell::new();
             adb_shell.connect()?;
-            let adb_shell = Arc::new(RwLock::new(adb_shell));
             debug!("ADB shell connected");
 
+            // Get device physical screen size
+            let physical_size = {
+                adb_shell.get_screen_size().ok_or_else(|| {
+                    anyhow!("Failed to get device physical screen size from ADB shell")
+                })
+            }?;
+            debug!(
+                "Device physical screen size: {}x{}",
+                physical_size.0, physical_size.1
+            );
+
+            dm_tx.send(InitResult::PhysicalSize(physical_size))?;
+            Ok(())
+        });
+
+        let kbd_config = self.config.clone();
+        let kbd_tx = tx.clone();
+        thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize keyboard mapper
-            let mut keyboard_mapper =
-                mapper_config
-                    .mappings
-                    .keyboard
-                    .clone()
-                    .map(|keyboard_config| {
-                        KeyboardMapper::new(keyboard_config.clone(), adb_shell.clone())
-                    });
+            let mut keyboard_mapper = kbd_config
+                .mappings
+                .keyboard
+                .clone()
+                .map(|keyboard_config| KeyboardMapper::new(keyboard_config.clone()));
             debug!("Keyboard mapper initialized");
 
             // TODO: Set default profile if specified
@@ -245,31 +269,24 @@ impl SAideApp {
                 keyboard_mapper.set_active_profile(0);
             }
 
+            kbd_tx.send(InitResult::KeyboardMapper(keyboard_mapper))?;
+            Ok(())
+        });
+
+        let mouse_config = self.config.clone();
+        let mouse_tx = tx.clone();
+        thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize mouse mapper
-            let mouse_mapper = mapper_config
+            let mouse_mapper = mouse_config
                 .mappings
                 .mouse
                 .clone()
                 .unwrap_or_default()
                 .initial_state
-                .then_some(MouseMapper::new(adb_shell.clone()));
+                .then_some(MouseMapper::new());
             debug!("Mouse mapper initialized");
 
-            // Get device physical screen size
-            let physical_size = {
-                adb_shell.read().get_screen_size().ok_or_else(|| {
-                    anyhow!("Failed to get device physical screen size from ADB shell")
-                })
-            }?;
-            debug!(
-                "Device physical screen size: {}x{}",
-                physical_size.0, physical_size.1
-            );
-
-            mapper_tx.send(InitResult::AdbShell(adb_shell))?;
-            mapper_tx.send(InitResult::KeyboardMapper(keyboard_mapper))?;
-            mapper_tx.send(InitResult::MouseMapper(mouse_mapper))?;
-            mapper_tx.send(InitResult::PhysicalSize(physical_size))?;
+            mouse_tx.send(InitResult::MouseMapper(mouse_mapper))?;
             Ok(())
         });
 
@@ -333,14 +350,14 @@ impl SAideApp {
                     InitResult::Scrcpy(scrcpy) => {
                         self.scrcpy = Some(scrcpy);
                     }
-                    InitResult::AdbShell(adb_shell) => {
-                        self.adb_shell = Some(adb_shell);
-                    }
                     InitResult::KeyboardMapper(keyboard_mapper) => {
                         self.keyboard_mapper = keyboard_mapper;
                     }
                     InitResult::MouseMapper(mouse_mapper) => {
                         self.mouse_mapper = mouse_mapper;
+                    }
+                    InitResult::DeviceMonitor(_device_monitor_rx) => {
+                        self.device_monitor_rx = Some(_device_monitor_rx);
                     }
                     InitResult::FrameReceiver(frame_rx) => {
                         self.frame_rx = Some(frame_rx);
@@ -365,7 +382,7 @@ impl SAideApp {
 
             // Check if all components are initialized
             if self.scrcpy.is_some()
-                && self.adb_shell.is_some()
+                && self.device_monitor_rx.is_some()
                 && self.frame_rx.is_some()
                 && self.video_width > 0
                 && self.video_height > 0
@@ -494,6 +511,25 @@ impl SAideApp {
         }
 
         None
+    }
+
+    /// Process device monitor events
+    fn process_device_monitor_events(&mut self) {
+        if self.init_state != InitState::Ready {
+            debug!("Skipping device monitor processing - not initialized");
+            return;
+        }
+
+        if let Some(rx) = self.device_monitor_rx.as_ref() {
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    DeviceMonitorEvent::Rotated(new_orientation) => {
+                        debug!("Device rotated to orientation: {}", new_orientation * 90);
+                        self.orientation = new_orientation;
+                    }
+                }
+            }
+        }
     }
 
     /// Process input events for mouse and keyboard
@@ -788,15 +824,18 @@ impl eframe::App for SAideApp {
             InitState::Ready => {
                 // Fully initialized, show main UI
                 self.draw_main_ui(ctx);
+
+                // Handle input events
+                self.process_input_events(ctx);
+
+                // Check for device monitor events
+                self.process_device_monitor_events();
             }
             InitState::Failed => {
                 // Failed state, waiting for user action
                 self.draw_error_overlay(ctx, "Initialization failed.");
             }
         }
-
-        // Handle input events
-        self.process_input_events(ctx);
 
         ctx.request_repaint();
     }

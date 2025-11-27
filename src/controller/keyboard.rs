@@ -4,7 +4,6 @@ use {
         controller::adb::AdbShell,
     },
     anyhow::Result,
-    parking_lot::RwLock,
     std::sync::Arc,
     tracing::info,
 };
@@ -12,16 +11,16 @@ use {
 /// Keyboard mapping state
 pub struct KeyboardMapper {
     config: Arc<KeyboardConfig>,
-    adb_shell: Arc<RwLock<AdbShell>>,
+    adb_shell: AdbShell,
     active_profile: Option<usize>,
 }
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(config: Arc<KeyboardConfig>, adb_shell: Arc<RwLock<AdbShell>>) -> Self {
+    pub fn new(config: Arc<KeyboardConfig>) -> Self {
         Self {
             config,
-            adb_shell,
+            adb_shell: AdbShell::new(),
             active_profile: None,
         }
     }
@@ -57,7 +56,7 @@ impl KeyboardMapper {
         self.config.profiles[self.active_profile.unwrap()]
             .mappings
             .get(key)
-            .map(|action| self.adb_shell.write().send_input(action));
+            .map(|action| self.adb_shell.send_input(action));
 
         Ok(())
     }
