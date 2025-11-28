@@ -322,28 +322,15 @@ impl MouseMapper {
     }
 
     /// Handle mouse wheel event
-    pub fn handle_wheel_event(&self, x: u32, y: u32, dir: WheelDirection) -> Result<()> {
-        if let Some(screen_size) = self.adb_shell.get_screen_size() {
-            let action = match dir {
-                WheelDirection::Up => AdbAction::Swipe {
-                    x1: x,
-                    y1: y,
-                    x2: x,
-                    y2: y.saturating_sub(300),
-                    duration: 100,
-                },
-                WheelDirection::Down => AdbAction::Swipe {
-                    x1: x,
-                    y1: y,
-                    x2: x,
-                    y2: (y + 300).min(screen_size.1),
-                    duration: 100,
-                },
-            };
-            self.adb_shell.send_input(&action)?;
+    pub fn handle_wheel_event(&self, x: u32, y: u32, dir: &WheelDirection) -> Result<()> {
+        let action = AdbAction::Scroll {
+            x,
+            y,
+            direction: dir.clone(),
+        };
+        self.adb_shell.send_input(&action)?;
 
-            debug!("Mouse wheel {:?} at ({}, {}) -> {:?}", dir, x, y, action);
-        }
+        debug!("Mouse wheel {:?}", dir);
 
         Ok(())
     }

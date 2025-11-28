@@ -624,7 +624,7 @@ impl SAideApp {
     /// Process input events for mouse and keyboard
     fn process_input_events(&mut self, ctx: &egui::Context) {
         if self.init_state != InitState::Ready {
-            debug!("Skipping input processing - not initialized");
+            trace!("Skipping input processing - not initialized");
             return;
         }
 
@@ -690,10 +690,10 @@ impl SAideApp {
                             }
                         } else if let egui::Event::PointerMoved(pos) = event {
                             // Handle mouse move for drag detection
-                            trace!("PointerMoved event at {:?}", pos);
-
-                            if !self.is_in_video_rect(pos) {
-                                trace!("PointerMoved outside video rect");
+                            if self.is_in_video_rect(pos) {
+                                trace!("PointerMoved inside video rect at {:?}", pos);
+                            } else {
+                                trace!("PointerMoved outside video rect at {:?}", pos);
                                 continue;
                             }
 
@@ -732,7 +732,7 @@ impl SAideApp {
                                 };
 
                                 if let Err(e) =
-                                    mouse_mapper.handle_wheel_event(device_x, device_y, dir)
+                                    mouse_mapper.handle_wheel_event(device_x, device_y, &dir)
                                 {
                                     error!("Failed to handle wheel event: {}", e);
                                 }

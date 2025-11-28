@@ -1,5 +1,5 @@
 use {
-    crate::config::mapping::AdbAction,
+    crate::config::mapping::{AdbAction, WheelDirection},
     anyhow::{Context, Result, anyhow},
     parking_lot::Mutex,
     std::{
@@ -183,6 +183,12 @@ impl AdbShell {
             AdbAction::TouchUp { x, y } => {
                 format!("input motionevent UP {} {}\n", x, y)
             }
+            AdbAction::Scroll { x, y, direction } => match direction {
+                WheelDirection::Up => format!("input mouse scroll {} {} --axis VSCROLL,-5\n", x, y),
+                WheelDirection::Down => {
+                    format!("input mouse scroll {} {} --axis VSCROLL,5\n", x, y)
+                }
+            },
             AdbAction::Key { keycode } => {
                 format!("input keyevent {}\n", keycode)
             }

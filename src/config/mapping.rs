@@ -26,7 +26,7 @@ pub enum MouseButton {
     // TODO: Add extra buttons
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WheelDirection {
     Up,
     Down,
@@ -83,6 +83,11 @@ pub enum AdbAction {
     TouchUp {
         x: u32,
         y: u32,
+    },
+    Scroll {
+        x: u32,
+        y: u32,
+        direction: WheelDirection,
     },
     Key {
         keycode: String,
