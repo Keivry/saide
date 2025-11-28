@@ -7,7 +7,7 @@ use {
         process::{Child, ChildStdin, Command, Stdio},
         sync::{Arc, Condvar},
         thread,
-        time::{Duration, Instant},
+        time::Instant,
     },
     tracing::{debug, info, trace, warn},
 };
@@ -235,7 +235,7 @@ impl AdbShell {
             .context("Failed to execute adb shell wm size command")?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
-        info!("wm size output: {}", output_str.trim());
+        debug!("wm size output: {}", output_str.trim());
 
         // Parse output like "Physical size: 1080x2340"
         if let Some(line) = output_str
@@ -258,112 +258,41 @@ impl AdbShell {
         ))
     }
 
-    /// Get Android device screen orientation using existing shell connection
-    pub fn get_screen_orientation(&self) -> Result<u32> {
-        // Check if shell is connected
-        if !self.is_connected() {
-            return Err(anyhow!("ADB shell not connected"));
-        }
+    /// Get Android device screen orientation using separate adb command
+    pub fn get_screen_orientation() -> Result<u32> {
+        // Use separate adb command to get screen orientation, not through shell session
+        let output = Command::new("adb")
+            .args(["shell", "dumpsys window displays | grep mCurrentRotation"])
+            .output()
+            .context("Failed to execute adb shell dumpsys window displays command")?;
 
-        // Generate unique marker using timestamp and counter
-        static COUNTER: Mutex<u64> = Mutex::new(0);
-        let counter = {
-            let mut c = COUNTER.lock();
-            *c = c.wrapping_add(1);
-            *c
-        };
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        trace!(
+            "Check screen rotation command output: {}",
+            output_str.trim()
+        );
 
-        let marker = format!("SAIDE_ROTATION_{}", counter);
-
+        // Parse output like "mCurrentRotation=ROTATION_0"
+        if let Some(line) = output_str
+            .lines()
+            .find(|line| line.contains("mCurrentRotation"))
+            && let Some(rotation_part) = line.split('=').nth(1)
         {
-            let mut stdin = self.stdin.lock();
-            let Some(stdin) = stdin.as_mut() else {
-                return Err(anyhow!("ADB shell stdin not available"));
-            };
-
-            // Send command with unique marker
-            let cmd = format!(
-                "echo {}\n dumpsys window displays | grep mCurrentRotation\n echo END_{}\n",
-                marker, counter
-            );
-            stdin.write_all(cmd.as_bytes())?;
-            stdin.flush()?;
+            let rotation_str = rotation_part.trim();
+            // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
+            return Ok(match rotation_str {
+                "ROTATION_0" => 0,
+                "ROTATION_90" => 1,
+                "ROTATION_180" => 2,
+                "ROTATION_270" => 3,
+                other => return Err(anyhow!("Unknown rotation value: {}", other)),
+            });
         }
 
-        // Wait for and parse response
-        let rotation =
-            self.wait_for_response_with_marker(&marker, &counter, Duration::from_millis(2000))?;
-
-        Ok(rotation)
-    }
-
-    /// Wait for shell response with specific marker
-    fn wait_for_response_with_marker(
-        &self,
-        marker: &str,
-        counter: &u64,
-        timeout: Duration,
-    ) -> Result<u32> {
-        let start = Instant::now();
-        let end_marker = format!("END_{}", counter);
-
-        loop {
-            // Check timeout
-            if start.elapsed() > timeout {
-                return Err(anyhow!("Timeout waiting for shell response"));
-            }
-
-            // Lock buffer and check for marker
-            let buffer = self.output_buffer.lock();
-            let lines: Vec<String> = buffer.clone();
-            drop(buffer);
-
-            // Look for our marker in recent output
-            let marker_idx = lines.iter().position(|line: &String| line.trim() == marker);
-
-            if let Some(idx) = marker_idx {
-                trace!("Found marker at index {}, parse response...", idx);
-
-                // Parse lines after marker until end marker
-                let mut counted_lines = 0;
-                for line in lines.iter().skip(idx + 1) {
-                    let line = line.trim();
-
-                    if line == end_marker {
-                        trace!("Found end marker, stopping parsing");
-                        break;
-                    }
-
-                    if line.contains("mCurrentRotation")
-                        && let Some(rotation_part) = line.split('=').nth(1)
-                    {
-                        let rotation_str = rotation_part.trim();
-                        // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
-                        return Ok(match rotation_str {
-                            "ROTATION_0" => 0,
-                            "ROTATION_90" => 1,
-                            "ROTATION_180" => 2,
-                            "ROTATION_270" => 3,
-                            other => return Err(anyhow!("Unknown rotation value: {}", other)),
-                        });
-                    }
-
-                    counted_lines += 1;
-                }
-
-                // Clear processed lines from buffer (including marker and end marker)
-                {
-                    let mut buffer = self.output_buffer.lock();
-                    let clear_to = (idx + counted_lines + 2).min(buffer.len());
-                    if clear_to > 0 {
-                        buffer.drain(0..clear_to);
-                    }
-                }
-            }
-
-            // Wait a bit before checking again
-            thread::sleep(Duration::from_millis(30));
-        }
+        Err(anyhow!(
+            "Failed to parse screen orientation from output: {}",
+            output_str.trim()
+        ))
     }
 }
 

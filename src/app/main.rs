@@ -284,7 +284,7 @@ impl SAideApp {
             let mut last_rotation = None;
             loop {
                 // Poll rotation state every 500ms
-                match adb_shell.get_screen_orientation() {
+                match AdbShell::get_screen_orientation() {
                     Ok(current_rotation) => {
                         if Some(current_rotation) != last_rotation {
                             debug!(
