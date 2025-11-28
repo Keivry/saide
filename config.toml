@@ -7,17 +7,17 @@ buffer = 0
 
 [scrcpy.video]
 bit_rate = "24M"
-max_fps = 90
+max_fps = 60
 max_size = 1600
 codec = "h264"
 encoder = "c2.mtk.avc.encoder"
 
 [scrcpy.options]
-turn_screen_off = true
+turn_screen_off = false
 stay_awake = true
 
 [gpu]
-vsync = true
+vsync = false
 backend = "VULKAN"
 
 [mappings.keyboard]

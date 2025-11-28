@@ -129,6 +129,9 @@ pub struct SAideApp {
     // Current FPS
     fps: f32,
 
+    // Frame rate limiter duration
+    frame_rate_limiter: Option<Duration>,
+
     /// Initialization state machine
     init_state: InitState,
     init_instant: Option<Instant>,
@@ -169,6 +172,9 @@ impl SAideApp {
             .as_ref()
             .is_none_or(|m| m.initial_state);
 
+        let max_fps = config.scrcpy.video.max_fps;
+        let vsync = config.gpu.vsync;
+
         Self {
             config: Arc::new(config),
 
@@ -201,6 +207,12 @@ impl SAideApp {
             rotation: 0,
 
             fps: 0.0,
+
+            frame_rate_limiter: if vsync {
+                None
+            } else {
+                Some(Duration::from_millis((1000 / max_fps) as u64))
+            },
 
             init_state: InitState::NotStarted,
             init_instant: None,
@@ -787,7 +799,6 @@ impl SAideApp {
         {
             // Update frame and timestamp
             self.frame = Some(frame);
-            self.last_frame_instant = Some(Instant::now());
             self.has_new_frame = true;
         }
 
@@ -797,6 +808,10 @@ impl SAideApp {
             if elapsed > 0.0 {
                 self.fps = 0.95 * self.fps + 0.05 * (1.0 / elapsed);
             }
+        }
+
+        if self.has_new_frame {
+            self.last_frame_instant = Some(Instant::now());
         }
     }
 
@@ -837,6 +852,7 @@ impl SAideApp {
                 "Resolution: {}x{} | FPS: {} | Device Rotation: {}° | Capture Orientation: {}° | Video Rotation: {}°",
                 self.video_width,
                 self.video_height,
+                // Clamp FPS to max configured FPS
                 self.fps.min(self.config.scrcpy.video.max_fps as f32) as u32,
                 self.orientation * 90,
                 self.capture_orientation * 90,
@@ -995,13 +1011,12 @@ impl eframe::App for SAideApp {
         if !self.config.gpu.vsync
             && !self.has_new_frame
             && let Some(last_paint) = self.last_paint_instant
+            && let Some(limit_next_frame_timer) = self.frame_rate_limiter
         {
             let elapsed = last_paint.elapsed();
-            let target_frame_duration = Duration::from_millis(33);
-
-            if elapsed < target_frame_duration {
+            if elapsed < limit_next_frame_timer {
                 // limit frame rate
-                thread::sleep(target_frame_duration - elapsed);
+                thread::sleep(limit_next_frame_timer - elapsed);
             }
         }
 
