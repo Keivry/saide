@@ -28,9 +28,10 @@ nix = { version = "0.30", features = ["process", "signal"] }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+lazy_static = "1.5.0"
 parking_lot = "0.12.5"
 sysinfo = "0.37.2"
-lazy_static = "1.5.0"
 
 [profile.dev]
 opt-level = 0

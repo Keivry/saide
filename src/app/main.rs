@@ -42,6 +42,8 @@ const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 1;
 enum DeviceMonitorEvent {
     /// Device rotated event with new orientation (0-3), clockwise
     Rotated(u32),
+    /// Device input method (IME) state changed, true = shown, false = hidden
+    ImStateChanged(bool),
 }
 
 const INIT_RESULT_CHANNEL_CAPACITY: usize = 8;
@@ -147,6 +149,9 @@ pub struct SAideApp {
 
     /// Keyboard custom mapping switch
     keyboard_custom_mapping_enabled: bool,
+
+    /// Android device input method state
+    device_ime_state: bool,
 }
 
 impl SAideApp {
@@ -214,6 +219,8 @@ impl SAideApp {
             keyboard_enabled,
             mouse_enabled,
             keyboard_custom_mapping_enabled,
+
+            device_ime_state: false,
         }
     }
 
@@ -288,7 +295,7 @@ impl SAideApp {
             dm_tx.send(InitResult::PhysicalSize(physical_size))?;
             dm_tx.send(InitResult::DeviceMonitor(event_rx))?;
 
-            // Start rotation monitoring
+            // Start rotation and im state monitoring
             let mut last_rotation = None;
             loop {
                 // Poll rotation state every 500ms
@@ -313,6 +320,15 @@ impl SAideApp {
                     Err(e) => {
                         warn!("Failed to get screen orientation: {}", e);
                     }
+                }
+
+                // Poll input method state
+                if let Ok(im_state) = AdbShell::get_ime_state() {
+                    event_tx
+                        .send(DeviceMonitorEvent::ImStateChanged(im_state))
+                        .unwrap_or_else(|e| {
+                            error!("Failed to send IME state event: {}", e);
+                        });
                 }
 
                 thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
@@ -664,6 +680,12 @@ impl SAideApp {
                         debug!("Device rotated to orientation: {}", new_orientation * 90);
                         self.orientation = new_orientation;
                     }
+                    DeviceMonitorEvent::ImStateChanged(im_state) => {
+                        if im_state != self.device_ime_state {
+                            debug!("Device IME state changed: {}", im_state);
+                            self.device_ime_state = im_state;
+                        }
+                    }
                 }
             }
         }
@@ -702,11 +724,13 @@ impl SAideApp {
                         && *pressed
                     {
                         debug!("Processing keyboard event: {:?}", event);
-                        if let Err(e) = if self.keyboard_custom_mapping_enabled {
-                            keyboard_mapper.handle_custom_keymapping_event(key, *pressed)
-                        } else {
-                            keyboard_mapper.handle_standard_key_event(key)
-                        } {
+                        if let Err(e) =
+                            if self.keyboard_custom_mapping_enabled && !self.device_ime_state {
+                                keyboard_mapper.handle_custom_keymapping_event(key, *pressed)
+                            } else {
+                                keyboard_mapper.handle_standard_key_event(key)
+                            }
+                        {
                             error!("Failed to handle keyboard event: {}", e);
                         }
                     }

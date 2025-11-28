@@ -294,6 +294,23 @@ impl AdbShell {
             output_str.trim()
         ))
     }
+
+    // Get android device input method state
+    pub fn get_ime_state() -> Result<bool> {
+        let exit_status = Command::new("adb")
+            .args([
+                "shell",
+                "dumpsys window InputMethod | grep 'isVisible=true'",
+            ])
+            .stdout(Stdio::null())
+            .status()
+            .context("Failed to execute adb shell dumpsys window InputMethod command")?;
+
+        if exit_status.success() {
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }
 
 impl Drop for AdbShell {

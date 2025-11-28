@@ -16,7 +16,7 @@ codec = "h264"
 encoder = "c2.mtk.avc.encoder"
 
 [scrcpy.options]
-turn_screen_off = false
+turn_screen_off = true
 stay_awake = true
 
 [gpu]
@@ -25,7 +25,7 @@ backend = "VULKAN"
 
 [mappings]
 toggle = "F10"
-initial_state = false
+initial_state = true
 show_notification = true
 
 [[mappings.profiles]]
@@ -55,4 +55,4 @@ mappings = [
 ]
 
 [logging]
-level = "debug"
+level = "info"
