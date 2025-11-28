@@ -35,10 +35,14 @@ const TOOLBAR_BTN_COUNT: usize = 1;
 const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
 
+const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 500;
+const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 1;
 enum DeviceMonitorEvent {
     /// Device rotated event with new orientation (0-3), clockwise
     Rotated(u32),
 }
+
+const INIT_RESULT_CHANNEL_CAPACITY: usize = 8;
 
 /// Initialization result type
 enum InitResult {
@@ -98,6 +102,12 @@ pub struct SAideApp {
     /// Timestamp of last received frame
     last_frame_instant: Option<Instant>,
 
+    // Flag indicating new frame availability
+    has_new_frame: bool,
+
+    /// Timestamp of last paint
+    last_paint_instant: Option<Instant>,
+
     /// Device physical screen size
     physical_size: Option<(u32, u32)>,
 
@@ -125,10 +135,13 @@ pub struct SAideApp {
     init_rx: Option<Receiver<InitResult>>,
 
     /// Keyboard mapping switch
-    keyboard_mapping_enabled: bool,
+    keyboard_enabled: bool,
 
     /// Mouse mapping switch
-    mouse_mapping_enabled: bool,
+    mouse_enabled: bool,
+
+    /// Keyboard custom mapping switch
+    keyboard_custom_mapping_enabled: bool,
 }
 
 impl SAideApp {
@@ -158,26 +171,44 @@ impl SAideApp {
 
         Self {
             config: Arc::new(config),
+
             scrcpy: None,
+
             mouse_mapper: None,
             keyboard_mapper: None,
+
             device_monitor_rx: None,
+
             frame_rx: None,
             frame: None,
             last_frame_instant: None,
+
+            has_new_frame: false,
+
+            last_paint_instant: None,
+
             physical_size: None,
+
             orientation: 0,
+
             video_width: 0,
             video_height: 0,
+
             capture_orientation: 0,
+
             video_rect: None,
+
             rotation: 0,
+
             fps: 0.0,
+
             init_state: InitState::NotStarted,
             init_instant: None,
             init_rx: None,
-            keyboard_mapping_enabled,
-            mouse_mapping_enabled,
+
+            keyboard_enabled: keyboard_mapping_enabled,
+            mouse_enabled: mouse_mapping_enabled,
+            keyboard_custom_mapping_enabled: false,
         }
     }
 
@@ -186,7 +217,7 @@ impl SAideApp {
         self.init_state = InitState::InProgress;
         self.init_instant = Some(Instant::now());
 
-        let (tx, rx) = bounded::<InitResult>(8);
+        let (tx, rx) = bounded::<InitResult>(INIT_RESULT_CHANNEL_CAPACITY);
         self.init_rx = Some(rx);
 
         // Scrcpy initialization
@@ -232,7 +263,8 @@ impl SAideApp {
             );
 
             // Create channel for rotation events
-            let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(10);
+            let (event_tx, event_rx) =
+                bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
             dm_tx.send(InitResult::PhysicalSize(physical_size))?;
             dm_tx.send(InitResult::DeviceMonitor(event_rx))?;
 
@@ -263,7 +295,7 @@ impl SAideApp {
                     }
                 }
 
-                thread::sleep(Duration::from_millis(500));
+                thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
             }
 
             Ok(())
@@ -316,7 +348,7 @@ impl SAideApp {
         let v4l2_config = self.config.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Channel for frame transfer
-            let (tx, rx) = bounded::<Arc<Yu12Frame>>(2);
+            let (tx, rx) = bounded::<Arc<Yu12Frame>>(1);
 
             let mut capture = match V4l2Capture::new(
                 &v4l2_config.scrcpy.v4l2.device,
@@ -629,7 +661,7 @@ impl SAideApp {
         }
 
         // Update mouse state (check for long press and send drag updates)
-        if self.mouse_mapping_enabled
+        if self.mouse_enabled
             && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
             && let Err(e) = mouse_mapper.update()
         {
@@ -641,7 +673,7 @@ impl SAideApp {
             for event in &input.events {
                 if self.init_state == InitState::Ready {
                     // Process keyboard events
-                    if self.keyboard_mapping_enabled
+                    if self.keyboard_enabled
                         && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
                         && let egui::Event::Key {
                             key,
@@ -658,7 +690,7 @@ impl SAideApp {
                     }
 
                     // Process mouse events
-                    if self.mouse_mapping_enabled
+                    if self.mouse_enabled
                         && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
                     {
                         if let egui::Event::PointerButton {
@@ -749,6 +781,25 @@ impl SAideApp {
         });
     }
 
+    fn receive_frame(&mut self) {
+        if let Some(rx) = &self.frame_rx
+            && let Ok(frame) = rx.try_recv()
+        {
+            // Update frame and timestamp
+            self.frame = Some(frame);
+            self.last_frame_instant = Some(Instant::now());
+            self.has_new_frame = true;
+        }
+
+        // Update FPS calculation
+        if let Some(last_instant) = self.last_frame_instant {
+            let elapsed = last_instant.elapsed().as_secs_f32();
+            if elapsed > 0.0 {
+                self.fps = 0.95 * self.fps + 0.05 * (1.0 / elapsed);
+            }
+        }
+    }
+
     /// Draw the toolbar on the left side
     fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
@@ -796,23 +847,6 @@ impl SAideApp {
 
     /// Draw the main v4l2 player area
     fn draw_v4l2_player(&mut self, ui: &mut egui::Ui) {
-        // Receive latest frame
-        while let Some(rx) = self.frame_rx.as_ref()
-            && let Ok(frame) = rx.try_recv()
-        {
-            self.frame = Some(frame);
-        }
-
-        // Update FPS
-        if let Some(last_instant) = self.last_frame_instant {
-            let delta = Instant::now().duration_since(last_instant).as_secs_f32();
-            if delta > 0.0 {
-                self.fps = 0.95 * self.fps + 0.05 * (1.0 / delta);
-            }
-        }
-
-        self.last_frame_instant = Some(Instant::now());
-
         // Get available rectangle
         let rect = ui.available_size();
 
@@ -942,6 +976,9 @@ impl eframe::App for SAideApp {
                 // Fully initialized, show main UI
                 self.draw_main_ui(ctx);
 
+                // Receive new video frames
+                self.receive_frame();
+
                 // Handle input events
                 self.process_input_events(ctx);
 
@@ -954,6 +991,27 @@ impl eframe::App for SAideApp {
             }
         }
 
+        // Frame rate limiting when VSync is disabled
+        if !self.config.gpu.vsync
+            && !self.has_new_frame
+            && let Some(last_paint) = self.last_paint_instant
+        {
+            let elapsed = last_paint.elapsed();
+            let target_frame_duration = Duration::from_millis(33);
+
+            if elapsed < target_frame_duration {
+                // limit frame rate
+                thread::sleep(target_frame_duration - elapsed);
+            }
+        }
+
+        if !self.config.gpu.vsync {
+            // Update last paint time for frame rate limiting
+            self.last_paint_instant = Some(Instant::now());
+            self.has_new_frame = false;
+        }
+
+        // Request repaint for next frame
         ctx.request_repaint();
     }
 }
