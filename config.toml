@@ -1,4 +1,7 @@
-timeout = 15
+[general]
+keyboard_enabled = true
+mouse_enabled = true
+init_timeout = 15
 
 [scrcpy.v4l2]
 device = "/dev/video0"
@@ -20,12 +23,12 @@ stay_awake = true
 vsync = false
 backend = "VULKAN"
 
-[mappings.keyboard]
+[mappings]
 toggle = "KEY_SCROLLLOCK"
-initial_state = true
+initial_state = false
 show_notification = true
 
-[[mappings.keyboard.profiles]]
+[[mappings.profiles]]
 name = "问道手游"
 mappings = [
     { key = "A", action = "Tap", x = 2596, y = 1155 },
@@ -50,9 +53,6 @@ mappings = [
     { key = "V", action = "Tap", x = 2485, y = 527 },
     { key = "Q", action = "Tap", x = 2593, y = 614 },
 ]
-
-[mappings.mouse]
-initial_state = true
 
 [logging]
 level = "debug"

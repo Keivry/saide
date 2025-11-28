@@ -2,12 +2,7 @@ use {
     crate::controller::utils::*,
     eframe::{egui, egui::PointerButton},
     serde::{Deserialize, Serialize},
-    std::{
-        collections::HashMap,
-        fmt::{self, Display},
-        ops::Deref,
-        sync::Arc,
-    },
+    std::{collections::HashMap, ops::Deref, sync::Arc},
 };
 
 pub type Key = egui::Key;
@@ -40,17 +35,6 @@ impl From<PointerButton> for MouseButton {
             PointerButton::Middle => MouseButton::Middle,
             _ => MouseButton::Left, // Default case
         }
-    }
-}
-
-impl Display for MouseButton {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            MouseButton::Left => "BTN_LEFT",
-            MouseButton::Right => "BTN_RIGHT",
-            MouseButton::Middle => "BTN_MIDDLE",
-        };
-        write!(f, "{}", s)
     }
 }
 
@@ -90,7 +74,7 @@ pub enum AdbAction {
         direction: WheelDirection,
     },
     Key {
-        keycode: String,
+        keycode: u8,
     },
     Text {
         text: String,
@@ -102,7 +86,7 @@ pub enum AdbAction {
 
     Ignore,
 }
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct KeyMapping {
     inner: HashMap<Key, AdbAction>,
 }
@@ -155,48 +139,23 @@ impl Deref for KeyMapping {
     fn deref(&self) -> &Self::Target { &self.inner }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
     #[serde(serialize_with = "serialize_arc", deserialize_with = "deserialize_arc")]
     pub mappings: Arc<KeyMapping>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyboardConfig {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MappingsConfig {
+    #[serde(default = "default_toggle_key")]
     pub toggle: String,
+    #[serde(default)]
     pub initial_state: bool,
+    #[serde(default = "default_true")]
     pub show_notification: bool,
     pub profiles: Vec<Profile>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MouseConfig {
-    pub initial_state: bool,
-}
-
-impl Default for MouseConfig {
-    fn default() -> Self {
-        Self {
-            initial_state: true,
-        }
-    }
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct MappingConfig {
-    #[serde(
-        serialize_with = "serialize_option_arc",
-        deserialize_with = "deserialize_option_arc"
-    )]
-    #[serde(default)]
-    pub keyboard: Option<Arc<KeyboardConfig>>,
-    #[serde(
-        serialize_with = "serialize_option_arc",
-        deserialize_with = "deserialize_option_arc"
-    )]
-    #[serde(default = "default_mouse_config")]
-    pub mouse: Option<Arc<MouseConfig>>,
-}
-
-fn default_mouse_config() -> Option<Arc<MouseConfig>> { Some(Arc::new(MouseConfig::default())) }
+fn default_toggle_key() -> String { "F10".to_string() }
+fn default_true() -> bool { true }

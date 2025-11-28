@@ -161,18 +161,9 @@ impl SAideApp {
                 .insert(resources);
         }
 
-        // Determine initial mapping states
-        let keyboard_mapping_enabled = config
-            .mappings
-            .keyboard
-            .as_ref()
-            .is_some_and(|k| k.initial_state);
-
-        let mouse_mapping_enabled = config
-            .mappings
-            .mouse
-            .as_ref()
-            .is_none_or(|m| m.initial_state);
+        let keyboard_enabled = config.general.keyboard_enabled;
+        let mouse_enabled = config.general.mouse_enabled;
+        let keyboard_custom_mapping_enabled = config.mappings.initial_state;
 
         let max_fps = config.scrcpy.video.max_fps;
         let vsync = config.gpu.vsync;
@@ -213,16 +204,16 @@ impl SAideApp {
             frame_rate_limiter: if vsync {
                 None
             } else {
-                Some(Duration::from_millis((1000 / max_fps) as u64))
+                Some(Duration::from_millis(u64::from(1000 / max_fps)))
             },
 
             init_state: InitState::NotStarted,
             init_instant: None,
             init_rx: None,
 
-            keyboard_enabled: keyboard_mapping_enabled,
-            mouse_enabled: mouse_mapping_enabled,
-            keyboard_custom_mapping_enabled: false,
+            keyboard_enabled,
+            mouse_enabled,
+            keyboard_custom_mapping_enabled,
         }
     }
 
@@ -258,7 +249,7 @@ impl SAideApp {
 
             if let Err(e) = scrcpy
                 .spawn()?
-                .wait_for_ready(Duration::from_secs(config.timeout))
+                .wait_for_ready(Duration::from_secs(config.general.init_timeout as u64))
             {
                 scrcpy.terminate().ok();
                 scrcpy_tx.send(InitResult::Error(anyhow!("Failed to start scrcpy: {}", e)))?;
@@ -335,15 +326,14 @@ impl SAideApp {
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize keyboard mapper
             let mut keyboard_mapper = kbd_config
-                .mappings
-                .keyboard
-                .clone()
-                .map(|keyboard_config| KeyboardMapper::new(keyboard_config.clone()))
+                .general
+                .keyboard_enabled
+                .then_some(KeyboardMapper::new(kbd_config.mappings.clone()))
                 .transpose()?;
             debug!("Keyboard mapper initialized");
 
             // TODO: Set default profile if specified
-            if let Some(keyboard_mapper) = keyboard_mapper.as_mut()
+            if let Some(ref mut keyboard_mapper) = keyboard_mapper
                 && keyboard_mapper.get_profile_count() > 0
             {
                 info!("Setting default keyboard profile to index 0");
@@ -359,11 +349,8 @@ impl SAideApp {
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize mouse mapper
             let mouse_mapper = mouse_config
-                .mappings
-                .mouse
-                .clone()
-                .unwrap_or_default()
-                .initial_state
+                .general
+                .mouse_enabled
                 .then_some(MouseMapper::new())
                 .transpose()?;
             debug!("Mouse mapper initialized");
@@ -381,7 +368,7 @@ impl SAideApp {
 
             let mut capture = match V4l2Capture::new(
                 &v4l2_config.scrcpy.v4l2.device,
-                Duration::from_secs(v4l2_config.timeout),
+                Duration::from_secs(u64::from(v4l2_config.general.init_timeout)),
             ) {
                 Ok(c) => c,
                 Err(e) => {
@@ -711,9 +698,15 @@ impl SAideApp {
                             repeat: _,
                             physical_key: _,
                         } = event
+                        // Only process key press events for now
+                        && *pressed
                     {
                         debug!("Processing keyboard event: {:?}", event);
-                        if let Err(e) = keyboard_mapper.handle_key_event(key, *pressed) {
+                        if let Err(e) = if self.keyboard_custom_mapping_enabled {
+                            keyboard_mapper.handle_custom_keymapping_event(key, *pressed)
+                        } else {
+                            keyboard_mapper.handle_standard_key_event(key)
+                        } {
                             error!("Failed to handle keyboard event: {}", e);
                         }
                     }

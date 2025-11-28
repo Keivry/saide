@@ -3,7 +3,7 @@ pub mod mapping;
 pub mod scrcpy;
 
 use {
-    crate::config::{log::LogConfig, mapping::MappingConfig, scrcpy::ScrcpyConfig},
+    crate::config::{log::LogConfig, mapping::MappingsConfig, scrcpy::ScrcpyConfig},
     serde::{Deserialize, Serialize},
     std::{fmt::Display, sync::Arc},
 };
@@ -48,11 +48,23 @@ fn default_vsync() -> bool { true }
 fn default_gpu_backend() -> GpuBackend { GpuBackend::Vulkan }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+pub struct GeneralConfig {
+    #[serde(default = "default_true")]
+    pub keyboard_enabled: bool,
+    #[serde(default = "default_true")]
+    pub mouse_enabled: bool,
+    #[serde(default = "default_init_timeout")]
+    pub init_timeout: u32,
+}
+
+fn default_true() -> bool { true }
+fn default_init_timeout() -> u32 { 15 }
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SAideConfig {
+    pub general: GeneralConfig,
     pub scrcpy: Arc<ScrcpyConfig>,
     pub gpu: GPUConfig,
-    pub mappings: MappingConfig,
+    pub mappings: Arc<MappingsConfig>,
     pub logging: LogConfig,
-
-    pub timeout: u64,
 }

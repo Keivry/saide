@@ -2650,6 +2650,7 @@ dependencies = [
  "crossbeam-channel",
  "eframe",
  "egui",
+ "lazy_static",
  "libc",
  "nix",
  "once_cell",
