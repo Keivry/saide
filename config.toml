@@ -24,7 +24,7 @@ vsync = false
 backend = "VULKAN"
 
 [mappings]
-toggle = "KEY_SCROLLLOCK"
+toggle = "F10"
 initial_state = false
 show_notification = true
 
