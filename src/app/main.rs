@@ -15,10 +15,12 @@ use {
     },
     once_cell::sync::Lazy,
     std::{
+        ffi::OsStr,
         sync::Arc,
         thread,
         time::{Duration, Instant},
     },
+    sysinfo::{ProcessesToUpdate, System},
     tracing::{debug, error, info, trace, warn},
 };
 
@@ -236,6 +238,21 @@ impl SAideApp {
         let config = self.config.clone();
         let scrcpy_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
+            // Ensure no existing scrcpy process is running
+            let mut sys = System::new_all();
+            sys.refresh_processes(ProcessesToUpdate::All, true);
+
+            if sys.processes().values().any(|process| {
+                process.exe().and_then(|path| path.file_name()) == Some(OsStr::new("scrcpy"))
+            }) {
+                scrcpy_tx.send(InitResult::Error(anyhow!(
+                    "Existing scrcpy process detected , please terminate it first",
+                )))?;
+
+                // Early return on error
+                return Ok(());
+            }
+
             // Initialize scrcpy manager
             let mut scrcpy = Scrcpy::new(config.scrcpy.clone());
 

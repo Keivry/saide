@@ -29,6 +29,7 @@ nix = { version = "0.30", features = ["process", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 parking_lot = "0.12.5"
+sysinfo = "0.37.2"
 
 [profile.dev]
 opt-level = 0
