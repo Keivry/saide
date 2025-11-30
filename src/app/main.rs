@@ -819,24 +819,24 @@ impl SAideApp {
     }
 
     fn receive_frame(&mut self) {
-        if let Some(rx) = &self.frame_rx
-            && let Ok(frame) = rx.try_recv()
-        {
-            // Update frame and timestamp
-            self.frame = Some(frame);
-            self.has_new_frame = true;
-        }
-
-        // Update FPS calculation
-        if let Some(last_instant) = self.last_frame_instant {
-            let elapsed = last_instant.elapsed().as_secs_f32();
-            if elapsed > 0.0 {
-                self.fps = 0.95 * self.fps + 0.05 * (1.0 / elapsed);
+        if let Some(rx) = &self.frame_rx {
+            while let Ok(frame) = rx.try_recv() {
+                // Update frame and timestamp
+                self.frame = Some(frame);
+                self.has_new_frame = true;
             }
-        }
 
-        if self.has_new_frame {
-            self.last_frame_instant = Some(Instant::now());
+            // Update FPS calculation
+            if let Some(last_instant) = self.last_frame_instant {
+                let elapsed = last_instant.elapsed().as_secs_f32();
+                if elapsed > 0.0 {
+                    self.fps = 0.95 * self.fps + 0.05 * (1.0 / elapsed);
+                }
+            }
+
+            if self.has_new_frame {
+                self.last_frame_instant = Some(Instant::now());
+            }
         }
     }
 
