@@ -273,17 +273,8 @@ impl SAideApp {
         // Device monitor initialization
         let dm_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Initialize ADB shell
-            let adb_shell = AdbShell::new();
-            adb_shell.connect()?;
-            debug!("ADB shell connected");
-
             // Get device physical screen size
-            let physical_size = {
-                adb_shell.get_screen_size().ok_or_else(|| {
-                    anyhow!("Failed to get device physical screen size from ADB shell")
-                })
-            }?;
+            let physical_size = AdbShell::get_physical_screen_size()?;
             debug!(
                 "Device physical screen size: {}x{}",
                 physical_size.0, physical_size.1

@@ -7,7 +7,6 @@ use {
         process::{Child, ChildStdin, Command, Stdio},
         sync::{Arc, Condvar},
         thread,
-        time::Instant,
     },
     tracing::{debug, info, trace, warn},
 };
@@ -20,8 +19,6 @@ pub struct AdbShell {
     stdin: Mutex<Option<ChildStdin>>,
     /// Connection state
     connected: Mutex<bool>,
-    /// Last activity timestamp
-    last_activity: Mutex<Instant>,
     /// Device physical screen size
     screen_size: Mutex<Option<(u32, u32)>>,
     /// Output buffer for shell responses (thread-safe)
@@ -42,7 +39,6 @@ impl AdbShell {
             child: Mutex::new(None),
             stdin: Mutex::new(None),
             connected: Mutex::new(false),
-            last_activity: Mutex::new(Instant::now()),
             screen_size: Mutex::new(None),
             output_buffer: Arc::new(Mutex::new(capture_output.then_some(Vec::new()))),
             output_condvar: Arc::new(capture_output.then_some(Condvar::new())),
@@ -86,6 +82,7 @@ impl AdbShell {
             .take()
             .ok_or_else(|| anyhow!("Failed to take stdin from adb shell process"))?;
 
+        // Start output capture thread if enabled
         if self.capture_output {
             let stdout = child
                 .stdout
@@ -118,17 +115,19 @@ impl AdbShell {
             });
 
             {
-                self.child.lock().replace(child);
-                self.stdin.lock().replace(stdin);
-
-                self.screen_size
-                    .lock()
-                    .replace(Self::get_physical_screen_size()?);
-
-                *self.last_activity.lock() = Instant::now();
-                *self.connected.lock() = true;
                 *self.reader_thread.lock() = Some(reader_thread);
             }
+        }
+
+        // Update connection state
+        {
+            self.screen_size
+                .lock()
+                .replace(Self::get_physical_screen_size()?);
+
+            self.child.lock().replace(child);
+            self.stdin.lock().replace(stdin);
+            *self.connected.lock() = true;
         }
 
         info!("Successfully connected to ADB shell");
@@ -231,10 +230,6 @@ impl AdbShell {
                 .context("Failed to write input command")?;
 
             stdin.flush().context("Failed to flush input command")?;
-        }
-
-        {
-            *self.last_activity.lock() = Instant::now();
         }
 
         debug!("Sent ADB input command: {}", cmd_str.trim());
