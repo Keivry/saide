@@ -142,6 +142,9 @@ impl Scrcpy {
         // Force no-window mode (critical parameter)
         args.push("--no-window".to_string());
 
+        // Force --no-clipboard-autosync to avoid scrcpy crash
+        args.push("--no-clipboard-autosync".to_string());
+
         // V4L2 related configuration
         if !self.config.v4l2.device.is_empty() {
             args.push("--v4l2-sink".to_string());
