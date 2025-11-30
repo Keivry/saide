@@ -25,25 +25,29 @@ pub struct AdbShell {
     /// Device physical screen size
     screen_size: Mutex<Option<(u32, u32)>>,
     /// Output buffer for shell responses (thread-safe)
-    output_buffer: Arc<Mutex<Vec<String>>>,
+    output_buffer: Arc<Mutex<Option<Vec<String>>>>,
     /// Condition variable for signaling new output
-    output_condvar: Arc<Condvar>,
+    output_condvar: Arc<Option<Condvar>>,
     /// Background thread handle
     reader_thread: Mutex<Option<thread::JoinHandle<()>>>,
+
+    /// Capture output flag
+    capture_output: bool,
 }
 
 impl AdbShell {
     /// Create a new ADB shell connection manager
-    pub fn new() -> Self {
+    pub fn new(capture_output: bool) -> Self {
         Self {
             child: Mutex::new(None),
             stdin: Mutex::new(None),
             connected: Mutex::new(false),
             last_activity: Mutex::new(Instant::now()),
             screen_size: Mutex::new(None),
-            output_buffer: Arc::new(Mutex::new(Vec::new())),
-            output_condvar: Arc::new(Condvar::new()),
+            output_buffer: Arc::new(Mutex::new(capture_output.then_some(Vec::new()))),
+            output_condvar: Arc::new(capture_output.then_some(Condvar::new())),
             reader_thread: Mutex::new(None),
+            capture_output,
         }
     }
 
@@ -64,8 +68,16 @@ impl AdbShell {
             .arg("adb")
             .arg("shell")
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(if self.capture_output {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stderr(if self.capture_output {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .spawn()
             .context("Failed to spawn adb shell process")?;
 
@@ -74,46 +86,49 @@ impl AdbShell {
             .take()
             .ok_or_else(|| anyhow!("Failed to take stdin from adb shell process"))?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("Failed to take stdout from adb shell process"))?;
+        if self.capture_output {
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow!("Failed to take stdout from adb shell process"))?;
 
-        // Clear output buffer
-        {
-            let mut buffer = self.output_buffer.lock();
-            buffer.clear();
-        }
-
-        // Start background reader thread (take ownership of stdout)
-        let output_buffer = Arc::clone(&self.output_buffer);
-        let output_condvar = Arc::clone(&self.output_condvar);
-        let reader_thread = thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                match line {
-                    Ok(line) => {
-                        let mut buffer = output_buffer.lock();
-                        buffer.push(line);
-                        // Notify waiting threads
-                        output_condvar.notify_one();
-                    }
-                    Err(_) => break,
-                }
+            // Clear output buffer
+            {
+                let mut buffer = self.output_buffer.lock();
+                buffer.as_mut().unwrap().clear();
             }
-        });
 
-        {
-            self.child.lock().replace(child);
-            self.stdin.lock().replace(stdin);
+            // Start background reader thread (take ownership of stdout)
+            let output_buffer = Arc::clone(&self.output_buffer);
+            let output_condvar = Arc::clone(&self.output_condvar);
+            let reader_thread = thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines() {
+                    match line {
+                        Ok(line) => {
+                            let mut buffer = output_buffer.lock();
+                            buffer.as_mut().unwrap().push(line);
+                            if let Some(condvar) = &*output_condvar {
+                                condvar.notify_one();
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
 
-            self.screen_size
-                .lock()
-                .replace(Self::get_physical_screen_size()?);
+            {
+                self.child.lock().replace(child);
+                self.stdin.lock().replace(stdin);
 
-            *self.last_activity.lock() = Instant::now();
-            *self.connected.lock() = true;
-            *self.reader_thread.lock() = Some(reader_thread);
+                self.screen_size
+                    .lock()
+                    .replace(Self::get_physical_screen_size()?);
+
+                *self.last_activity.lock() = Instant::now();
+                *self.connected.lock() = true;
+                *self.reader_thread.lock() = Some(reader_thread);
+            }
         }
 
         info!("Successfully connected to ADB shell");

@@ -97,7 +97,7 @@ pub struct KeyboardMapper {
 impl KeyboardMapper {
     /// Create a new keyboard mapper
     pub fn new(config: Arc<MappingsConfig>) -> Result<Self> {
-        let adb = AdbShell::new();
+        let adb = AdbShell::new(false);
         adb.connect()?;
         Ok(Self {
             config,

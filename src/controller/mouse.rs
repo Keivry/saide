@@ -45,7 +45,7 @@ pub struct MouseMapper {
 impl MouseMapper {
     /// Create a new mouse mapper
     pub fn new() -> Result<Self> {
-        let adb_shell = AdbShell::new();
+        let adb_shell = AdbShell::new(false);
         adb_shell.connect()?;
         Ok(Self {
             adb_shell,
