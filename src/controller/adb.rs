@@ -23,8 +23,6 @@ pub struct AdbShell {
     stdin: Mutex<Option<ChildStdin>>,
     /// Connection state
     connected: Mutex<bool>,
-    /// Device physical screen size
-    screen_size: Mutex<Option<(u32, u32)>>,
     /// Output buffer for shell responses (thread-safe)
     output_buffer: Arc<Mutex<Option<Vec<String>>>>,
     /// Condition variable for signaling new output
@@ -43,7 +41,6 @@ impl AdbShell {
             child: Mutex::new(None),
             stdin: Mutex::new(None),
             connected: Mutex::new(false),
-            screen_size: Mutex::new(None),
             output_buffer: Arc::new(Mutex::new(capture_output.then_some(Vec::new()))),
             output_condvar: Arc::new(capture_output.then_some(Condvar::new())),
             reader_thread: Mutex::new(None),
@@ -125,10 +122,6 @@ impl AdbShell {
 
         // Update connection state
         {
-            self.screen_size
-                .lock()
-                .replace(Self::get_physical_screen_size()?);
-
             self.child.lock().replace(child);
             self.stdin.lock().replace(stdin);
             *self.connected.lock() = true;
@@ -166,9 +159,6 @@ impl AdbShell {
 
     /// Check if connected to ADB shell
     pub fn is_connected(&self) -> bool { *self.connected.lock() }
-
-    /// Get device screen size
-    pub fn get_screen_size(&self) -> Option<(u32, u32)> { *self.screen_size.lock() }
 
     /// Send input command to Android device
     pub fn send_input(&self, command: &AdbAction) -> Result<()> {
