@@ -11,6 +11,10 @@ use {
     tracing::{debug, info, trace, warn},
 };
 
+const MODIFIER_ALT: u8 = 57; // KEYCODE_ALT_LEFT
+const MODIFIER_CTRL: u8 = 113; // KEYCODE_CTRL_LEFT
+const MODIFIER_SHIFT: u8 = 59; // KEYCODE_SHIFT_LEFT
+
 /// ADB Shell connection manager for sending input commands to Android device
 pub struct AdbShell {
     /// ADB shell child process
@@ -205,6 +209,21 @@ impl AdbShell {
             },
             AdbAction::Key { keycode } => {
                 format!("input keyevent {}\n", keycode)
+            }
+            AdbAction::KeyCombo { modifiers, keycode } => {
+                // Build key combination command
+                let mut cmd = "input keycombination ".to_string();
+                if modifiers.alt {
+                    cmd.push_str(&format!("{} ", MODIFIER_ALT));
+                }
+                if modifiers.ctrl || modifiers.command {
+                    cmd.push_str(&format!("{} ", MODIFIER_CTRL));
+                }
+                if modifiers.shift {
+                    cmd.push_str(&format!("{} ", MODIFIER_SHIFT));
+                }
+                cmd.push_str(&format!("{}\n", keycode));
+                cmd
             }
             AdbAction::Text { text } => {
                 let escaped = text.replace(' ', "%s");

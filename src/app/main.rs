@@ -718,7 +718,7 @@ impl SAideApp {
                         && let egui::Event::Key {
                             key,
                             pressed,
-                            modifiers: _,
+                            modifiers,
                             repeat: _,
                             physical_key: _,
                         } = event
@@ -729,6 +729,8 @@ impl SAideApp {
                         if let Err(e) =
                             if self.keyboard_custom_mapping_enabled && !self.device_ime_state {
                                 keyboard_mapper.handle_custom_keymapping_event(key, *pressed)
+                            } else if modifiers.any() {
+                                keyboard_mapper.handle_keycombo_event(*modifiers, key)
                             } else {
                                 keyboard_mapper.handle_standard_key_event(key)
                             }

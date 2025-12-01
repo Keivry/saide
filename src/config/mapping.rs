@@ -6,6 +6,7 @@ use {
 };
 
 pub type Key = egui::Key;
+pub type Modifiers = egui::Modifiers;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -74,6 +75,10 @@ pub enum AdbAction {
         direction: WheelDirection,
     },
     Key {
+        keycode: u8,
+    },
+    KeyCombo {
+        modifiers: Modifiers,
         keycode: u8,
     },
     Text {

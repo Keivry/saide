@@ -1,6 +1,6 @@
 use {
     crate::{
-        config::mapping::{AdbAction, Key, MappingsConfig},
+        config::mapping::{AdbAction, Key, MappingsConfig, Modifiers},
         controller::adb::AdbShell,
     },
     anyhow::Result,
@@ -128,6 +128,16 @@ impl KeyboardMapper {
         if let Some(keycode) = EGUI_TO_ANDROID_KEY.get(key) {
             self.adb_shell
                 .send_input(&AdbAction::Key { keycode: *keycode })?;
+        }
+        Ok(())
+    }
+
+    pub fn handle_keycombo_event(&self, modifiers: Modifiers, key: &Key) -> Result<()> {
+        if let Some(keycode) = EGUI_TO_ANDROID_KEY.get(key) {
+            self.adb_shell.send_input(&AdbAction::KeyCombo {
+                modifiers,
+                keycode: *keycode,
+            })?;
         }
         Ok(())
     }
