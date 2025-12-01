@@ -1024,8 +1024,7 @@ impl SAideApp {
             ui.label(format!("Video Rotation: {:>3}°", self.rotation * 90));
             ui.separator();
 
-            // ui.label("Profile:");
-            ui.label(format!("Profile: {:?}", self.active_profile_name));
+            ui.label("Profile:");
             egui::ComboBox::from_id_salt("mapping_profile_combobox")
                 .selected_text(
                     self.active_profile_name
