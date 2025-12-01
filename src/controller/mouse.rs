@@ -12,9 +12,9 @@ use {
 /// Movement threshold to distinguish drag from click (in pixels)
 const DRAG_THRESHOLD: f32 = 5.0;
 /// Long press duration threshold (in milliseconds)
-const LONG_PRESS_DURATION_MS: u128 = 250;
+const LONG_PRESS_DURATION_MS: u128 = 300;
 /// Drag update interval (in milliseconds) - balance between smoothness and performance
-const DRAG_UPDATE_INTERVAL_MS: u128 = 50;
+const DRAG_UPDATE_INTERVAL_MS: u128 = 16;
 
 /// Mouse button state for tracking press/drag/long-press
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

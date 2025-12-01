@@ -42,7 +42,7 @@ const TOOLBAR_BTN_COUNT: usize = 1;
 const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
 
-const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 500;
+const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
 const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 1;
 enum DeviceMonitorEvent {
     /// Device rotated event with new orientation (0-3), clockwise
@@ -279,7 +279,7 @@ impl SAideApp {
         });
 
         // Delay to allow scrcpy to start ADB server
-        thread::sleep(Duration::from_millis(500));
+        thread::sleep(Duration::from_millis(250));
 
         // Device monitor initialization
         let dm_tx = tx.clone();
@@ -300,7 +300,6 @@ impl SAideApp {
             // Start rotation and im state monitoring
             let mut last_rotation = None;
             loop {
-                // Poll rotation state every 500ms
                 match AdbShell::get_screen_orientation() {
                     Ok(current_rotation) => {
                         if Some(current_rotation) != last_rotation {
@@ -411,7 +410,7 @@ impl SAideApp {
                 loop {
                     match capture.capture_frame() {
                         Ok(frame) => {
-                            let _ = tx.try_send(Arc::new(frame));
+                            let _ = tx.send(Arc::new(frame));
                         }
                         Err(e) => {
                             error!("Capture error: {}", e);
@@ -1032,6 +1031,9 @@ impl SAideApp {
 
 impl eframe::App for SAideApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check if there is any input event
+        let has_input = ctx.input(|i| !i.events.is_empty() || i.pointer.any_down());
+
         // Draw base UI (toolbar and status bar) - always visible
         self.draw_base_ui(ctx);
 
@@ -1066,9 +1068,11 @@ impl eframe::App for SAideApp {
             }
         }
 
-        // Frame rate limiting when VSync is disabled
+        // Frame rate limiting for non-vsync mode
+        // Sleep to limit frame rate if no new frame and no input
         if !self.config.gpu.vsync
             && !self.has_new_frame
+            && !has_input
             && let Some(last_paint) = self.last_paint_instant
             && let Some(limit_next_frame_timer) = self.frame_rate_limiter
         {
