@@ -4,7 +4,12 @@ use {
             SAideConfig,
             mapping::{MouseButton, WheelDirection},
         },
-        controller::{adb::AdbShell, keyboard::KeyboardMapper, mouse::MouseMapper, scrcpy::Scrcpy},
+        controller::{
+            adb::AdbShell,
+            keyboard::KeyboardMapper,
+            mouse::{MouseMapper, MouseState},
+            scrcpy::Scrcpy,
+        },
         v4l2::{V4l2Capture, Yu12Frame, YuvRenderResources, new_yuv_render_callback},
     },
     anyhow::anyhow,
@@ -147,6 +152,9 @@ pub struct SAideApp {
     /// Mouse mapping switch
     mouse_enabled: bool,
 
+    /// Last mouse pointer position in video rect
+    last_pointer_pos: egui::Pos2,
+
     /// Keyboard custom mapping switch
     keyboard_custom_mapping_enabled: bool,
 
@@ -218,6 +226,9 @@ impl SAideApp {
 
             keyboard_enabled,
             mouse_enabled,
+
+            last_pointer_pos: egui::Pos2::ZERO,
+
             keyboard_custom_mapping_enabled,
 
             device_ime_state: false,
@@ -763,6 +774,25 @@ impl SAideApp {
                                 trace!("PointerMoved inside video rect at {:?}", pos);
                             } else {
                                 trace!("PointerMoved outside video rect at {:?}", pos);
+                                if mouse_mapper.get_button_state() != MouseState::Idle
+                                    && let Some((device_x, device_y)) =
+                                        self.coordinate_transform(&self.last_pointer_pos)
+                                {
+                                    // If dragging and moved outside, send a button release
+                                    if let Err(e) = mouse_mapper.handle_button_event(
+                                        MouseButton::Left,
+                                        false,
+                                        device_x,
+                                        device_y,
+                                    ) {
+                                        error!(
+                                            "Failed to handle mouse button release event: {}",
+                                            e
+                                        );
+                                    }
+                                }
+
+                                // Skip further processing if outside video rect
                                 continue;
                             }
 
@@ -776,6 +806,8 @@ impl SAideApp {
                                     pos
                                 );
                             }
+
+                            self.last_pointer_pos = *pos;
                         } else if let egui::Event::MouseWheel {
                             modifiers: _,
                             unit: _,
