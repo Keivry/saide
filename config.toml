@@ -29,7 +29,9 @@ initial_state = true
 show_notification = true
 
 [[mappings.profiles]]
-name = "问道手游"
+name = "AskTao"
+device_id = "10AF971ZLN004SU"
+rotation = 1
 mappings = [
     { key = "A", action = "Tap", x = 2596, y = 1155 },
     { key = "S", action = "Tap", x = 2597, y = 824 },

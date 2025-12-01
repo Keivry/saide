@@ -147,6 +147,14 @@ impl Deref for KeyMapping {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
+
+    /// Device ID this profile is associated with
+    pub device_id: String,
+
+    /// Screen rotation (0-3), each step represents 90 degrees clockwise
+    pub rotation: u32,
+
+    /// Key mappings
     #[serde(serialize_with = "serialize_arc", deserialize_with = "deserialize_arc")]
     pub mappings: Arc<KeyMapping>,
 }
@@ -159,7 +167,7 @@ pub struct MappingsConfig {
     pub initial_state: bool,
     #[serde(default = "default_true")]
     pub show_notification: bool,
-    pub profiles: Vec<Profile>,
+    pub profiles: Vec<Arc<Profile>>,
 }
 
 fn default_toggle_key() -> String { "F10".to_string() }

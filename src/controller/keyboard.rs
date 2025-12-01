@@ -1,11 +1,12 @@
 use {
     crate::{
-        config::mapping::{AdbAction, Key, MappingsConfig, Modifiers},
+        config::mapping::{AdbAction, Key, MappingsConfig, Modifiers, Profile},
         controller::adb::AdbShell,
     },
-    anyhow::Result,
+    anyhow::{Result, anyhow},
+    parking_lot::Mutex,
     std::{collections::HashMap, sync::Arc},
-    tracing::info,
+    tracing::{error, info},
 };
 
 lazy_static::lazy_static! {
@@ -90,8 +91,11 @@ lazy_static::lazy_static! {
 /// Keyboard mapping state
 pub struct KeyboardMapper {
     config: Arc<MappingsConfig>,
+
     adb_shell: AdbShell,
-    active_profile: Option<usize>,
+
+    avail_profiles: Mutex<Vec<Arc<Profile>>>,
+    active_profile: Mutex<Option<Arc<Profile>>>,
 }
 
 impl KeyboardMapper {
@@ -101,26 +105,87 @@ impl KeyboardMapper {
         adb.connect()?;
         Ok(Self {
             config,
+
             adb_shell: adb,
-            active_profile: None,
+
+            avail_profiles: Mutex::new(Vec::new()),
+            active_profile: Mutex::new(None),
         })
     }
 
-    /// Set active profile by index
-    pub fn set_active_profile(&mut self, index: usize) {
-        if index < self.config.profiles.len() {
-            self.active_profile = Some(index);
+    /// Refresh available profiles based on device ID and rotation
+    pub fn refresh_profiles(&self, device_id: &str, device_rotation: u32) -> Result<()> {
+        let mut available_profiles = Vec::new();
+
+        self.config
+            .profiles
+            .iter()
+            .filter(|profile| profile.device_id == device_id && profile.rotation == device_rotation)
+            .for_each(|profile| {
+                available_profiles.push(profile.clone());
+            });
+
+        if available_profiles.is_empty() {
             info!(
-                "Active profile set to: {}",
-                self.config.profiles[index].name
+                "No matching profiles found for device ID '{}' with rotation {}.",
+                device_id, device_rotation
             );
+            info!("Disable custom key mappings for this device/rotation.");
+
+            self.active_profile.lock().take();
+        } else {
+            info!(
+                "Found {} matching profiles for device ID '{}' with rotation {}.",
+                available_profiles.len(),
+                device_id,
+                device_rotation
+            );
+            self.active_profile
+                .lock()
+                .replace(available_profiles[0].clone());
+            info!("Active profile set to: {}", available_profiles[0].name);
         }
+
+        let mut avail_lock = self.avail_profiles.lock();
+        *avail_lock = available_profiles;
+
+        Ok(())
+    }
+
+    /// Load profile by index
+    pub fn load_profile(&mut self, index: usize) -> Result<()> {
+        let avail_profiles = self.avail_profiles.lock();
+        if index < avail_profiles.len() {
+            self.active_profile
+                .lock()
+                .replace(avail_profiles[index].clone());
+            info!("Profile switched to: {}", avail_profiles[index].name);
+        } else {
+            error!("Profile index {} out of range.", index);
+            return Err(anyhow!("Profile index out of range."));
+        }
+        Ok(())
+    }
+
+    /// Load profile by name
+    pub fn load_profile_by_name(&mut self, name: &str) -> Result<()> {
+        let avail_profiles = self.avail_profiles.lock();
+        if let Some(profile) = avail_profiles.iter().find(|p| p.name == name) {
+            self.active_profile.lock().replace(profile.clone());
+            info!("Profile switched to: {}", profile.name);
+        } else {
+            error!("Profile '{}' not found.", name);
+            return Err(anyhow!("Profile not found."));
+        }
+        Ok(())
     }
 
     /// Get active profile name
     pub fn get_active_profile_name(&self) -> Option<String> {
         self.active_profile
-            .map(|idx| self.config.profiles[idx].name.clone())
+            .lock()
+            .as_ref()
+            .map(|profile| profile.name.clone())
     }
 
     /// Handle keyboard event
@@ -144,7 +209,8 @@ impl KeyboardMapper {
 
     /// Handle custom keyboard event
     pub fn handle_custom_keymapping_event(&self, key: &Key, pressed: bool) -> Result<()> {
-        if self.active_profile.is_none() {
+        let active_profile = self.active_profile.lock();
+        if active_profile.is_none() {
             return Ok(());
         }
 
@@ -153,7 +219,9 @@ impl KeyboardMapper {
             return Ok(());
         }
 
-        self.config.profiles[self.active_profile.unwrap()]
+        active_profile
+            .as_ref()
+            .unwrap()
             .mappings
             .get(key)
             .map(|action| self.adb_shell.send_input(action))
@@ -164,14 +232,14 @@ impl KeyboardMapper {
     }
 
     /// Get list of available profiles
-    pub fn get_profiles(&self) -> Vec<String> {
-        self.config
-            .profiles
-            .iter()
-            .map(|p| p.name.clone())
-            .collect()
+    pub fn get_avail_profiles(&self) -> Vec<String> {
+        let avail_profiles = self.avail_profiles.lock();
+        avail_profiles.iter().map(|p| p.name.clone()).collect()
     }
 
     /// Get number of profiles
-    pub fn get_profile_count(&self) -> usize { self.config.profiles.len() }
+    pub fn get_avail_profiles_count(&self) -> usize {
+        let avail_profiles = self.avail_profiles.lock();
+        avail_profiles.len()
+    }
 }

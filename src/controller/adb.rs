@@ -330,6 +330,17 @@ impl AdbShell {
         }
         Ok(false)
     }
+
+    pub fn get_device_id() -> Result<String> {
+        let output = Command::new("adb")
+            .args(["get-serialno"])
+            .output()
+            .context("Failed to execute adb get-serialno command")?;
+
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let device_id = output_str.trim().to_string();
+        Ok(device_id)
+    }
 }
 
 impl Drop for AdbShell {

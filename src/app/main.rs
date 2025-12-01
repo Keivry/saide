@@ -52,7 +52,7 @@ enum DeviceMonitorEvent {
     ImStateChanged(bool),
 }
 
-const INIT_RESULT_CHANNEL_CAPACITY: usize = 8;
+const INIT_RESULT_CHANNEL_CAPACITY: usize = 9;
 
 /// Initialization result type
 enum InitResult {
@@ -61,6 +61,7 @@ enum InitResult {
     MouseMapper(Option<MouseMapper>),
     DeviceMonitor(Receiver<DeviceMonitorEvent>),
     FrameReceiver(Receiver<Arc<Yu12Frame>>),
+    DeviceId(String),
     PhysicalSize((u32, u32)),
     VideoDimensions((u32, u32)),
     CaptureOrientation(u32),
@@ -99,8 +100,14 @@ pub struct SAideApp {
 
     /// Mouse input mapper
     mouse_mapper: Option<MouseMapper>,
+
     /// Keyboard input mapper
     keyboard_mapper: Option<KeyboardMapper>,
+
+    /// Available custom keyboard mapping profiles names
+    avail_profile_names: Vec<String>,
+    /// Currently selected custom keyboard mapping profile
+    active_profile_name: Option<String>,
 
     /// Device monitor receiver
     device_monitor_rx: Option<Receiver<DeviceMonitorEvent>>,
@@ -117,6 +124,9 @@ pub struct SAideApp {
 
     /// Timestamp of last paint
     last_paint_instant: Option<Instant>,
+
+    /// Device ID
+    device_id: Option<String>,
 
     /// Device physical screen size
     physical_size: Option<(u32, u32)>,
@@ -188,7 +198,10 @@ impl SAideApp {
             scrcpy: None,
 
             mouse_mapper: None,
+
             keyboard_mapper: None,
+            avail_profile_names: Vec::new(),
+            active_profile_name: None,
 
             device_monitor_rx: None,
 
@@ -199,6 +212,8 @@ impl SAideApp {
             has_new_frame: false,
 
             last_paint_instant: None,
+
+            device_id: None,
 
             physical_size: None,
 
@@ -296,17 +311,22 @@ impl SAideApp {
         // Device monitor initialization
         let dm_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
+            // Get device ID
+            let device_id = AdbShell::get_device_id()?;
+            debug!("Using device ID: {}", device_id);
+            dm_tx.send(InitResult::DeviceId(device_id))?;
+
             // Get device physical screen size
             let physical_size = AdbShell::get_physical_screen_size()?;
             debug!(
                 "Device physical screen size: {}x{}",
                 physical_size.0, physical_size.1
             );
+            dm_tx.send(InitResult::PhysicalSize(physical_size))?;
 
             // Create channel for rotation events
             let (event_tx, event_rx) =
                 bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
-            dm_tx.send(InitResult::PhysicalSize(physical_size))?;
             dm_tx.send(InitResult::DeviceMonitor(event_rx))?;
 
             // Start rotation and im state monitoring
@@ -354,20 +374,12 @@ impl SAideApp {
         let kbd_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize keyboard mapper
-            let mut keyboard_mapper = kbd_config
+            let keyboard_mapper = kbd_config
                 .general
                 .keyboard_enabled
                 .then_some(KeyboardMapper::new(kbd_config.mappings.clone()))
                 .transpose()?;
             debug!("Keyboard mapper initialized");
-
-            // TODO: Set default profile if specified
-            if let Some(ref mut keyboard_mapper) = keyboard_mapper
-                && keyboard_mapper.get_profile_count() > 0
-            {
-                info!("Setting default keyboard profile to index 0");
-                keyboard_mapper.set_active_profile(0);
-            }
 
             kbd_tx.send(InitResult::KeyboardMapper(keyboard_mapper))?;
             Ok(())
@@ -459,6 +471,9 @@ impl SAideApp {
                     }
                     InitResult::FrameReceiver(frame_rx) => {
                         self.frame_rx = Some(frame_rx);
+                    }
+                    InitResult::DeviceId(device_id) => {
+                        self.device_id = Some(device_id);
                     }
                     InitResult::PhysicalSize(size) => {
                         self.physical_size = Some(size);
@@ -686,12 +701,15 @@ impl SAideApp {
             return;
         }
 
-        if let Some(rx) = self.device_monitor_rx.as_ref() {
+        let mut should_refresh_profiles = false;
+        if let Some(rx) = &self.device_monitor_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     DeviceMonitorEvent::Rotated(new_orientation) => {
                         debug!("Device rotated to orientation: {}", new_orientation * 90);
                         self.orientation = new_orientation;
+
+                        should_refresh_profiles = true;
                     }
                     DeviceMonitorEvent::ImStateChanged(im_state) => {
                         if im_state != self.device_ime_state {
@@ -701,6 +719,11 @@ impl SAideApp {
                     }
                 }
             }
+        }
+
+        // Refresh keyboard profiles if needed
+        if should_refresh_profiles {
+            self.refresh_keyboard_mapping_profiles();
         }
     }
 
@@ -928,6 +951,26 @@ impl SAideApp {
         }
     }
 
+    fn refresh_keyboard_mapping_profiles(&mut self) {
+        if let Some(keyboard_mapper) = self.keyboard_mapper.as_mut()
+            && let Some(device_id) = self.device_id.as_ref()
+            && keyboard_mapper
+                .refresh_profiles(device_id, self.orientation)
+                .is_ok()
+        {
+            self.avail_profile_names = keyboard_mapper.get_avail_profiles();
+            self.active_profile_name = keyboard_mapper.get_active_profile_name();
+            debug!(
+                "Keyboard profiles refreshed: active={:?}, available={:?}",
+                self.active_profile_name, self.avail_profile_names
+            );
+        } else {
+            self.avail_profile_names.clear();
+            self.active_profile_name = None;
+            debug!("Keyboard profiles cleared - mapper not available");
+        }
+    }
+
     /// Draw the toolbar on the left side
     fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
@@ -962,15 +1005,52 @@ impl SAideApp {
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             ui.label(format!(
-                "Resolution: {}x{} | FPS: {} | Device Rotation: {}° | Capture Orientation: {}° | Video Rotation: {}°",
-                self.video_width,
-                self.video_height,
-                // Clamp FPS to max configured FPS
-                self.fps.min(self.config.scrcpy.video.max_fps as f32) as u32,
-                self.orientation * 90,
-                self.capture_orientation * 90,
-                self.rotation * 90
+                "Resolution: {:>5} x {:<5}",
+                self.video_width, self.video_height
             ));
+            ui.separator();
+            ui.label(format!(
+                "FPS: {:>3}",
+                self.fps.min(self.config.scrcpy.video.max_fps as f32) as u32
+            ));
+            ui.separator();
+            ui.label(format!("Device Rotation: {:>3}°", self.orientation * 90));
+            ui.separator();
+            ui.label(format!(
+                "Capture Orientation: {:>3}°",
+                self.capture_orientation * 90
+            ));
+            ui.separator();
+            ui.label(format!("Video Rotation: {:>3}°", self.rotation * 90));
+            ui.separator();
+
+            // ui.label("Profile:");
+            ui.label(format!("Profile: {:?}", self.active_profile_name));
+            egui::ComboBox::from_id_salt("mapping_profile_combobox")
+                .selected_text(
+                    self.active_profile_name
+                        .as_deref()
+                        .unwrap_or("Not Available"),
+                )
+                .show_ui(ui, |ui| {
+                    self.avail_profile_names.iter().for_each(|profile_name| {
+                        if ui
+                            .selectable_label(
+                                Some(profile_name.as_str()) == self.active_profile_name.as_deref(),
+                                profile_name.as_str(),
+                            )
+                            .clicked()
+                            && let Some(keyboard_mapper) = self.keyboard_mapper.as_mut()
+                        {
+                            if let Err(e) = keyboard_mapper.load_profile_by_name(profile_name) {
+                                error!("Failed to set active keyboard profile: {}", e);
+                            } else {
+                                self.active_profile_name = Some(profile_name.clone());
+                                debug!("Active keyboard profile set to: {}", profile_name);
+                            }
+                        }
+                    });
+                });
         });
     }
 
