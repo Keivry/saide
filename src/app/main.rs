@@ -21,6 +21,7 @@ use {
     once_cell::sync::Lazy,
     std::{
         ffi::OsStr,
+        process::Command,
         sync::Arc,
         thread,
         time::{Duration, Instant},
@@ -279,7 +280,18 @@ impl SAideApp {
         });
 
         // Delay to allow scrcpy to start ADB server
-        thread::sleep(Duration::from_millis(250));
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(500) {
+            // check if adb is responsive
+            if Command::new("adb")
+                .args(["shell", "echo", "ok"])
+                .output()
+                .is_ok()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
 
         // Device monitor initialization
         let dm_tx = tx.clone();
@@ -692,6 +704,139 @@ impl SAideApp {
         }
     }
 
+    /// Process keyboard event
+    fn process_keyboard_event(
+        &self,
+        keyboard_mapper: &KeyboardMapper,
+        key: &egui::Key,
+        pressed: bool,
+        modifiers: egui::Modifiers,
+    ) {
+        if !pressed {
+            return;
+        }
+
+        debug!(
+            "Processing keyboard event: key={:?}, modifiers={:?}",
+            key, modifiers
+        );
+
+        let result = if self.keyboard_custom_mapping_enabled && !self.device_ime_state {
+            keyboard_mapper.handle_custom_keymapping_event(key, pressed)
+        } else if modifiers.any() {
+            keyboard_mapper.handle_keycombo_event(modifiers, key)
+        } else {
+            keyboard_mapper.handle_standard_key_event(key)
+        };
+
+        if let Err(e) = result {
+            error!("Failed to handle keyboard event: {}", e);
+        }
+    }
+
+    /// Process mouse button event
+    fn process_mouse_button_event(
+        &self,
+        mouse_mapper: &MouseMapper,
+        button: egui::PointerButton,
+        pressed: bool,
+        pos: &egui::Pos2,
+    ) {
+        if !self.is_in_video_rect(pos) {
+            return;
+        }
+
+        debug!("Processing mouse button event: {:?} at {:?}", button, pos);
+
+        let Some((device_x, device_y)) = self.coordinate_transform(pos) else {
+            return;
+        };
+
+        let button = MouseButton::from(button);
+        if let Err(e) = mouse_mapper.handle_button_event(button, pressed, device_x, device_y) {
+            error!("Failed to handle mouse button event: {}", e);
+        } else {
+            debug!(
+                "Mouse button event at device coords: ({}, {})",
+                device_x, device_y
+            );
+        }
+    }
+
+    /// Process mouse move event
+    fn process_mouse_move_event(
+        &self,
+        mouse_mapper: &MouseMapper,
+        pos: &egui::Pos2,
+        last_pointer_pos: &egui::Pos2,
+    ) -> Option<egui::Pos2> {
+        if self.is_in_video_rect(pos) {
+            trace!("PointerMoved inside video rect at {:?}", pos);
+
+            if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
+                if let Err(e) = mouse_mapper.handle_move_event(device_x, device_y) {
+                    error!("Failed to handle mouse move event: {}", e);
+                }
+            } else {
+                debug!(
+                    "Failed to transform coordinates for PointerMoved at {:?}",
+                    pos
+                );
+            }
+
+            Some(*pos)
+        } else {
+            trace!("PointerMoved outside video rect at {:?}", pos);
+
+            // If dragging and moved outside, send a button release
+            if mouse_mapper.get_button_state() != MouseState::Idle
+                && let Some((device_x, device_y)) = self.coordinate_transform(last_pointer_pos)
+                && let Err(e) =
+                    mouse_mapper.handle_button_event(MouseButton::Left, false, device_x, device_y)
+            {
+                error!("Failed to handle mouse button release event: {}", e);
+            }
+
+            None
+        }
+    }
+
+    /// Process mouse wheel event
+    fn process_mouse_wheel_event(
+        &self,
+        mouse_mapper: &MouseMapper,
+        delta: &egui::Vec2,
+        pointer_pos: egui::Pos2,
+    ) {
+        if !self.is_in_video_rect(&pointer_pos) {
+            return;
+        }
+
+        debug!(
+            "Processing mouse wheel event: {:?} at {:?}",
+            delta, pointer_pos
+        );
+
+        let Some((device_x, device_y)) = self.coordinate_transform(&pointer_pos) else {
+            return;
+        };
+
+        let dir = if delta.y < 0.0 {
+            WheelDirection::Up
+        } else {
+            WheelDirection::Down
+        };
+
+        if let Err(e) = mouse_mapper.handle_wheel_event(device_x, device_y, &dir) {
+            error!("Failed to handle wheel event: {}", e);
+        } else {
+            debug!(
+                "Mouse wheel event at device coords: ({}, {})",
+                device_x, device_y
+            );
+        }
+    }
+
     /// Process input events for mouse and keyboard
     fn process_input_events(&mut self, ctx: &egui::Context) {
         if self.init_state != InitState::Ready {
@@ -708,144 +853,54 @@ impl SAideApp {
         }
 
         ctx.input(|input| {
-            // Handle mouse button events
             for event in &input.events {
-                if self.init_state == InitState::Ready {
-                    // Process keyboard events
-                    if self.keyboard_enabled
-                        && let Some(keyboard_mapper) = self.keyboard_mapper.as_ref()
-                        && let egui::Event::Key {
-                            key,
-                            pressed,
-                            modifiers,
-                            repeat: _,
-                            physical_key: _,
-                        } = event
-                        // Only process key press events for now
-                        && *pressed
-                    {
-                        debug!("Processing keyboard event: {:?}", event);
-                        if let Err(e) =
-                            if self.keyboard_custom_mapping_enabled && !self.device_ime_state {
-                                keyboard_mapper.handle_custom_keymapping_event(key, *pressed)
-                            } else if modifiers.any() {
-                                keyboard_mapper.handle_keycombo_event(*modifiers, key)
-                            } else {
-                                keyboard_mapper.handle_standard_key_event(key)
-                            }
-                        {
-                            error!("Failed to handle keyboard event: {}", e);
+                // Process keyboard events
+                if self.keyboard_enabled
+                    && let Some(ref keyboard_mapper) = self.keyboard_mapper
+                    && let egui::Event::Key {
+                        key,
+                        pressed,
+                        modifiers,
+                        ..
+                    } = event
+                {
+                    self.process_keyboard_event(keyboard_mapper, key, *pressed, *modifiers);
+                }
+
+                // Process mouse events
+                if !self.mouse_enabled {
+                    continue;
+                }
+
+                match event {
+                    egui::Event::PointerButton {
+                        button,
+                        pressed,
+                        pos,
+                        ..
+                    } => {
+                        if let Some(ref mouse_mapper) = self.mouse_mapper {
+                            self.process_mouse_button_event(mouse_mapper, *button, *pressed, pos);
                         }
                     }
-
-                    // Process mouse events
-                    if self.mouse_enabled
-                        && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
-                    {
-                        if let egui::Event::PointerButton {
-                            button,
-                            pressed,
-                            pos,
-                            ..
-                        } = event
+                    egui::Event::PointerMoved(pos) => {
+                        if let Some(ref mouse_mapper) = self.mouse_mapper
+                            && let Some(new_pos) = self.process_mouse_move_event(
+                                mouse_mapper,
+                                pos,
+                                &self.last_pointer_pos,
+                            )
                         {
-                            if !self.is_in_video_rect(pos) {
-                                continue;
-                            }
-
-                            debug!("Processing mouse button event: {:?} at {:?}", button, pos);
-
-                            if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
-                                let button = MouseButton::from(*button);
-                                let _ = mouse_mapper
-                                    .handle_button_event(button, *pressed, device_x, device_y)
-                                    .or_else(|e| {
-                                        error!("Failed to handle mouse button event: {}", e);
-                                        anyhow::Ok(())
-                                    });
-
-                                debug!(
-                                    "Mouse button event at device coords: ({}, {})",
-                                    device_x, device_y
-                                );
-                            }
-                        } else if let egui::Event::PointerMoved(pos) = event {
-                            // Handle mouse move for drag detection
-                            if self.is_in_video_rect(pos) {
-                                trace!("PointerMoved inside video rect at {:?}", pos);
-                            } else {
-                                trace!("PointerMoved outside video rect at {:?}", pos);
-                                if mouse_mapper.get_button_state() != MouseState::Idle
-                                    && let Some((device_x, device_y)) =
-                                        self.coordinate_transform(&self.last_pointer_pos)
-                                {
-                                    // If dragging and moved outside, send a button release
-                                    if let Err(e) = mouse_mapper.handle_button_event(
-                                        MouseButton::Left,
-                                        false,
-                                        device_x,
-                                        device_y,
-                                    ) {
-                                        error!(
-                                            "Failed to handle mouse button release event: {}",
-                                            e
-                                        );
-                                    }
-                                }
-
-                                // Skip further processing if outside video rect
-                                continue;
-                            }
-
-                            if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
-                                if let Err(e) = mouse_mapper.handle_move_event(device_x, device_y) {
-                                    error!("Failed to handle mouse move event: {}", e);
-                                }
-                            } else {
-                                debug!(
-                                    "Failed to transform coordinates for PointerMoved at {:?}",
-                                    pos
-                                );
-                            }
-
-                            self.last_pointer_pos = *pos;
-                        } else if let egui::Event::MouseWheel {
-                            modifiers: _,
-                            unit: _,
-                            delta,
-                            ..
-                        } = event
-                        {
-                            // get mouse position
-                            let pos = input.pointer.hover_pos().unwrap_or_default();
-
-                            if !self.is_in_video_rect(&pos) {
-                                continue;
-                            }
-
-                            debug!("Processing mouse wheel event: {:?} at {:?}", delta, pos);
-
-                            if self.is_in_video_rect(&pos)
-                                && let Some((device_x, device_y)) = self.coordinate_transform(&pos)
-                            {
-                                let dir = match delta {
-                                    egui::Vec2 { x: _, y } if *y < 0.0 => WheelDirection::Up,
-                                    _ => WheelDirection::Down,
-                                };
-
-                                if let Err(e) =
-                                    mouse_mapper.handle_wheel_event(device_x, device_y, &dir)
-                                {
-                                    error!("Failed to handle wheel event: {}", e);
-                                }
-
-                                debug!(
-                                    "Mouse wheel event at device coords: ({}, {})",
-                                    device_x, device_y
-                                );
-                            }
+                            self.last_pointer_pos = new_pos;
                         }
                     }
+                    egui::Event::MouseWheel { delta, .. } => {
+                        if let Some(ref mouse_mapper) = self.mouse_mapper {
+                            let pointer_pos = input.pointer.hover_pos().unwrap_or_default();
+                            self.process_mouse_wheel_event(mouse_mapper, delta, pointer_pos);
+                        }
+                    }
+                    _ => {}
                 }
             }
         });

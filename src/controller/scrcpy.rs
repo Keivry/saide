@@ -78,20 +78,6 @@ impl Scrcpy {
 
     /// Wait for scrcpy to output the expected v4l2 sink readiness message.
     pub fn wait_for_ready(&mut self, timeout: Duration) -> anyhow::Result<()> {
-        // Initial delay to allow scrcpy to start
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_millis(500) {
-            // Check if adb is responsive
-            if Command::new("adb")
-                .args(["shell", "echo", "ok"])
-                .output()
-                .is_ok()
-            {
-                break;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-
         if !self.is_running() {
             self.state = ScrcpyState::Exited;
             return Err(anyhow!("scrcpy process has exited unexpectedly"));
