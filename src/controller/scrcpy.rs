@@ -5,7 +5,7 @@ use {
     crossbeam_channel::unbounded,
     std::{
         io::{BufRead, BufReader},
-        process::{Child, Command},
+        process::Child,
         sync::Arc,
         thread,
         time::{Duration, Instant},

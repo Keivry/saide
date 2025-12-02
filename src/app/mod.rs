@@ -1,5 +1,5 @@
 mod main;
 mod mapping_config;
+mod utils;
 
 pub use main::SAideApp;
-pub use mapping_config::{MappingConfigWindow, MappingConfigEvent};

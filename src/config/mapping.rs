@@ -165,6 +165,39 @@ pub struct Profile {
     pub mappings: Arc<KeyMapping>,
 }
 
+impl Profile {
+    /// Add a mapping to the profile, returning a new profile
+    pub fn add_mapping(&self, key: Key, action: AdbAction) -> Self {
+        let mut new_mappings = (**self.mappings).clone();
+        new_mappings.insert(key, action);
+        
+        Self {
+            name: self.name.clone(),
+            device_id: self.device_id.clone(),
+            rotation: self.rotation,
+            mappings: Arc::new(KeyMapping::from_hashmap(new_mappings)),
+        }
+    }
+
+    /// Remove a mapping from the profile, returning a new profile
+    pub fn remove_mapping(&self, key: &Key) -> Self {
+        let mut new_mappings = (**self.mappings).clone();
+        new_mappings.remove(key);
+        
+        Self {
+            name: self.name.clone(),
+            device_id: self.device_id.clone(),
+            rotation: self.rotation,
+            mappings: Arc::new(KeyMapping::from_hashmap(new_mappings)),
+        }
+    }
+
+    /// Check if this profile matches the given device and rotation
+    pub fn matches(&self, device_id: &str, rotation: u32) -> bool {
+        self.device_id == device_id && self.rotation == rotation
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MappingsConfig {
     #[serde(default = "default_toggle_key")]

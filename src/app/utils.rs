@@ -1,0 +1,232 @@
+/// Utility functions for coordinate transformations and mapping lookups
+use eframe::egui::Pos2;
+use {
+    crate::config::mapping::{AdbAction, Key},
+    eframe::egui::Rect,
+};
+
+/// Transform egui position to device logical coordinates for ADB input
+///
+/// Coordinate transformation chain:
+/// 1. egui screen coords -> video display coords (considering user rotation)
+/// 2. Inverse apply user rotation -> video original coords (scrcpy fixed output)
+/// 3. Transform from video orientation to device current orientation -> ADB logical coords
+///
+/// Note: ADB automatically handles the mapping from logical coords to physical touch coords,
+/// so we only need to provide coords relative to the device's current display orientation.
+pub fn coordinate_transform(
+    pos: &egui::Pos2,
+    video_rect: Rect,
+    physical_size: (u32, u32),
+    orientation: u32,
+    capture_orientation: u32,
+    rotation: u32,
+) -> Option<(u32, u32)> {
+    // Step 1: Get relative coordinates in video display rect
+    let rel_x = pos.x - video_rect.left();
+    let rel_y = pos.y - video_rect.top();
+
+    let video_width = video_rect.width();
+    let video_height = video_rect.height();
+
+    // Step 2: Inverse apply user rotation to get video original coordinates
+    // This transforms from rotated display back to scrcpy's fixed output orientation
+    //
+    // Note: video_width/height here are display rect dimensions (after rotation)
+    // Original video dimensions need to be reconstructed based on rotation
+    let (video_x, video_y, video_w, video_h) = match rotation % 4 {
+        // 0 degrees - no rotation
+        // Display: W×H, Original: W×H
+        0 => (rel_x, rel_y, video_width, video_height),
+
+        // 90 degrees clockwise rotation
+        // Display: H×W, Original: W×H
+        // Inverse transform: (x', y') => (y', H - x')
+        1 => (rel_y, video_width - rel_x, video_height, video_width),
+
+        // 180 degrees rotation
+        // Display: W×H, Original: W×H
+        // Inverse transform: (x', y') => (W - x', H - y')
+        2 => (
+            video_width - rel_x,
+            video_height - rel_y,
+            video_width,
+            video_height,
+        ),
+
+        // 270 degrees clockwise rotation
+        // Display: H×W, Original: W×H
+        // Inverse transform: (x', y') => (W - y', x')
+        3 => (video_height - rel_y, rel_x, video_height, video_width),
+
+        _ => return None,
+    };
+
+    // Step 3: Transform from video orientation to device current orientation
+    //
+    // Video orientation: natural orientation + counter-clockwise capture_orientation
+    // Device current orientation: natural orientation + clockwise orientation
+    // Total rotation needed: clockwise (capture_orientation + orientation)
+    //
+    // This accounts for:
+    // - Video is captured with fixed orientation (capture_orientation counter-clockwise)
+    // - Device may be rotated to different orientation (orientation clockwise)
+    // - ADB expects coords relative to device's current display orientation
+    let total_rotation = (capture_orientation + orientation) % 4;
+
+    // Calculate device logical size at current orientation
+    let (device_w, device_h) = if orientation & 1 == 0 {
+        (physical_size.0 as f32, physical_size.1 as f32)
+    } else {
+        (physical_size.1 as f32, physical_size.0 as f32)
+    };
+
+    // Apply rotation and scaling
+    let (device_x, device_y) = match total_rotation {
+        // 0 degrees - direct scale
+        0 => {
+            let scale_x = device_w / video_w;
+            let scale_y = device_h / video_h;
+            (video_x * scale_x, video_y * scale_y)
+        }
+        // 90 degrees clockwise - transpose and flip X
+        1 => {
+            let scale_x = device_w / video_h;
+            let scale_y = device_h / video_w;
+            (video_y * scale_x, device_h - video_x * scale_y)
+        }
+        // 180 degrees - flip both axes
+        2 => {
+            let scale_x = device_w / video_w;
+            let scale_y = device_h / video_h;
+            (device_w - video_x * scale_x, device_h - video_y * scale_y)
+        }
+        // 270 degrees clockwise - transpose and flip Y
+        3 => {
+            let scale_x = device_w / video_h;
+            let scale_y = device_h / video_w;
+            (device_w - video_y * scale_x, video_x * scale_y)
+        }
+        _ => return None,
+    };
+
+    Some((device_x as u32, device_y as u32))
+}
+
+/// Convert device coordinates to screen coordinates in video rect
+pub fn device_to_screen_coords(
+    device_pos: (u32, u32),
+    video_rect: Rect,
+    physical_size: (u32, u32),
+    orientation: u32,
+    capture_orientation: u32,
+) -> Option<Pos2> {
+    // This is the inverse of coordinate_transform in main.rs
+    //
+    // coordinate_transform does:
+    // 1. Screen -> Video coords (inverse user rotation)
+    // 2. Video -> Device coords (apply total_rotation)
+    //
+    // We need to do:
+    // 1. Device -> Video coords (inverse total_rotation)
+    // 2. Video -> Screen coords (apply user rotation)
+
+    let total_rotation = (capture_orientation + orientation) % 4;
+
+    // Calculate device logical size at current orientation
+    let (device_w, device_h) = if orientation & 1 == 0 {
+        (physical_size.0 as f32, physical_size.1 as f32)
+    } else {
+        (physical_size.1 as f32, physical_size.0 as f32)
+    };
+
+    let video_width = video_rect.width();
+    let video_height = video_rect.height();
+
+    // Note: video_rect dimensions are after user rotation
+    // We need to determine original video dimensions
+    // Assuming rotation is 0 in config mode, video dimensions stay the same
+    let video_w = video_width;
+    let video_h = video_height;
+
+    let device_x = device_pos.0 as f32;
+    let device_y = device_pos.1 as f32;
+
+    // Step 1: Inverse total rotation to get video coordinates
+    let (video_x, video_y) = match total_rotation {
+        // 0 degrees
+        0 => {
+            let scale_x = video_w / device_w;
+            let scale_y = video_h / device_h;
+            (device_x * scale_x, device_y * scale_y)
+        }
+        // 90 degrees clockwise - inverse transform
+        1 => {
+            let scale_x = video_h / device_w;
+            let scale_y = video_w / device_h;
+            ((device_h - device_y) * scale_y, device_x * scale_x)
+        }
+        // 180 degrees
+        2 => {
+            let scale_x = video_w / device_w;
+            let scale_y = video_h / device_h;
+            (
+                (device_w - device_x) * scale_x,
+                (device_h - device_y) * scale_y,
+            )
+        }
+        // 270 degrees clockwise
+        3 => {
+            let scale_x = video_h / device_w;
+            let scale_y = video_w / device_h;
+            (device_y * scale_y, (device_w - device_x) * scale_x)
+        }
+        _ => return None,
+    };
+
+    // Step 2: Apply user rotation (assuming rotation is 0 in config mode)
+    // For now we assume no user rotation during config
+    let rel_x = video_x;
+    let rel_y = video_y;
+
+    // Convert to screen coordinates
+    let screen_x = video_rect.left() + rel_x;
+    let screen_y = video_rect.top() + rel_y;
+
+    Some(Pos2::new(screen_x, screen_y))
+}
+
+/// Find the nearest mapping to a given position
+pub fn find_nearest_mapping(
+    device_pos: (u32, u32),
+    mappings: &std::collections::HashMap<Key, AdbAction>,
+) -> Option<(Key, (u32, u32))> {
+    let mut nearest: Option<(Key, (u32, u32), f32)> = None;
+
+    for (key, action) in mappings {
+        if let Some((x, y)) = extract_position(action) {
+            let dx = device_pos.0 as f32 - x as f32;
+            let dy = device_pos.1 as f32 - y as f32;
+            let distance = (dx * dx + dy * dy).sqrt();
+
+            if let Some((_, _, min_dist)) = nearest {
+                if distance < min_dist {
+                    nearest = Some((*key, (x, y), distance));
+                }
+            } else {
+                nearest = Some((*key, (x, y), distance));
+            }
+        }
+    }
+
+    nearest.map(|(key, pos, _)| (key, pos))
+}
+
+/// Extract position from AdbAction
+pub fn extract_position(action: &AdbAction) -> Option<(u32, u32)> {
+    match action {
+        AdbAction::Tap { x, y } => Some((*x, *y)),
+        AdbAction::TouchDown { x, y } => Some((*x, *y)),
+        _ => None,
+    }
+}

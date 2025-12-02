@@ -1,7 +1,11 @@
 use {
     crate::{
-        app::mapping_config::{MappingConfigEvent, MappingConfigWindow},
+        app::{
+            mapping_config::{MappingConfigEvent, MappingConfigWindow},
+            utils::{coordinate_transform, find_nearest_mapping},
+        },
         config::{
+            ConfigManager,
             SAideConfig,
             mapping::{AdbAction, Key, MouseButton, WheelDirection},
         },
@@ -22,7 +26,6 @@ use {
     once_cell::sync::Lazy,
     std::{
         ffi::OsStr,
-        fs,
         process::Command,
         sync::Arc,
         thread,
@@ -31,6 +34,8 @@ use {
     sysinfo::{ProcessesToUpdate, System},
     tracing::{debug, error, info, trace, warn},
 };
+
+const CONFIG_PATH: &str = "config.toml";
 
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
@@ -103,6 +108,9 @@ static TOOLBAR_BUTTONS: Lazy<Vec<ToolbarButton>> = Lazy::new(|| {
 /// Main UI state
 pub struct SAideApp {
     config: Arc<SAideConfig>,
+
+    /// Configuration file manager
+    config_manager: ConfigManager,
 
     /// Scrcpy process manager
     scrcpy: Option<Scrcpy>,
@@ -206,6 +214,8 @@ impl SAideApp {
 
         Self {
             config: Arc::new(config),
+
+            config_manager: ConfigManager::new(CONFIG_PATH),
 
             scrcpy: None,
 
@@ -606,113 +616,6 @@ impl SAideApp {
         }
     }
 
-    /// Transform egui position to device logical coordinates for ADB input
-    ///
-    /// Coordinate transformation chain:
-    /// 1. egui screen coords -> video display coords (considering user rotation)
-    /// 2. Inverse apply user rotation -> video original coords (scrcpy fixed output)
-    /// 3. Transform from video orientation to device current orientation -> ADB logical coords
-    ///
-    /// Note: ADB automatically handles the mapping from logical coords to physical touch coords,
-    /// so we only need to provide coords relative to the device's current display orientation.
-    pub fn coordinate_transform(&self, pos: &egui::Pos2) -> Option<(u32, u32)> {
-        if let Some(physical_size) = self.physical_size
-            && let Some(video_rect) = &self.video_rect
-        {
-            // Step 1: Get relative coordinates in video display rect
-            let rel_x = pos.x - video_rect.left();
-            let rel_y = pos.y - video_rect.top();
-
-            let video_width = video_rect.width();
-            let video_height = video_rect.height();
-
-            // Step 2: Inverse apply user rotation to get video original coordinates
-            // This transforms from rotated display back to scrcpy's fixed output orientation
-            //
-            // Note: video_width/height here are display rect dimensions (after rotation)
-            // Original video dimensions need to be reconstructed based on rotation
-            let (video_x, video_y, video_w, video_h) = match self.rotation % 4 {
-                // 0 degrees - no rotation
-                // Display: W×H, Original: W×H
-                0 => (rel_x, rel_y, video_width, video_height),
-
-                // 90 degrees clockwise rotation
-                // Display: H×W, Original: W×H
-                // Inverse transform: (x', y') => (y', H - x')
-                1 => (rel_y, video_width - rel_x, video_height, video_width),
-
-                // 180 degrees rotation
-                // Display: W×H, Original: W×H
-                // Inverse transform: (x', y') => (W - x', H - y')
-                2 => (
-                    video_width - rel_x,
-                    video_height - rel_y,
-                    video_width,
-                    video_height,
-                ),
-
-                // 270 degrees clockwise rotation
-                // Display: H×W, Original: W×H
-                // Inverse transform: (x', y') => (W - y', x')
-                3 => (video_height - rel_y, rel_x, video_height, video_width),
-
-                _ => return None,
-            };
-
-            // Step 3: Transform from video orientation to device current orientation
-            //
-            // Video orientation: natural orientation + counter-clockwise capture_orientation
-            // Device current orientation: natural orientation + clockwise orientation
-            // Total rotation needed: clockwise (capture_orientation + orientation)
-            //
-            // This accounts for:
-            // - Video is captured with fixed orientation (capture_orientation counter-clockwise)
-            // - Device may be rotated to different orientation (orientation clockwise)
-            // - ADB expects coords relative to device's current display orientation
-            let total_rotation = (self.capture_orientation + self.orientation) % 4;
-
-            // Calculate device logical size at current orientation
-            let (device_w, device_h) = if self.orientation & 1 == 0 {
-                (physical_size.0 as f32, physical_size.1 as f32)
-            } else {
-                (physical_size.1 as f32, physical_size.0 as f32)
-            };
-
-            // Apply rotation and scaling
-            let (device_x, device_y) = match total_rotation {
-                // 0 degrees - direct scale
-                0 => {
-                    let scale_x = device_w / video_w;
-                    let scale_y = device_h / video_h;
-                    (video_x * scale_x, video_y * scale_y)
-                }
-                // 90 degrees clockwise - transpose and flip X
-                1 => {
-                    let scale_x = device_w / video_h;
-                    let scale_y = device_h / video_w;
-                    (video_y * scale_x, device_h - video_x * scale_y)
-                }
-                // 180 degrees - flip both axes
-                2 => {
-                    let scale_x = device_w / video_w;
-                    let scale_y = device_h / video_h;
-                    (device_w - video_x * scale_x, device_h - video_y * scale_y)
-                }
-                // 270 degrees clockwise - transpose and flip Y
-                3 => {
-                    let scale_x = device_w / video_h;
-                    let scale_y = device_h / video_w;
-                    (device_w - video_y * scale_x, video_x * scale_y)
-                }
-                _ => return None,
-            };
-
-            return Some((device_x as u32, device_y as u32));
-        }
-
-        None
-    }
-
     /// Process device monitor events
     fn process_device_monitor_events(&mut self) {
         if self.init_state != InitState::Ready {
@@ -784,17 +687,43 @@ impl SAideApp {
             }
             MappingConfigEvent::RequestAddMapping(screen_pos) => {
                 // Convert screen position to device coordinates
-                if let Some(device_pos) = self.coordinate_transform(&screen_pos) {
+                if let Some(video_rect) = self.video_rect
+                    && let Some(physical_size) = self.physical_size
+                    && let Some(device_pos) = coordinate_transform(
+                        &screen_pos,
+                        video_rect,
+                        physical_size,
+                        self.orientation,
+                        self.capture_orientation,
+                        self.rotation,
+                    )
+                {
                     info!("Requesting to add mapping at device pos: {:?}", device_pos);
                     self.mapping_config_window.request_input_dialog(device_pos);
                 }
             }
             MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
                 // Find nearest mapping to delete
-                if let Some(device_pos) = self.coordinate_transform(&screen_pos) {
-                    if let Some((nearest_key, nearest_pos)) = find_nearest_mapping(device_pos, &mappings) {
-                        info!("Requesting to delete mapping: {:?} at {:?}", nearest_key, nearest_pos);
-                        self.mapping_config_window.request_delete_dialog(nearest_key, nearest_pos);
+                if let Some(video_rect) = self.video_rect
+                    && let Some(physical_size) = self.physical_size
+                    && let Some(device_pos) = coordinate_transform(
+                        &screen_pos,
+                        video_rect,
+                        physical_size,
+                        self.orientation,
+                        self.capture_orientation,
+                        self.rotation,
+                    )
+                {
+                    if let Some((nearest_key, nearest_pos)) =
+                        find_nearest_mapping(device_pos, &mappings)
+                    {
+                        info!(
+                            "Requesting to delete mapping: {:?} at {:?}",
+                            nearest_key, nearest_pos
+                        );
+                        self.mapping_config_window
+                            .request_delete_dialog(nearest_key, nearest_pos);
                     } else {
                         warn!("No mapping found near position {:?}", device_pos);
                     }
@@ -804,28 +733,23 @@ impl SAideApp {
         }
 
         // Handle dialogs
-        if self.mapping_config_window.is_input_dialog_open() {
-            if let Some(pending_pos) = self.mapping_config_window.get_pending_input() {
-                if let Some(key) = self
-                    .mapping_config_window
-                    .show_key_input_dialog(ctx, pending_pos)
-                {
-                    self.add_mapping(key, pending_pos);
-                }
-            }
+        if self.mapping_config_window.is_input_dialog_open()
+            && let Some(pending_pos) = self.mapping_config_window.get_pending_input()
+            && let Some(key) = self
+                .mapping_config_window
+                .show_key_input_dialog(ctx, pending_pos)
+        {
+            self.add_mapping(key, pending_pos);
         }
 
-        if self.mapping_config_window.is_delete_dialog_open() {
-            if let Some((key, pos)) = self.mapping_config_window.get_delete_target() {
-                if let Some(confirmed) = self
-                    .mapping_config_window
-                    .show_delete_confirm_dialog(ctx, key, pos)
-                {
-                    if confirmed {
-                        self.delete_mapping(key);
-                    }
-                }
-            }
+        if self.mapping_config_window.is_delete_dialog_open()
+            && let Some((key, pos)) = self.mapping_config_window.get_delete_target()
+            && let Some(confirmed) = self
+                .mapping_config_window
+                .show_delete_confirm_dialog(ctx, key, pos)
+            && confirmed
+        {
+            self.delete_mapping(key);
         }
     }
 
@@ -833,35 +757,24 @@ impl SAideApp {
     fn add_mapping(&mut self, key: Key, device_pos: (u32, u32)) {
         info!("Adding mapping: {:?} -> {:?}", key, device_pos);
 
-        if let Some(keyboard_mapper) = &self.keyboard_mapper {
-            // Get current profile and add mapping
-            if let Some(profile) = keyboard_mapper.get_active_profile() {
-                // Create new mappings with the added key
-                let mut new_mappings = (**profile.mappings).clone();
-                new_mappings.insert(
-                    key,
-                    AdbAction::Tap {
-                        x: device_pos.0,
-                        y: device_pos.1,
-                    },
-                );
+        if let Some(keyboard_mapper) = &self.keyboard_mapper
+            && let Some(profile) = keyboard_mapper.get_active_profile()
+        {
+            // Create new profile with added mapping
+            let action = AdbAction::Tap {
+                x: device_pos.0,
+                y: device_pos.1,
+            };
+            let new_profile = Arc::new(profile.add_mapping(key, action));
 
-                // Update profile (need to create new Arc due to immutability)
-                let new_profile = Arc::new(crate::config::mapping::Profile {
-                    name: profile.name.clone(),
-                    device_id: profile.device_id.clone(),
-                    rotation: profile.rotation,
-                    mappings: Arc::new(crate::config::mapping::KeyMapping::from_hashmap(
-                        new_mappings,
-                    )),
-                });
+            // Update active profile in mapper
+            keyboard_mapper.update_active_profile(new_profile.clone());
 
-                keyboard_mapper.update_active_profile(new_profile.clone());
-
-                // Save to config file
-                if let Err(e) = self.save_config_with_updated_profile(new_profile) {
-                    error!("Failed to save config: {}", e);
-                }
+            // Save to config file
+            if let Err(e) = self.config_manager.save_profile(&new_profile) {
+                error!("Failed to save config: {}", e);
+            } else {
+                info!("Mapping saved successfully");
             }
         }
     }
@@ -870,116 +783,22 @@ impl SAideApp {
     fn delete_mapping(&mut self, key: Key) {
         info!("Deleting mapping: {:?}", key);
 
-        if let Some(keyboard_mapper) = &self.keyboard_mapper {
-            if let Some(profile) = keyboard_mapper.get_active_profile() {
-                // Create new mappings without the deleted key
-                let mut new_mappings = (**profile.mappings).clone();
-                new_mappings.remove(&key);
-
-                let new_profile = Arc::new(crate::config::mapping::Profile {
-                    name: profile.name.clone(),
-                    device_id: profile.device_id.clone(),
-                    rotation: profile.rotation,
-                    mappings: Arc::new(crate::config::mapping::KeyMapping::from_hashmap(
-                        new_mappings,
-                    )),
-                });
-
-                keyboard_mapper.update_active_profile(new_profile.clone());
-
-                // Save to config file
-                if let Err(e) = self.save_config_with_updated_profile(new_profile) {
-                    error!("Failed to save config: {}", e);
-                }
-            }
-        }
-    }
-
-    /// Save config file with updated profile
-    fn save_config_with_updated_profile(
-        &self,
-        updated_profile: Arc<crate::config::mapping::Profile>,
-    ) -> anyhow::Result<()> {
-        use std::io::Write;
-        const CONFIG_PATH: &str = "config.toml";
-
-        // Read current config file
-        let config_str = fs::read_to_string(CONFIG_PATH)?;
-
-        // Parse as TOML value for manipulation
-        let mut config_value: toml::Value = toml::from_str(&config_str)?;
-
-        // Find and update the matching profile
-        if let Some(profiles) = config_value
-            .get_mut("mappings")
-            .and_then(|m| m.get_mut("profiles"))
-            .and_then(|p| p.as_array_mut())
+        if let Some(keyboard_mapper) = &self.keyboard_mapper
+            && let Some(profile) = keyboard_mapper.get_active_profile()
         {
-            for profile in profiles.iter_mut() {
-                let name_match = profile
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .map(|n| n == updated_profile.name)
-                    .unwrap_or(false);
+            // Create new profile with removed mapping
+            let new_profile = Arc::new(profile.remove_mapping(&key));
 
-                let device_id_match = profile
-                    .get("device_id")
-                    .and_then(|d| d.as_str())
-                    .map(|d| d == updated_profile.device_id)
-                    .unwrap_or(false);
+            // Update active profile in mapper
+            keyboard_mapper.update_active_profile(new_profile.clone());
 
-                let rotation_match = profile
-                    .get("rotation")
-                    .and_then(|r| r.as_integer())
-                    .map(|r| r as u32 == updated_profile.rotation)
-                    .unwrap_or(false);
-
-                if name_match && device_id_match && rotation_match {
-                    // Update the mappings array
-                    let new_mappings: Vec<toml::Value> = updated_profile
-                        .mappings
-                        .iter()
-                        .map(|(key, action)| {
-                            let mut mapping = toml::map::Map::new();
-                            mapping.insert(
-                                "key".to_string(),
-                                toml::Value::String(format!("{:?}", key)),
-                            );
-
-                            match action {
-                                AdbAction::Tap { x, y } => {
-                                    mapping.insert(
-                                        "action".to_string(),
-                                        toml::Value::String("Tap".to_string()),
-                                    );
-                                    mapping
-                                        .insert("x".to_string(), toml::Value::Integer(*x as i64));
-                                    mapping
-                                        .insert("y".to_string(), toml::Value::Integer(*y as i64));
-                                }
-                                _ => {} // Handle other action types if needed
-                            }
-
-                            toml::Value::Table(mapping)
-                        })
-                        .collect();
-
-                    profile.as_table_mut().map(|t| {
-                        t.insert("mappings".to_string(), toml::Value::Array(new_mappings))
-                    });
-
-                    break;
-                }
+            // Save to config file
+            if let Err(e) = self.config_manager.save_profile(&new_profile) {
+                error!("Failed to save config: {}", e);
+            } else {
+                info!("Mapping deleted successfully");
             }
         }
-
-        // Write back to file
-        let new_config_str = toml::to_string_pretty(&config_value)?;
-        let mut file = fs::File::create(CONFIG_PATH)?;
-        file.write_all(new_config_str.as_bytes())?;
-
-        info!("Configuration saved successfully");
-        Ok(())
     }
 
     /// Process keyboard event
@@ -1026,7 +845,20 @@ impl SAideApp {
 
         debug!("Processing mouse button event: {:?} at {:?}", button, pos);
 
-        let Some((device_x, device_y)) = self.coordinate_transform(pos) else {
+        let Some(video_rect) = self.video_rect else {
+            return;
+        };
+        let Some(physical_size) = self.physical_size else {
+            return;
+        };
+        let Some((device_x, device_y)) = coordinate_transform(
+            pos,
+            video_rect,
+            physical_size,
+            self.orientation,
+            self.capture_orientation,
+            self.rotation,
+        ) else {
             return;
         };
 
@@ -1051,7 +883,17 @@ impl SAideApp {
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
-            if let Some((device_x, device_y)) = self.coordinate_transform(pos) {
+            if let Some(video_rect) = self.video_rect
+                && let Some(physical_size) = self.physical_size
+                && let Some((device_x, device_y)) = coordinate_transform(
+                    pos,
+                    video_rect,
+                    physical_size,
+                    self.orientation,
+                    self.capture_orientation,
+                    self.rotation,
+                )
+            {
                 if let Err(e) = mouse_mapper.handle_move_event(device_x, device_y) {
                     error!("Failed to handle mouse move event: {}", e);
                 }
@@ -1068,7 +910,16 @@ impl SAideApp {
 
             // If dragging and moved outside, send a button release
             if mouse_mapper.get_button_state() != MouseState::Idle
-                && let Some((device_x, device_y)) = self.coordinate_transform(last_pointer_pos)
+                && let Some(video_rect) = self.video_rect
+                && let Some(physical_size) = self.physical_size
+                && let Some((device_x, device_y)) = coordinate_transform(
+                    last_pointer_pos,
+                    video_rect,
+                    physical_size,
+                    self.orientation,
+                    self.capture_orientation,
+                    self.rotation,
+                )
                 && let Err(e) =
                     mouse_mapper.handle_button_event(MouseButton::Left, false, device_x, device_y)
             {
@@ -1095,7 +946,20 @@ impl SAideApp {
             delta, pointer_pos
         );
 
-        let Some((device_x, device_y)) = self.coordinate_transform(&pointer_pos) else {
+        let Some(video_rect) = self.video_rect else {
+            return;
+        };
+        let Some(physical_size) = self.physical_size else {
+            return;
+        };
+        let Some((device_x, device_y)) = coordinate_transform(
+            &pointer_pos,
+            video_rect,
+            physical_size,
+            self.orientation,
+            self.capture_orientation,
+            self.rotation,
+        ) else {
             return;
         };
 
@@ -1123,7 +987,7 @@ impl SAideApp {
         }
 
         // Skip normal input processing if mapping config window is open or dialogs are open
-        if self.mapping_config_window.visible 
+        if self.mapping_config_window.visible
             || self.mapping_config_window.is_input_dialog_open()
             || self.mapping_config_window.is_delete_dialog_open()
         {
@@ -1508,40 +1372,5 @@ impl Drop for SAideApp {
                 info!("Scrcpy process terminated");
             }
         }
-    }
-}
-
-/// Find the nearest mapping to a given position
-fn find_nearest_mapping(
-    device_pos: (u32, u32),
-    mappings: &std::collections::HashMap<Key, AdbAction>,
-) -> Option<(Key, (u32, u32))> {
-    let mut nearest: Option<(Key, (u32, u32), f32)> = None;
-
-    for (key, action) in mappings {
-        if let Some((x, y)) = extract_mapping_position(action) {
-            let dx = device_pos.0 as f32 - x as f32;
-            let dy = device_pos.1 as f32 - y as f32;
-            let distance = (dx * dx + dy * dy).sqrt();
-
-            if let Some((_, _, min_dist)) = nearest {
-                if distance < min_dist {
-                    nearest = Some((*key, (x, y), distance));
-                }
-            } else {
-                nearest = Some((*key, (x, y), distance));
-            }
-        }
-    }
-
-    nearest.map(|(key, pos, _)| (key, pos))
-}
-
-/// Extract position from AdbAction
-fn extract_mapping_position(action: &AdbAction) -> Option<(u32, u32)> {
-    match action {
-        AdbAction::Tap { x, y } => Some((*x, *y)),
-        AdbAction::TouchDown { x, y } => Some((*x, *y)),
-        _ => None,
     }
 }
