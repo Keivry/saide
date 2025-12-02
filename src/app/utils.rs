@@ -1,9 +1,15 @@
 /// Utility functions for coordinate transformations and mapping lookups
 use eframe::egui::Pos2;
-use {
-    crate::config::mapping::{AdbAction, Key},
-    eframe::egui::Rect,
-};
+
+use crate::config::mapping::{AdbAction, Key, KeyMapping};
+
+pub struct CoordinatesTransformParams {
+    pub video_rect: egui::Rect,
+    pub video_rotation: u32,
+    pub device_physical_size: (u32, u32),
+    pub device_orientation: u32,
+    pub capture_orientation: u32,
+}
 
 /// Transform egui position to device logical coordinates for ADB input
 ///
@@ -14,14 +20,18 @@ use {
 ///
 /// Note: ADB automatically handles the mapping from logical coords to physical touch coords,
 /// so we only need to provide coords relative to the device's current display orientation.
-pub fn coordinate_transform(
+pub fn screen_to_device_coords(
     pos: &egui::Pos2,
-    video_rect: Rect,
-    physical_size: (u32, u32),
-    orientation: u32,
-    capture_orientation: u32,
-    rotation: u32,
+    trans_params: &CoordinatesTransformParams,
 ) -> Option<(u32, u32)> {
+    let (video_rect, video_rotation, device_physical_size, device_orientation, capture_orientation) = (
+        &trans_params.video_rect,
+        trans_params.video_rotation,
+        trans_params.device_physical_size,
+        trans_params.device_orientation,
+        trans_params.capture_orientation,
+    );
+
     // Step 1: Get relative coordinates in video display rect
     let rel_x = pos.x - video_rect.left();
     let rel_y = pos.y - video_rect.top();
@@ -34,7 +44,7 @@ pub fn coordinate_transform(
     //
     // Note: video_width/height here are display rect dimensions (after rotation)
     // Original video dimensions need to be reconstructed based on rotation
-    let (video_x, video_y, video_w, video_h) = match rotation % 4 {
+    let (video_x, video_y, video_w, video_h) = match video_rotation % 4 {
         // 0 degrees - no rotation
         // Display: W×H, Original: W×H
         0 => (rel_x, rel_y, video_width, video_height),
@@ -72,13 +82,13 @@ pub fn coordinate_transform(
     // - Video is captured with fixed orientation (capture_orientation counter-clockwise)
     // - Device may be rotated to different orientation (orientation clockwise)
     // - ADB expects coords relative to device's current display orientation
-    let total_rotation = (capture_orientation + orientation) % 4;
+    let total_rotation = (capture_orientation + device_orientation) % 4;
 
     // Calculate device logical size at current orientation
-    let (device_w, device_h) = if orientation & 1 == 0 {
-        (physical_size.0 as f32, physical_size.1 as f32)
+    let (device_w, device_h) = if device_orientation & 1 == 0 {
+        (device_physical_size.0 as f32, device_physical_size.1 as f32)
     } else {
-        (physical_size.1 as f32, physical_size.0 as f32)
+        (device_physical_size.1 as f32, device_physical_size.0 as f32)
     };
 
     // Apply rotation and scaling
@@ -116,12 +126,15 @@ pub fn coordinate_transform(
 /// Convert device coordinates to screen coordinates in video rect
 pub fn device_to_screen_coords(
     device_pos: (u32, u32),
-    video_rect: Rect,
-    physical_size: (u32, u32),
-    orientation: u32,
-    capture_orientation: u32,
-    rotation: u32,
+    transform_params: &CoordinatesTransformParams,
 ) -> Option<Pos2> {
+    let (video_rect, video_rotation, device_physical_size, device_orientation, capture_orientation) = (
+        &transform_params.video_rect,
+        transform_params.video_rotation,
+        transform_params.device_physical_size,
+        transform_params.device_orientation,
+        transform_params.capture_orientation,
+    );
     // This is the inverse of coordinate_transform
     //
     // coordinate_transform does:
@@ -132,13 +145,13 @@ pub fn device_to_screen_coords(
     // 1. Device -> Video coords (inverse total_rotation)
     // 2. Video -> Screen coords (apply user rotation)
 
-    let total_rotation = (capture_orientation + orientation) % 4;
+    let total_rotation = (capture_orientation + device_orientation) % 4;
 
     // Calculate device logical size at current orientation
-    let (device_w, device_h) = if orientation & 1 == 0 {
-        (physical_size.0 as f32, physical_size.1 as f32)
+    let (device_w, device_h) = if device_orientation & 1 == 0 {
+        (device_physical_size.0 as f32, device_physical_size.1 as f32)
     } else {
-        (physical_size.1 as f32, physical_size.0 as f32)
+        (device_physical_size.1 as f32, device_physical_size.0 as f32)
     };
 
     let video_width = video_rect.width();
@@ -146,7 +159,7 @@ pub fn device_to_screen_coords(
 
     // Determine original video dimensions before user rotation
     // If rotation is odd (90° or 270°), dimensions are swapped
-    let (video_w, video_h) = if rotation & 1 == 0 {
+    let (video_w, video_h) = if video_rotation & 1 == 0 {
         (video_width, video_height)
     } else {
         (video_height, video_width)
@@ -188,22 +201,22 @@ pub fn device_to_screen_coords(
     };
 
     // Step 2: Apply user rotation to transform from video original coords to display coords
-    let (rel_x, rel_y) = match rotation % 4 {
+    let (rel_x, rel_y) = match video_rotation % 4 {
         // 0 degrees - no rotation
         0 => (video_x, video_y),
-        
+
         // 90 degrees clockwise rotation
         // Transform: (x, y) => (H - y, x)
         1 => (video_h - video_y, video_x),
-        
+
         // 180 degrees rotation
         // Transform: (x, y) => (W - x, H - y)
         2 => (video_w - video_x, video_h - video_y),
-        
+
         // 270 degrees clockwise rotation
         // Transform: (x, y) => (y, W - x)
         3 => (video_y, video_w - video_x),
-        
+
         _ => return None,
     };
 
@@ -217,11 +230,11 @@ pub fn device_to_screen_coords(
 /// Find the nearest mapping to a given position
 pub fn find_nearest_mapping(
     device_pos: (u32, u32),
-    mappings: &std::collections::HashMap<Key, AdbAction>,
+    mappings: &KeyMapping,
 ) -> Option<(Key, (u32, u32))> {
     let mut nearest: Option<(Key, (u32, u32), f32)> = None;
 
-    for (key, action) in mappings {
+    for (key, action) in mappings.lock().iter() {
         if let Some((x, y)) = extract_position(action) {
             let dx = device_pos.0 as f32 - x as f32;
             let dy = device_pos.1 as f32 - y as f32;

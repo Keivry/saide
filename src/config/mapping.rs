@@ -1,6 +1,7 @@
 use {
     crate::controller::utils::*,
-    eframe::{egui, egui::PointerButton},
+    eframe::egui::{self, PointerButton},
+    parking_lot::Mutex,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, ops::Deref, sync::Arc},
 };
@@ -93,7 +94,7 @@ pub enum AdbAction {
 }
 #[derive(Debug, Default)]
 pub struct KeyMapping {
-    inner: HashMap<Key, AdbAction>,
+    inner: Arc<Mutex<HashMap<Key, AdbAction>>>,
 }
 
 impl<'de> Deserialize<'de> for KeyMapping {
@@ -109,11 +110,13 @@ impl<'de> Deserialize<'de> for KeyMapping {
         }
 
         let raw_mappings: Vec<RawMapping> = Deserialize::deserialize(deserializer)?;
-        let mut inner = HashMap::new();
+        let mut m = HashMap::new();
         raw_mappings.into_iter().for_each(|rm| {
-            inner.insert(rm.key, rm.action);
+            m.insert(rm.key, rm.action);
         });
-        Ok(KeyMapping { inner })
+        Ok(KeyMapping {
+            inner: Arc::new(Mutex::new(m)),
+        })
     }
 }
 
@@ -129,25 +132,19 @@ impl Serialize for KeyMapping {
             action: &'a AdbAction,
         }
 
-        let raw_mappings: Vec<RawMapping> = self
-            .inner
+        let mappings = self.inner.lock();
+        let raw_mappings = mappings
             .iter()
             .map(|(key, action)| RawMapping { key, action })
-            .collect();
+            .collect::<Vec<RawMapping>>();
         raw_mappings.serialize(serializer)
     }
 }
 
 impl Deref for KeyMapping {
-    type Target = HashMap<Key, AdbAction>;
+    type Target = Arc<Mutex<HashMap<Key, AdbAction>>>;
 
     fn deref(&self) -> &Self::Target { &self.inner }
-}
-
-impl KeyMapping {
-    pub fn from_hashmap(inner: HashMap<Key, AdbAction>) -> Self {
-        Self { inner }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -167,29 +164,15 @@ pub struct Profile {
 
 impl Profile {
     /// Add a mapping to the profile, returning a new profile
-    pub fn add_mapping(&self, key: Key, action: AdbAction) -> Self {
-        let mut new_mappings = (**self.mappings).clone();
-        new_mappings.insert(key, action);
-        
-        Self {
-            name: self.name.clone(),
-            device_id: self.device_id.clone(),
-            rotation: self.rotation,
-            mappings: Arc::new(KeyMapping::from_hashmap(new_mappings)),
-        }
+    pub fn add_mapping(&self, key: Key, action: AdbAction) -> &Self {
+        self.mappings.inner.lock().insert(key, action);
+        self
     }
 
     /// Remove a mapping from the profile, returning a new profile
-    pub fn remove_mapping(&self, key: &Key) -> Self {
-        let mut new_mappings = (**self.mappings).clone();
-        new_mappings.remove(key);
-        
-        Self {
-            name: self.name.clone(),
-            device_id: self.device_id.clone(),
-            rotation: self.rotation,
-            mappings: Arc::new(KeyMapping::from_hashmap(new_mappings)),
-        }
+    pub fn remove_mapping(&self, key: &Key) -> &Self {
+        self.mappings.inner.lock().remove(key);
+        self
     }
 
     /// Check if this profile matches the given device and rotation

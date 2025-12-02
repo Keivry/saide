@@ -171,7 +171,10 @@ impl AdbShell {
 
         let cmd_str = match command {
             AdbAction::Tap { x, y } => {
-                format!("input tap {} {}\n", x, y)
+                format!(
+                    "input motionevent DOWN {} {} && input motionevent UP {} {}\n",
+                    x, y, x, y
+                )
             }
             AdbAction::Swipe {
                 x1,

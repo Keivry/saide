@@ -90,14 +90,10 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
-    pub fn new(path: impl Into<String>) -> Self {
-        Self { path: path.into() }
-    }
+    pub fn new(path: impl Into<String>) -> Self { Self { path: path.into() } }
 
     /// Load configuration
-    pub fn load(&self) -> anyhow::Result<SAideConfig> {
-        SAideConfig::load(&self.path)
-    }
+    pub fn load(&self) -> anyhow::Result<SAideConfig> { SAideConfig::load(&self.path) }
 
     /// Save profile to configuration file
     pub fn save_profile(&self, profile: &mapping::Profile) -> anyhow::Result<()> {
@@ -119,9 +115,9 @@ impl ConfigManager {
                 if Self::profile_matches(profile_value, profile) {
                     // Update the mappings array
                     let new_mappings = Self::serialize_mappings(&profile.mappings);
-                    profile_value
-                        .as_table_mut()
-                        .map(|t| t.insert("mappings".to_string(), toml::Value::Array(new_mappings)));
+                    profile_value.as_table_mut().map(|t| {
+                        t.insert("mappings".to_string(), toml::Value::Array(new_mappings))
+                    });
                     break;
                 }
             }
@@ -161,6 +157,7 @@ impl ConfigManager {
     /// Serialize mappings to TOML array
     fn serialize_mappings(mappings: &mapping::KeyMapping) -> Vec<toml::Value> {
         mappings
+            .lock()
             .iter()
             .map(|(key, action)| {
                 let mut mapping = toml::map::Map::new();
@@ -168,10 +165,8 @@ impl ConfigManager {
 
                 match action {
                     mapping::AdbAction::Tap { x, y } => {
-                        mapping.insert(
-                            "action".to_string(),
-                            toml::Value::String("Tap".to_string()),
-                        );
+                        mapping
+                            .insert("action".to_string(), toml::Value::String("Tap".to_string()));
                         mapping.insert("x".to_string(), toml::Value::Integer(*x as i64));
                         mapping.insert("y".to_string(), toml::Value::Integer(*y as i64));
                     }
@@ -183,7 +178,13 @@ impl ConfigManager {
                         mapping.insert("x".to_string(), toml::Value::Integer(*x as i64));
                         mapping.insert("y".to_string(), toml::Value::Integer(*y as i64));
                     }
-                    mapping::AdbAction::Swipe { x1, y1, x2, y2, duration } => {
+                    mapping::AdbAction::Swipe {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        duration,
+                    } => {
                         mapping.insert(
                             "action".to_string(),
                             toml::Value::String("Swipe".to_string()),
@@ -192,7 +193,10 @@ impl ConfigManager {
                         mapping.insert("y1".to_string(), toml::Value::Integer(*y1 as i64));
                         mapping.insert("x2".to_string(), toml::Value::Integer(*x2 as i64));
                         mapping.insert("y2".to_string(), toml::Value::Integer(*y2 as i64));
-                        mapping.insert("duration".to_string(), toml::Value::Integer(*duration as i64));
+                        mapping.insert(
+                            "duration".to_string(),
+                            toml::Value::Integer(*duration as i64),
+                        );
                     }
                     _ => {
                         // For other action types, just mark as Ignore

@@ -223,6 +223,7 @@ impl KeyboardMapper {
             .as_ref()
             .unwrap()
             .mappings
+            .lock()
             .get(key)
             .map(|action| self.adb_shell.send_input(action))
             .or_else(|| Some(self.handle_standard_key_event(key)))
@@ -244,12 +245,5 @@ impl KeyboardMapper {
     }
 
     /// Get active profile (for read-only access)
-    pub fn get_active_profile(&self) -> Option<Arc<Profile>> {
-        self.active_profile.lock().clone()
-    }
-
-    /// Update active profile
-    pub fn update_active_profile(&self, profile: Arc<Profile>) {
-        *self.active_profile.lock() = Some(profile);
-    }
+    pub fn get_active_profile(&self) -> Option<Arc<Profile>> { self.active_profile.lock().clone() }
 }

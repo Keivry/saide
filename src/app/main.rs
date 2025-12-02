@@ -2,7 +2,7 @@ use {
     crate::{
         app::{
             mapping_config::{MappingConfigEvent, MappingConfigWindow},
-            utils::{coordinate_transform, find_nearest_mapping},
+            utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_device_coords},
         },
         config::{
             ConfigManager,
@@ -146,22 +146,22 @@ pub struct SAideApp {
     device_id: Option<String>,
 
     /// Device physical screen size
-    physical_size: Option<(u32, u32)>,
+    device_physical_size: (u32, u32),
 
     /// Device orientation (0-3), clockwise
-    orientation: u32,
-
-    video_width: u32,
-    video_height: u32,
+    device_orientation: u32,
 
     // V4l2 capture orientation (0-3), counter-clockwise
     capture_orientation: u32,
 
-    /// Video display rectangle in egui coordinates
-    video_rect: Option<egui::Rect>,
-
     // Video render rotation state (0-3), clockwise
-    rotation: u32,
+    video_rotation: u32,
+
+    /// Video display rectangle in egui coordinates
+    video_rect: egui::Rect,
+
+    video_original_width: u32,
+    video_original_height: u32,
 
     // Current FPS
     fps: f32,
@@ -237,18 +237,18 @@ impl SAideApp {
 
             device_id: None,
 
-            physical_size: None,
+            device_physical_size: (0, 0),
 
-            orientation: 0,
+            device_orientation: 0,
 
-            video_width: 0,
-            video_height: 0,
+            video_original_width: 0,
+            video_original_height: 0,
 
             capture_orientation: 0,
 
-            video_rect: None,
+            video_rect: egui::Rect::NOTHING,
 
-            rotation: 0,
+            video_rotation: 0,
 
             fps: 0.0,
 
@@ -499,12 +499,10 @@ impl SAideApp {
                     InitResult::DeviceId(device_id) => {
                         self.device_id = Some(device_id);
                     }
-                    InitResult::PhysicalSize(size) => {
-                        self.physical_size = Some(size);
-                    }
+                    InitResult::PhysicalSize(size) => self.device_physical_size = size,
                     InitResult::VideoDimensions((width, height)) => {
-                        self.video_width = width;
-                        self.video_height = height;
+                        self.video_original_width = width;
+                        self.video_original_height = height;
                     }
                     InitResult::CaptureOrientation(orientation) => {
                         self.capture_orientation = orientation;
@@ -521,8 +519,8 @@ impl SAideApp {
             if self.scrcpy.is_some()
                 && self.device_monitor_rx.is_some()
                 && self.frame_rx.is_some()
-                && self.video_width > 0
-                && self.video_height > 0
+                && self.video_original_width > 0
+                && self.video_original_height > 0
             {
                 self.init_state = InitState::Ready;
                 info!("Initialization completed successfully");
@@ -535,10 +533,10 @@ impl SAideApp {
 
     /// Get effective video dimensions considering rotation
     fn effective_dimensions(&self) -> (u32, u32) {
-        if self.rotation & 1 == 0 {
-            (self.video_width, self.video_height)
+        if self.video_rotation & 1 == 0 {
+            (self.video_original_width, self.video_original_height)
         } else {
-            (self.video_height, self.video_width)
+            (self.video_original_height, self.video_original_width)
         }
     }
 
@@ -553,7 +551,7 @@ impl SAideApp {
 
     /// Rotate video by 90 degrees clockwise
     fn rotate(&mut self, ctx: &egui::Context) {
-        self.rotation = (self.rotation + 1) % 4;
+        self.video_rotation = (self.video_rotation + 1) % 4;
         self.resize(ctx);
     }
 
@@ -606,14 +604,10 @@ impl SAideApp {
 
     // Check if position is within video rectangle
     fn is_in_video_rect(&self, pos: &egui::Pos2) -> bool {
-        if let Some(video_rect) = &self.video_rect {
-            pos.x >= video_rect.left()
-                && pos.x <= video_rect.right()
-                && pos.y >= video_rect.top()
-                && pos.y <= video_rect.bottom()
-        } else {
-            false
-        }
+        pos.x >= self.video_rect.left()
+            && pos.x <= self.video_rect.right()
+            && pos.y >= self.video_rect.top()
+            && pos.y <= self.video_rect.bottom()
     }
 
     /// Process device monitor events
@@ -629,7 +623,7 @@ impl SAideApp {
                 match event {
                     DeviceMonitorEvent::Rotated(new_orientation) => {
                         debug!("Device rotated to orientation: {}", new_orientation * 90);
-                        self.orientation = new_orientation;
+                        self.device_orientation = new_orientation;
 
                         should_refresh_profiles = true;
                     }
@@ -656,31 +650,18 @@ impl SAideApp {
         }
 
         // Get current mappings for display
-        let mappings = if let Some(keyboard_mapper) = &self.keyboard_mapper {
-            keyboard_mapper
-                .get_active_profile()
-                .map(|profile| {
-                    // Double deref: Arc<KeyMapping> -> KeyMapping -> HashMap
-                    (**profile.mappings).clone()
-                })
-                .unwrap_or_default()
-        } else {
-            std::collections::HashMap::new()
-        };
-
-        let physical_size = self.physical_size.unwrap_or((0, 0));
-        let video_rect = self.video_rect.unwrap_or(egui::Rect::NOTHING);
+        let mappings = self
+            .keyboard_mapper
+            .as_ref()
+            .unwrap()
+            .get_active_profile()
+            .map(|profile| profile.mappings.clone())
+            .unwrap_or_default();
 
         // Draw the config window and handle events
-        let event = self.mapping_config_window.draw(
-            ctx,
-            video_rect,
-            &mappings,
-            physical_size,
-            self.orientation,
-            self.capture_orientation,
-            self.rotation,
-        );
+        let event =
+            self.mapping_config_window
+                .draw(ctx, &mappings, &self.coodinates_transform_params());
 
         match event {
             MappingConfigEvent::Close => {
@@ -688,16 +669,8 @@ impl SAideApp {
             }
             MappingConfigEvent::RequestAddMapping(screen_pos) => {
                 // Convert screen position to device coordinates
-                if let Some(video_rect) = self.video_rect
-                    && let Some(physical_size) = self.physical_size
-                    && let Some(device_pos) = coordinate_transform(
-                        &screen_pos,
-                        video_rect,
-                        physical_size,
-                        self.orientation,
-                        self.capture_orientation,
-                        self.rotation,
-                    )
+                if let Some(device_pos) =
+                    screen_to_device_coords(&screen_pos, &self.coodinates_transform_params())
                 {
                     info!("Requesting to add mapping at device pos: {:?}", device_pos);
                     self.mapping_config_window.request_input_dialog(device_pos);
@@ -705,29 +678,16 @@ impl SAideApp {
             }
             MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
                 // Find nearest mapping to delete
-                if let Some(video_rect) = self.video_rect
-                    && let Some(physical_size) = self.physical_size
-                    && let Some(device_pos) = coordinate_transform(
-                        &screen_pos,
-                        video_rect,
-                        physical_size,
-                        self.orientation,
-                        self.capture_orientation,
-                        self.rotation,
-                    )
+                if let Some((nearest_key, nearest_pos)) =
+                    screen_to_device_coords(&screen_pos, &self.coodinates_transform_params())
+                        .and_then(|device_pos| find_nearest_mapping(device_pos, &mappings))
                 {
-                    if let Some((nearest_key, nearest_pos)) =
-                        find_nearest_mapping(device_pos, &mappings)
-                    {
-                        info!(
-                            "Requesting to delete mapping: {:?} at {:?}",
-                            nearest_key, nearest_pos
-                        );
-                        self.mapping_config_window
-                            .request_delete_dialog(nearest_key, nearest_pos);
-                    } else {
-                        warn!("No mapping found near position {:?}", device_pos);
-                    }
+                    info!(
+                        "Requesting to delete mapping: {:?} at {:?}",
+                        nearest_key, nearest_pos
+                    );
+                    self.mapping_config_window
+                        .request_delete_dialog(nearest_key, nearest_pos);
                 }
             }
             MappingConfigEvent::None => {}
@@ -758,21 +718,22 @@ impl SAideApp {
     fn add_mapping(&mut self, key: Key, device_pos: (u32, u32)) {
         info!("Adding mapping: {:?} -> {:?}", key, device_pos);
 
-        if let Some(keyboard_mapper) = &self.keyboard_mapper
-            && let Some(profile) = keyboard_mapper.get_active_profile()
-        {
+        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+            error!("Keyboard mapper not initialized");
+            return;
+        };
+
+        if let Some(profile) = keyboard_mapper.get_active_profile() {
             // Create new profile with added mapping
             let action = AdbAction::Tap {
                 x: device_pos.0,
                 y: device_pos.1,
             };
-            let new_profile = Arc::new(profile.add_mapping(key, action));
 
-            // Update active profile in mapper
-            keyboard_mapper.update_active_profile(new_profile.clone());
+            profile.add_mapping(key, action);
 
             // Save to config file
-            if let Err(e) = self.config_manager.save_profile(&new_profile) {
+            if let Err(e) = self.config_manager.save_profile(&profile) {
                 error!("Failed to save config: {}", e);
             } else {
                 info!("Mapping saved successfully");
@@ -784,17 +745,17 @@ impl SAideApp {
     fn delete_mapping(&mut self, key: Key) {
         info!("Deleting mapping: {:?}", key);
 
-        if let Some(keyboard_mapper) = &self.keyboard_mapper
-            && let Some(profile) = keyboard_mapper.get_active_profile()
-        {
-            // Create new profile with removed mapping
-            let new_profile = Arc::new(profile.remove_mapping(&key));
+        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+            error!("Keyboard mapper not initialized");
+            return;
+        };
 
-            // Update active profile in mapper
-            keyboard_mapper.update_active_profile(new_profile.clone());
+        if let Some(profile) = keyboard_mapper.get_active_profile() {
+            // Create new profile with removed mapping
+            profile.remove_mapping(&key);
 
             // Save to config file
-            if let Err(e) = self.config_manager.save_profile(&new_profile) {
+            if let Err(e) = self.config_manager.save_profile(&profile) {
                 error!("Failed to save config: {}", e);
             } else {
                 info!("Mapping deleted successfully");
@@ -846,20 +807,9 @@ impl SAideApp {
 
         debug!("Processing mouse button event: {:?} at {:?}", button, pos);
 
-        let Some(video_rect) = self.video_rect else {
-            return;
-        };
-        let Some(physical_size) = self.physical_size else {
-            return;
-        };
-        let Some((device_x, device_y)) = coordinate_transform(
-            pos,
-            video_rect,
-            physical_size,
-            self.orientation,
-            self.capture_orientation,
-            self.rotation,
-        ) else {
+        let Some((device_x, device_y)) =
+            screen_to_device_coords(pos, &self.coodinates_transform_params())
+        else {
             return;
         };
 
@@ -884,16 +834,8 @@ impl SAideApp {
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
-            if let Some(video_rect) = self.video_rect
-                && let Some(physical_size) = self.physical_size
-                && let Some((device_x, device_y)) = coordinate_transform(
-                    pos,
-                    video_rect,
-                    physical_size,
-                    self.orientation,
-                    self.capture_orientation,
-                    self.rotation,
-                )
+            if let Some((device_x, device_y)) =
+                screen_to_device_coords(pos, &self.coodinates_transform_params())
             {
                 if let Err(e) = mouse_mapper.handle_move_event(device_x, device_y) {
                     error!("Failed to handle mouse move event: {}", e);
@@ -911,16 +853,8 @@ impl SAideApp {
 
             // If dragging and moved outside, send a button release
             if mouse_mapper.get_button_state() != MouseState::Idle
-                && let Some(video_rect) = self.video_rect
-                && let Some(physical_size) = self.physical_size
-                && let Some((device_x, device_y)) = coordinate_transform(
-                    last_pointer_pos,
-                    video_rect,
-                    physical_size,
-                    self.orientation,
-                    self.capture_orientation,
-                    self.rotation,
-                )
+                && let Some((device_x, device_y)) =
+                    screen_to_device_coords(last_pointer_pos, &self.coodinates_transform_params())
                 && let Err(e) =
                     mouse_mapper.handle_button_event(MouseButton::Left, false, device_x, device_y)
             {
@@ -947,20 +881,9 @@ impl SAideApp {
             delta, pointer_pos
         );
 
-        let Some(video_rect) = self.video_rect else {
-            return;
-        };
-        let Some(physical_size) = self.physical_size else {
-            return;
-        };
-        let Some((device_x, device_y)) = coordinate_transform(
-            &pointer_pos,
-            video_rect,
-            physical_size,
-            self.orientation,
-            self.capture_orientation,
-            self.rotation,
-        ) else {
+        let Some((device_x, device_y)) =
+            screen_to_device_coords(&pointer_pos, &self.coodinates_transform_params())
+        else {
             return;
         };
 
@@ -1006,14 +929,14 @@ impl SAideApp {
         ctx.input(|input| {
             for event in &input.events {
                 // Process keyboard events
-                if self.keyboard_enabled
+                if let egui::Event::Key {
+                    key,
+                    pressed,
+                    modifiers,
+                    ..
+                } = event
+                    && self.keyboard_enabled
                     && let Some(ref keyboard_mapper) = self.keyboard_mapper
-                    && let egui::Event::Key {
-                        key,
-                        pressed,
-                        modifiers,
-                        ..
-                    } = event
                 {
                     self.process_keyboard_event(keyboard_mapper, key, *pressed, *modifiers);
                 }
@@ -1022,6 +945,10 @@ impl SAideApp {
                 if !self.mouse_enabled {
                     continue;
                 }
+                let mouse_mapper = match &self.mouse_mapper {
+                    Some(m) => m,
+                    None => continue,
+                };
 
                 match event {
                     egui::Event::PointerButton {
@@ -1030,26 +957,18 @@ impl SAideApp {
                         pos,
                         ..
                     } => {
-                        if let Some(ref mouse_mapper) = self.mouse_mapper {
-                            self.process_mouse_button_event(mouse_mapper, *button, *pressed, pos);
-                        }
+                        self.process_mouse_button_event(mouse_mapper, *button, *pressed, pos);
                     }
                     egui::Event::PointerMoved(pos) => {
-                        if let Some(ref mouse_mapper) = self.mouse_mapper
-                            && let Some(new_pos) = self.process_mouse_move_event(
-                                mouse_mapper,
-                                pos,
-                                &self.last_pointer_pos,
-                            )
+                        if let Some(new_pos) =
+                            self.process_mouse_move_event(mouse_mapper, pos, &self.last_pointer_pos)
                         {
                             self.last_pointer_pos = new_pos;
                         }
                     }
                     egui::Event::MouseWheel { delta, .. } => {
-                        if let Some(ref mouse_mapper) = self.mouse_mapper {
-                            let pointer_pos = input.pointer.hover_pos().unwrap_or_default();
-                            self.process_mouse_wheel_event(mouse_mapper, delta, pointer_pos);
-                        }
+                        let pointer_pos = input.pointer.hover_pos().unwrap_or_default();
+                        self.process_mouse_wheel_event(mouse_mapper, delta, pointer_pos);
                     }
                     _ => {}
                 }
@@ -1058,44 +977,57 @@ impl SAideApp {
     }
 
     fn receive_frame(&mut self) {
-        if let Some(rx) = &self.frame_rx {
-            while let Ok(frame) = rx.try_recv() {
-                // Update frame and timestamp
-                self.frame = Some(frame);
-                self.has_new_frame = true;
-            }
+        let Some(rx) = &self.frame_rx else {
+            trace!("Skipping frame receiving - not initialized");
+            return;
+        };
 
-            // Update FPS calculation
-            if let Some(last_instant) = self.last_frame_instant {
-                let elapsed = last_instant.elapsed().as_secs_f32();
-                if elapsed > 0.0 {
-                    self.fps = 0.95 * self.fps + 0.05 * (1.0 / elapsed);
-                }
-            }
+        // Always receive latest frame
+        while let Ok(frame) = rx.try_recv() {
+            // Update frame and timestamp
+            self.frame = Some(frame);
+            self.has_new_frame = true;
+        }
 
-            if self.has_new_frame {
-                self.last_frame_instant = Some(Instant::now());
+        // Update FPS calculation
+        if let Some(last_instant) = self.last_frame_instant {
+            let elapsed = last_instant.elapsed().as_secs_f32();
+            if elapsed > 0.0 {
+                self.fps = 0.95 * self.fps + 0.05 * (1.0 / elapsed);
             }
+        }
+
+        if self.has_new_frame {
+            self.last_frame_instant = Some(Instant::now());
         }
     }
 
     fn refresh_keyboard_mapping_profiles(&mut self) {
-        if let Some(keyboard_mapper) = self.keyboard_mapper.as_mut()
-            && let Some(device_id) = self.device_id.as_ref()
-            && keyboard_mapper
-                .refresh_profiles(device_id, self.orientation)
-                .is_ok()
-        {
-            self.avail_profile_names = keyboard_mapper.get_avail_profiles();
-            self.active_profile_name = keyboard_mapper.get_active_profile_name();
-            debug!(
-                "Keyboard profiles refreshed: active={:?}, available={:?}",
-                self.active_profile_name, self.avail_profile_names
-            );
-        } else {
-            self.avail_profile_names.clear();
-            self.active_profile_name = None;
-            debug!("Keyboard profiles cleared - mapper not available");
+        let (keyboard_mapper, device_id) =
+            match (self.keyboard_mapper.as_mut(), self.device_id.as_ref()) {
+                (Some(km), Some(did)) => (km, did),
+                _ => {
+                    debug!("Keyboard mapper or device ID not available for profile refresh");
+                    self.avail_profile_names.clear();
+                    self.active_profile_name = None;
+                    return;
+                }
+            };
+
+        match keyboard_mapper.refresh_profiles(device_id, self.device_orientation) {
+            Ok(_) => {
+                self.avail_profile_names = keyboard_mapper.get_avail_profiles();
+                self.active_profile_name = keyboard_mapper.get_active_profile_name();
+                debug!(
+                    "Keyboard profiles refreshed: active={:?}, available={:?}",
+                    self.active_profile_name, self.avail_profile_names
+                );
+            }
+            Err(e) => {
+                self.avail_profile_names.clear();
+                self.active_profile_name = None;
+                debug!("Failed to refresh keyboard profiles: {}", e);
+            }
         }
     }
 
@@ -1134,7 +1066,7 @@ impl SAideApp {
         ui.horizontal_centered(|ui| {
             ui.label(format!(
                 "Resolution: {:>5} x {:<5}",
-                self.video_width, self.video_height
+                self.video_original_width, self.video_original_height
             ));
             ui.separator();
             ui.label(format!(
@@ -1142,14 +1074,17 @@ impl SAideApp {
                 self.fps.min(self.config.scrcpy.video.max_fps as f32) as u32
             ));
             ui.separator();
-            ui.label(format!("Device Rotation: {:>3}°", self.orientation * 90));
+            ui.label(format!(
+                "Device Rotation: {:>3}°",
+                self.device_orientation * 90
+            ));
             ui.separator();
             ui.label(format!(
                 "Capture Orientation: {:>3}°",
                 self.capture_orientation * 90
             ));
             ui.separator();
-            ui.label(format!("Video Rotation: {:>3}°", self.rotation * 90));
+            ui.label(format!("Video Rotation: {:>3}°", self.video_rotation * 90));
             ui.separator();
 
             ui.label("Profile:");
@@ -1167,9 +1102,13 @@ impl SAideApp {
                                 profile_name.as_str(),
                             )
                             .clicked()
-                            && let Some(keyboard_mapper) = self.keyboard_mapper.as_mut()
                         {
-                            if let Err(e) = keyboard_mapper.load_profile_by_name(profile_name) {
+                            if let Err(e) = self
+                                .keyboard_mapper
+                                .as_mut()
+                                .unwrap()
+                                .load_profile_by_name(profile_name)
+                            {
                                 error!("Failed to set active keyboard profile: {}", e);
                             } else {
                                 self.active_profile_name = Some(profile_name.clone());
@@ -1197,21 +1136,21 @@ impl SAideApp {
         };
 
         // Create centered rectangle
-        let rect = egui::Rect::from_center_size(ui.max_rect().center(), egui::vec2(width, height));
-        self.video_rect = Some(rect);
+        self.video_rect =
+            egui::Rect::from_center_size(ui.max_rect().center(), egui::vec2(width, height));
 
         // Draw video frame or placeholder
         if let Some(frame) = &self.frame {
             let callback = egui_wgpu::Callback::new_paint_callback(
-                rect,
-                new_yuv_render_callback(Arc::clone(frame), self.rotation),
+                self.video_rect,
+                new_yuv_render_callback(Arc::clone(frame), self.video_rotation),
             );
             ui.painter().add(callback);
         } else {
             ui.painter()
-                .rect_filled(rect, 0.0, egui::Color32::from_gray(32));
+                .rect_filled(self.video_rect, 0.0, egui::Color32::from_gray(32));
             ui.painter().text(
-                rect.center(),
+                self.video_rect.center(),
                 egui::Align2::CENTER_CENTER,
                 "Waiting for video...",
                 egui::FontId::proportional(24.0),
@@ -1288,6 +1227,16 @@ impl SAideApp {
                 },
             )
         });
+    }
+
+    fn coodinates_transform_params(&self) -> CoordinatesTransformParams {
+        CoordinatesTransformParams {
+            video_rect: self.video_rect,
+            video_rotation: self.video_rotation,
+            device_physical_size: self.device_physical_size,
+            device_orientation: self.device_orientation,
+            capture_orientation: self.capture_orientation,
+        }
     }
 }
 
