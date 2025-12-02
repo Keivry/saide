@@ -242,4 +242,14 @@ impl KeyboardMapper {
         let avail_profiles = self.avail_profiles.lock();
         avail_profiles.len()
     }
+
+    /// Get active profile (for read-only access)
+    pub fn get_active_profile(&self) -> Option<Arc<Profile>> {
+        self.active_profile.lock().clone()
+    }
+
+    /// Update active profile
+    pub fn update_active_profile(&self, profile: Arc<Profile>) {
+        *self.active_profile.lock() = Some(profile);
+    }
 }

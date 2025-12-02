@@ -1,8 +1,9 @@
 use {
     crate::{
+        app::mapping_config::{MappingConfigEvent, MappingConfigWindow},
         config::{
             SAideConfig,
-            mapping::{MouseButton, WheelDirection},
+            mapping::{AdbAction, Key, MouseButton, WheelDirection},
         },
         controller::{
             adb::AdbShell,
@@ -21,6 +22,7 @@ use {
     once_cell::sync::Lazy,
     std::{
         ffi::OsStr,
+        fs,
         process::Command,
         sync::Arc,
         thread,
@@ -39,7 +41,7 @@ const FG_COLOR: Color32 = Color32::from_rgb(220, 220, 220);
 const TOOLBAR_WIDTH: f32 = 42.0;
 const STATUSBAR_HEIGHT: f32 = 32.0;
 
-const TOOLBAR_BTN_COUNT: usize = 1;
+const TOOLBAR_BTN_COUNT: usize = 2;
 const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
 
@@ -84,11 +86,18 @@ struct ToolbarButton {
 }
 
 static TOOLBAR_BUTTONS: Lazy<Vec<ToolbarButton>> = Lazy::new(|| {
-    vec![ToolbarButton {
-        lable: "⟳",
-        tooltip: "Rotate Video",
-        callback: SAideApp::rotate,
-    }]
+    vec![
+        ToolbarButton {
+            lable: "⟳",
+            tooltip: "Rotate Video",
+            callback: SAideApp::rotate,
+        },
+        ToolbarButton {
+            lable: "⚙",
+            tooltip: "Configure Mappings",
+            callback: SAideApp::toggle_mapping_config,
+        },
+    ]
 });
 
 /// Main UI state
@@ -171,6 +180,9 @@ pub struct SAideApp {
 
     /// Android device input method state
     device_ime_state: bool,
+
+    /// Mapping configuration window
+    mapping_config_window: MappingConfigWindow,
 }
 
 impl SAideApp {
@@ -248,6 +260,8 @@ impl SAideApp {
             keyboard_custom_mapping_enabled,
 
             device_ime_state: false,
+
+            mapping_config_window: MappingConfigWindow::new(),
         }
     }
 
@@ -533,6 +547,11 @@ impl SAideApp {
         self.resize(ctx);
     }
 
+    /// Toggle mapping configuration window
+    fn toggle_mapping_config(&mut self, _ctx: &egui::Context) {
+        self.mapping_config_window.toggle();
+    }
+
     pub fn start(config: SAideConfig) -> anyhow::Result<()> {
         // Run main GUI application
         let options = eframe::NativeOptions {
@@ -727,6 +746,242 @@ impl SAideApp {
         }
     }
 
+    /// Process mapping configuration window events
+    fn process_mapping_config_events(&mut self, ctx: &egui::Context) {
+        if self.init_state != InitState::Ready {
+            return;
+        }
+
+        // Get current mappings for display
+        let mappings = if let Some(keyboard_mapper) = &self.keyboard_mapper {
+            keyboard_mapper
+                .get_active_profile()
+                .map(|profile| {
+                    // Double deref: Arc<KeyMapping> -> KeyMapping -> HashMap
+                    (**profile.mappings).clone()
+                })
+                .unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        let physical_size = self.physical_size.unwrap_or((0, 0));
+        let video_rect = self.video_rect.unwrap_or(egui::Rect::NOTHING);
+
+        // Draw the config window and handle events
+        let event = self.mapping_config_window.draw(
+            ctx,
+            video_rect,
+            &mappings,
+            physical_size,
+            self.orientation,
+            self.capture_orientation,
+        );
+
+        match event {
+            MappingConfigEvent::Close => {
+                self.mapping_config_window.hide();
+            }
+            MappingConfigEvent::RequestAddMapping(screen_pos) => {
+                // Convert screen position to device coordinates
+                if let Some(device_pos) = self.coordinate_transform(&screen_pos) {
+                    info!("Requesting to add mapping at device pos: {:?}", device_pos);
+                    self.mapping_config_window.request_input_dialog(device_pos);
+                }
+            }
+            MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
+                // Find nearest mapping to delete
+                if let Some(device_pos) = self.coordinate_transform(&screen_pos) {
+                    if let Some((nearest_key, nearest_pos)) = find_nearest_mapping(device_pos, &mappings) {
+                        info!("Requesting to delete mapping: {:?} at {:?}", nearest_key, nearest_pos);
+                        self.mapping_config_window.request_delete_dialog(nearest_key, nearest_pos);
+                    } else {
+                        warn!("No mapping found near position {:?}", device_pos);
+                    }
+                }
+            }
+            MappingConfigEvent::None => {}
+        }
+
+        // Handle dialogs
+        if self.mapping_config_window.is_input_dialog_open() {
+            if let Some(pending_pos) = self.mapping_config_window.get_pending_input() {
+                if let Some(key) = self
+                    .mapping_config_window
+                    .show_key_input_dialog(ctx, pending_pos)
+                {
+                    self.add_mapping(key, pending_pos);
+                }
+            }
+        }
+
+        if self.mapping_config_window.is_delete_dialog_open() {
+            if let Some((key, pos)) = self.mapping_config_window.get_delete_target() {
+                if let Some(confirmed) = self
+                    .mapping_config_window
+                    .show_delete_confirm_dialog(ctx, key, pos)
+                {
+                    if confirmed {
+                        self.delete_mapping(key);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Add a new mapping
+    fn add_mapping(&mut self, key: Key, device_pos: (u32, u32)) {
+        info!("Adding mapping: {:?} -> {:?}", key, device_pos);
+
+        if let Some(keyboard_mapper) = &self.keyboard_mapper {
+            // Get current profile and add mapping
+            if let Some(profile) = keyboard_mapper.get_active_profile() {
+                // Create new mappings with the added key
+                let mut new_mappings = (**profile.mappings).clone();
+                new_mappings.insert(
+                    key,
+                    AdbAction::Tap {
+                        x: device_pos.0,
+                        y: device_pos.1,
+                    },
+                );
+
+                // Update profile (need to create new Arc due to immutability)
+                let new_profile = Arc::new(crate::config::mapping::Profile {
+                    name: profile.name.clone(),
+                    device_id: profile.device_id.clone(),
+                    rotation: profile.rotation,
+                    mappings: Arc::new(crate::config::mapping::KeyMapping::from_hashmap(
+                        new_mappings,
+                    )),
+                });
+
+                keyboard_mapper.update_active_profile(new_profile.clone());
+
+                // Save to config file
+                if let Err(e) = self.save_config_with_updated_profile(new_profile) {
+                    error!("Failed to save config: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Delete a mapping
+    fn delete_mapping(&mut self, key: Key) {
+        info!("Deleting mapping: {:?}", key);
+
+        if let Some(keyboard_mapper) = &self.keyboard_mapper {
+            if let Some(profile) = keyboard_mapper.get_active_profile() {
+                // Create new mappings without the deleted key
+                let mut new_mappings = (**profile.mappings).clone();
+                new_mappings.remove(&key);
+
+                let new_profile = Arc::new(crate::config::mapping::Profile {
+                    name: profile.name.clone(),
+                    device_id: profile.device_id.clone(),
+                    rotation: profile.rotation,
+                    mappings: Arc::new(crate::config::mapping::KeyMapping::from_hashmap(
+                        new_mappings,
+                    )),
+                });
+
+                keyboard_mapper.update_active_profile(new_profile.clone());
+
+                // Save to config file
+                if let Err(e) = self.save_config_with_updated_profile(new_profile) {
+                    error!("Failed to save config: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Save config file with updated profile
+    fn save_config_with_updated_profile(
+        &self,
+        updated_profile: Arc<crate::config::mapping::Profile>,
+    ) -> anyhow::Result<()> {
+        use std::io::Write;
+        const CONFIG_PATH: &str = "config.toml";
+
+        // Read current config file
+        let config_str = fs::read_to_string(CONFIG_PATH)?;
+
+        // Parse as TOML value for manipulation
+        let mut config_value: toml::Value = toml::from_str(&config_str)?;
+
+        // Find and update the matching profile
+        if let Some(profiles) = config_value
+            .get_mut("mappings")
+            .and_then(|m| m.get_mut("profiles"))
+            .and_then(|p| p.as_array_mut())
+        {
+            for profile in profiles.iter_mut() {
+                let name_match = profile
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|n| n == updated_profile.name)
+                    .unwrap_or(false);
+
+                let device_id_match = profile
+                    .get("device_id")
+                    .and_then(|d| d.as_str())
+                    .map(|d| d == updated_profile.device_id)
+                    .unwrap_or(false);
+
+                let rotation_match = profile
+                    .get("rotation")
+                    .and_then(|r| r.as_integer())
+                    .map(|r| r as u32 == updated_profile.rotation)
+                    .unwrap_or(false);
+
+                if name_match && device_id_match && rotation_match {
+                    // Update the mappings array
+                    let new_mappings: Vec<toml::Value> = updated_profile
+                        .mappings
+                        .iter()
+                        .map(|(key, action)| {
+                            let mut mapping = toml::map::Map::new();
+                            mapping.insert(
+                                "key".to_string(),
+                                toml::Value::String(format!("{:?}", key)),
+                            );
+
+                            match action {
+                                AdbAction::Tap { x, y } => {
+                                    mapping.insert(
+                                        "action".to_string(),
+                                        toml::Value::String("Tap".to_string()),
+                                    );
+                                    mapping
+                                        .insert("x".to_string(), toml::Value::Integer(*x as i64));
+                                    mapping
+                                        .insert("y".to_string(), toml::Value::Integer(*y as i64));
+                                }
+                                _ => {} // Handle other action types if needed
+                            }
+
+                            toml::Value::Table(mapping)
+                        })
+                        .collect();
+
+                    profile.as_table_mut().map(|t| {
+                        t.insert("mappings".to_string(), toml::Value::Array(new_mappings))
+                    });
+
+                    break;
+                }
+            }
+        }
+
+        // Write back to file
+        let new_config_str = toml::to_string_pretty(&config_value)?;
+        let mut file = fs::File::create(CONFIG_PATH)?;
+        file.write_all(new_config_str.as_bytes())?;
+
+        info!("Configuration saved successfully");
+        Ok(())
+    }
+
     /// Process keyboard event
     fn process_keyboard_event(
         &self,
@@ -864,6 +1119,14 @@ impl SAideApp {
     fn process_input_events(&mut self, ctx: &egui::Context) {
         if self.init_state != InitState::Ready {
             trace!("Skipping input processing - not initialized");
+            return;
+        }
+
+        // Skip normal input processing if mapping config window is open or dialogs are open
+        if self.mapping_config_window.visible 
+            || self.mapping_config_window.is_input_dialog_open()
+            || self.mapping_config_window.is_delete_dialog_open()
+        {
             return;
         }
 
@@ -1190,6 +1453,14 @@ impl eframe::App for SAideApp {
                 // Receive new video frames
                 self.receive_frame();
 
+                // Process mapping configuration window
+                self.process_mapping_config_events(ctx);
+
+                if self.mapping_config_window.visible {
+                    // When mapping config window is open, skip normal input processing
+                    return;
+                }
+
                 // Handle input events
                 self.process_input_events(ctx);
 
@@ -1237,5 +1508,40 @@ impl Drop for SAideApp {
                 info!("Scrcpy process terminated");
             }
         }
+    }
+}
+
+/// Find the nearest mapping to a given position
+fn find_nearest_mapping(
+    device_pos: (u32, u32),
+    mappings: &std::collections::HashMap<Key, AdbAction>,
+) -> Option<(Key, (u32, u32))> {
+    let mut nearest: Option<(Key, (u32, u32), f32)> = None;
+
+    for (key, action) in mappings {
+        if let Some((x, y)) = extract_mapping_position(action) {
+            let dx = device_pos.0 as f32 - x as f32;
+            let dy = device_pos.1 as f32 - y as f32;
+            let distance = (dx * dx + dy * dy).sqrt();
+
+            if let Some((_, _, min_dist)) = nearest {
+                if distance < min_dist {
+                    nearest = Some((*key, (x, y), distance));
+                }
+            } else {
+                nearest = Some((*key, (x, y), distance));
+            }
+        }
+    }
+
+    nearest.map(|(key, pos, _)| (key, pos))
+}
+
+/// Extract position from AdbAction
+fn extract_mapping_position(action: &AdbAction) -> Option<(u32, u32)> {
+    match action {
+        AdbAction::Tap { x, y } => Some((*x, *y)),
+        AdbAction::TouchDown { x, y } => Some((*x, *y)),
+        _ => None,
     }
 }

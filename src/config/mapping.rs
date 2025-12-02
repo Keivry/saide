@@ -40,7 +40,7 @@ impl From<PointerButton> for MouseButton {
 }
 
 /// ADB input command types
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action")]
 pub enum AdbAction {
     Tap {
@@ -142,6 +142,12 @@ impl Deref for KeyMapping {
     type Target = HashMap<Key, AdbAction>;
 
     fn deref(&self) -> &Self::Target { &self.inner }
+}
+
+impl KeyMapping {
+    pub fn from_hashmap(inner: HashMap<Key, AdbAction>) -> Self {
+        Self { inner }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
