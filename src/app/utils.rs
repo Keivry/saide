@@ -120,8 +120,9 @@ pub fn device_to_screen_coords(
     physical_size: (u32, u32),
     orientation: u32,
     capture_orientation: u32,
+    rotation: u32,
 ) -> Option<Pos2> {
-    // This is the inverse of coordinate_transform in main.rs
+    // This is the inverse of coordinate_transform
     //
     // coordinate_transform does:
     // 1. Screen -> Video coords (inverse user rotation)
@@ -143,16 +144,18 @@ pub fn device_to_screen_coords(
     let video_width = video_rect.width();
     let video_height = video_rect.height();
 
-    // Note: video_rect dimensions are after user rotation
-    // We need to determine original video dimensions
-    // Assuming rotation is 0 in config mode, video dimensions stay the same
-    let video_w = video_width;
-    let video_h = video_height;
+    // Determine original video dimensions before user rotation
+    // If rotation is odd (90° or 270°), dimensions are swapped
+    let (video_w, video_h) = if rotation & 1 == 0 {
+        (video_width, video_height)
+    } else {
+        (video_height, video_width)
+    };
 
     let device_x = device_pos.0 as f32;
     let device_y = device_pos.1 as f32;
 
-    // Step 1: Inverse total rotation to get video coordinates
+    // Step 1: Inverse total rotation to get video original coordinates
     let (video_x, video_y) = match total_rotation {
         // 0 degrees
         0 => {
@@ -184,10 +187,25 @@ pub fn device_to_screen_coords(
         _ => return None,
     };
 
-    // Step 2: Apply user rotation (assuming rotation is 0 in config mode)
-    // For now we assume no user rotation during config
-    let rel_x = video_x;
-    let rel_y = video_y;
+    // Step 2: Apply user rotation to transform from video original coords to display coords
+    let (rel_x, rel_y) = match rotation % 4 {
+        // 0 degrees - no rotation
+        0 => (video_x, video_y),
+        
+        // 90 degrees clockwise rotation
+        // Transform: (x, y) => (H - y, x)
+        1 => (video_h - video_y, video_x),
+        
+        // 180 degrees rotation
+        // Transform: (x, y) => (W - x, H - y)
+        2 => (video_w - video_x, video_h - video_y),
+        
+        // 270 degrees clockwise rotation
+        // Transform: (x, y) => (y, W - x)
+        3 => (video_y, video_w - video_x),
+        
+        _ => return None,
+    };
 
     // Convert to screen coordinates
     let screen_x = video_rect.left() + rel_x;

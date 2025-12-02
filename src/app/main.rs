@@ -679,6 +679,7 @@ impl SAideApp {
             physical_size,
             self.orientation,
             self.capture_orientation,
+            self.rotation,
         );
 
         match event {

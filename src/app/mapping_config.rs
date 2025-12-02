@@ -59,6 +59,7 @@ impl MappingConfigWindow {
         physical_size: (u32, u32),
         orientation: u32,
         capture_orientation: u32,
+        rotation: u32,
     ) -> MappingConfigEvent {
         let mut event = MappingConfigEvent::None;
 
@@ -67,7 +68,7 @@ impl MappingConfigWindow {
         }
 
         // Draw semi-transparent overlay with interaction to consume events
-        let response = egui::Area::new(egui::Id::new("mapping_config_overlay"))
+        let _response = egui::Area::new(egui::Id::new("mapping_config_overlay"))
             .fixed_pos(video_rect.min)
             .interactable(true)
             .show(ctx, |ui| {
@@ -120,6 +121,7 @@ impl MappingConfigWindow {
                             physical_size,
                             orientation,
                             capture_orientation,
+                            rotation,
                         )
                     {
                         // Draw circle marker
