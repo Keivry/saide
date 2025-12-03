@@ -1,169 +1,163 @@
 [general]
-init_timeout = 15
 keyboard_enabled = true
 mouse_enabled = true
+init_timeout = 15
+
+[scrcpy.v4l2]
+device = "/dev/video0"
+capture_orientation = 270
+buffer = 0
+
+[scrcpy.video]
+bit_rate = "24M"
+max_fps = 60
+max_size = 1600
+codec = "h264"
+encoder = "c2.mtk.avc.encoder"
+
+[scrcpy.options]
+turn_screen_off = true
+stay_awake = true
 
 [gpu]
-backend = "VULKAN"
 vsync = false
-
-[logging]
-level = "info"
+backend = "VULKAN"
 
 [mappings]
+toggle = "F10"
 initial_state = true
 show_notification = true
-toggle = "F10"
 
 [[mappings.profiles]]
-device_id = "10AF971ZLN004SU"
 name = "AskTao"
+device_id = "10AF971ZLN004SU"
 rotation = 1
 
 [[mappings.profiles.mappings]]
-action = "Tap"
-key = "Q"
-x = 2593
-y = 614
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "F"
-x = 172
-y = 836
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "X"
-x = 708
-y = 1066
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "F1"
-x = 830
-y = 80
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "D"
-x = 303
-y = 840
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "Tab"
-x = 346
-y = 81
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "F2"
-x = 706
-y = 77
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "Backslash"
-x = 164
-y = 78
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "Num2"
-x = 2395
-y = 619
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "W"
-x = 2185
-y = 31
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "Num3"
-x = 2563
-y = 456
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "A"
-x = 2596
-y = 1155
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "Z"
-x = 2482
-y = 376
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "Space"
-x = 1599
-y = 777
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "Num5"
-x = 2245
-y = 459
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "Num6"
-x = 2400
-y = 452
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "V"
-x = 2485
-y = 527
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "C"
-x = 2105
-y = 1066
-
-[[mappings.profiles.mappings]]
-action = "Tap"
-key = "S"
-x = 2597
-y = 824
-
-[[mappings.profiles.mappings]]
-action = "Tap"
 key = "T"
+action = "Tap"
 x = 2274
 y = 74
 
 [[mappings.profiles.mappings]]
+key = "Num3"
 action = "Tap"
+x = 2563
+y = 456
+
+[[mappings.profiles.mappings]]
+key = "F1"
+action = "Tap"
+x = 830
+y = 80
+
+[[mappings.profiles.mappings]]
+key = "Num5"
+action = "Tap"
+x = 2245
+y = 459
+
+[[mappings.profiles.mappings]]
+key = "G"
+action = "Tap"
+x = 2232
+y = 880
+
+[[mappings.profiles.mappings]]
+key = "Z"
+action = "Tap"
+x = 2482
+y = 376
+
+[[mappings.profiles.mappings]]
+key = "X"
+action = "Tap"
+x = 708
+y = 1066
+
+[[mappings.profiles.mappings]]
+key = "Q"
+action = "Tap"
+x = 2593
+y = 614
+
+[[mappings.profiles.mappings]]
+key = "C"
+action = "Tap"
+x = 2105
+y = 1066
+
+[[mappings.profiles.mappings]]
+key = "V"
+action = "Tap"
+x = 2485
+y = 527
+
+[[mappings.profiles.mappings]]
 key = "B"
+action = "Tap"
 x = 2630
 y = 1012
 
 [[mappings.profiles.mappings]]
+key = "A"
 action = "Tap"
-key = "G"
-x = 2232
-y = 880
+x = 2596
+y = 1155
 
-[scrcpy.options]
-stay_awake = true
-turn_screen_off = true
+[[mappings.profiles.mappings]]
+key = "Tab"
+action = "Tap"
+x = 346
+y = 81
 
-[scrcpy.v4l2]
-buffer = 0
-capture_orientation = 270
-device = "/dev/video0"
+[[mappings.profiles.mappings]]
+key = "Backslash"
+action = "Tap"
+x = 164
+y = 78
 
-[scrcpy.video]
-bit_rate = "24M"
-codec = "h264"
-encoder = "c2.mtk.avc.encoder"
-max_fps = 60
-max_size = 1600
+[[mappings.profiles.mappings]]
+key = "F2"
+action = "Tap"
+x = 706
+y = 77
+
+[[mappings.profiles.mappings]]
+key = "F"
+action = "Tap"
+x = 172
+y = 836
+
+[[mappings.profiles.mappings]]
+key = "Num6"
+action = "Tap"
+x = 2400
+y = 452
+
+[[mappings.profiles.mappings]]
+key = "D"
+action = "Tap"
+x = 303
+y = 840
+
+[[mappings.profiles.mappings]]
+key = "Num2"
+action = "Tap"
+x = 2395
+y = 619
+
+[[mappings.profiles.mappings]]
+key = "W"
+action = "Tap"
+x = 2185
+y = 31
+
+[[mappings.profiles.mappings]]
+key = "S"
+action = "Tap"
+x = 2597
+y = 824
+
+[logging]
+level = "info"

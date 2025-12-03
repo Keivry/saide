@@ -90,23 +90,3 @@ where
 {
     value.serialize(serializer)
 }
-
-pub fn deserialize_option_arc<'de, D, T>(deserializer: D) -> Result<Option<Arc<T>>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    let opt = Option::<T>::deserialize(deserializer)?;
-    Ok(opt.map(Arc::new))
-}
-
-pub fn serialize_option_arc<T, S>(value: &Option<Arc<T>>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    T: Serialize,
-    S: Serializer,
-{
-    match value {
-        Some(arc) => arc.serialize(serializer),
-        None => serializer.serialize_none(),
-    }
-}

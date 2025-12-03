@@ -179,18 +179,68 @@ impl Profile {
     pub fn matches(&self, device_id: &str, rotation: u32) -> bool {
         self.device_id == device_id && self.rotation == rotation
     }
+
+    /// Get the ADB action for a given key, if it exists
+    pub fn get_mapping(&self, key: &Key) -> Option<AdbAction> {
+        self.mappings.inner.lock().get(key).cloned()
+    }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MappingsConfig {
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Mappings {
     #[serde(default = "default_toggle_key")]
     pub toggle: String,
     #[serde(default)]
     pub initial_state: bool,
     #[serde(default = "default_true")]
     pub show_notification: bool,
-    pub profiles: Vec<Arc<Profile>>,
+    #[serde(
+        deserialize_with = "deserialize_profiles",
+        serialize_with = "serialize_mutex_arc_vec"
+    )]
+    pub profiles: Mutex<Vec<Arc<Profile>>>,
+}
+
+impl Mappings {
+    /// Filter profiles based on device ID and rotation
+    pub fn filter_profiles(&self, device_id: &str, rotation: u32) -> Vec<Arc<Profile>> {
+        self.profiles
+            .lock()
+            .iter()
+            .filter(|profile| profile.matches(device_id, rotation))
+            .cloned()
+            .collect()
+    }
+
+    pub fn add_profile(&self, profile: Arc<Profile>) { self.profiles.lock().push(profile); }
+
+    pub fn remove_profile(&self, profile_name: &str) {
+        self.profiles
+            .lock()
+            .retain(|profile| profile.name != profile_name);
+    }
 }
 
 fn default_toggle_key() -> String { "F10".to_string() }
 fn default_true() -> bool { true }
+
+fn deserialize_profiles<'de, D>(deserializer: D) -> Result<Mutex<Vec<Arc<Profile>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let profiles: Vec<Profile> = Deserialize::deserialize(deserializer)?;
+    let arc_profiles = profiles.into_iter().map(Arc::new).collect();
+    Ok(Mutex::new(arc_profiles))
+}
+
+fn serialize_mutex_arc_vec<S>(
+    profiles: &Mutex<Vec<Arc<Profile>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let profiles = profiles.lock();
+    let vec_profiles: Vec<&Profile> = profiles.iter().map(|p| p.as_ref()).collect();
+    vec_profiles.serialize(serializer)
+}

@@ -55,9 +55,12 @@ impl MouseMapper {
     /// Update mouse state - call this every frame
     /// Checks for long press timeout and sends drag updates
     pub fn update(&self) -> Result<()> {
-        let mut state = self.left_button_state.lock();
+        let state = {
+            let state = self.left_button_state.lock();
+            *state
+        };
 
-        match *state {
+        match state {
             MouseState::Pressed {
                 x,
                 y,
@@ -72,7 +75,7 @@ impl MouseMapper {
                     debug!("Long press triggered at ({}, {}) [from update]", x, y);
 
                     // Transition to LongPressing state
-                    *state = MouseState::LongPressing { x, y };
+                    self.update_button_state(MouseState::LongPressing { x, y });
                 }
             }
             MouseState::Dragging {
@@ -98,13 +101,13 @@ impl MouseMapper {
                     );
 
                     // Update state: new start position is current position
-                    *state = MouseState::Dragging {
+                    self.update_button_state(MouseState::Dragging {
                         start_x: current_x,
                         start_y: current_y,
                         current_x,
                         current_y,
                         last_update: Instant::now(),
-                    };
+                    });
                 }
             }
             _ => {}
@@ -116,6 +119,11 @@ impl MouseMapper {
     pub fn get_button_state(&self) -> MouseState {
         let state = self.left_button_state.lock();
         *state
+    }
+
+    pub fn update_button_state(&self, new_state: MouseState) {
+        let mut state = self.left_button_state.lock();
+        *state = new_state;
     }
 
     /// Handle mouse button event
@@ -150,12 +158,12 @@ impl MouseMapper {
 
     /// Handle left button press
     fn handle_left_button_press(&self, x: u32, y: u32) -> Result<()> {
-        let mut state = self.left_button_state.lock();
-        *state = MouseState::Pressed {
+        // Update state to Pressed
+        self.update_button_state(MouseState::Pressed {
             x,
             y,
             time: Instant::now(),
-        };
+        });
 
         // Send TouchDown event immediately
         self.adb_shell.send_input(&AdbAction::TouchDown { x, y })?;
@@ -165,15 +173,15 @@ impl MouseMapper {
 
     /// Handle left button release
     fn handle_left_button_release(&self, x: u32, y: u32) -> Result<()> {
-        let mut state = self.left_button_state.lock();
-        let prev_state = *state;
-
+        // Get previous state
+        let prev_state = self.get_button_state();
         debug!(
             "Button release at ({}, {}), prev_state={:?}",
             x, y, prev_state
         );
 
-        *state = MouseState::Idle;
+        // Reset state to Idle
+        self.update_button_state(MouseState::Idle);
 
         match prev_state {
             MouseState::Pressed {
@@ -243,9 +251,9 @@ impl MouseMapper {
 
     /// Handle mouse move event (for drag detection)
     pub fn handle_move_event(&self, x: u32, y: u32) -> Result<()> {
-        let mut state = self.left_button_state.lock();
+        let state = self.get_button_state();
 
-        match *state {
+        match state {
             MouseState::Pressed {
                 x: start_x,
                 y: start_y,
@@ -263,13 +271,13 @@ impl MouseMapper {
                 if distance >= DRAG_THRESHOLD {
                     // Transition to dragging state
                     // Don't send initial swipe here - let update() handle it
-                    *state = MouseState::Dragging {
+                    self.update_button_state(MouseState::Dragging {
                         start_x,
                         start_y,
                         current_x: x,
                         current_y: y,
                         last_update: Instant::now(),
-                    };
+                    });
                     debug!(
                         "STATE TRANSITION: Pressed -> Dragging (distance={:.1}px >= {}px)",
                         distance, DRAG_THRESHOLD
@@ -285,13 +293,13 @@ impl MouseMapper {
                 last_update,
             } => {
                 // Update current position
-                *state = MouseState::Dragging {
+                self.update_button_state(MouseState::Dragging {
                     start_x,
                     start_y,
                     current_x: x,
                     current_y: y,
                     last_update,
-                };
+                });
                 // Actual drag updates are sent in update() method
             }
             MouseState::LongPressing { x: lp_x, y: lp_y } => {
@@ -303,14 +311,13 @@ impl MouseMapper {
 
                 // Transition to dragging state without sending TouchDown
                 // (Long press Swipe event is already being processed by Android)
-                *state = MouseState::Dragging {
+                self.update_button_state(MouseState::Dragging {
                     start_x: lp_x,
                     start_y: lp_y,
                     current_x: x,
                     current_y: y,
                     last_update: Instant::now(),
-                };
-
+                });
                 debug!(
                     "Drag started from long press: ({}, {}) -> ({}, {})",
                     lp_x, lp_y, x, y

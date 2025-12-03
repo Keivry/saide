@@ -1,6 +1,6 @@
 use {
     crate::{
-        config::mapping::{AdbAction, Key, MappingsConfig, Modifiers, Profile},
+        config::mapping::{AdbAction, Key, Mappings, Modifiers, Profile},
         controller::adb::AdbShell,
     },
     anyhow::{Result, anyhow},
@@ -10,6 +10,7 @@ use {
 };
 
 lazy_static::lazy_static! {
+    /// Mapping from egui Key to Android keycode
     pub static ref EGUI_TO_ANDROID_KEY: HashMap<Key, u8> = {
         let mut m = HashMap::new();
 
@@ -90,7 +91,7 @@ lazy_static::lazy_static! {
 
 /// Keyboard mapping state
 pub struct KeyboardMapper {
-    config: Arc<MappingsConfig>,
+    config: Arc<Mappings>,
 
     adb_shell: AdbShell,
 
@@ -100,7 +101,7 @@ pub struct KeyboardMapper {
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(config: Arc<MappingsConfig>) -> Result<Self> {
+    pub fn new(config: Arc<Mappings>) -> Result<Self> {
         let adb = AdbShell::new(false);
         adb.connect()?;
         Ok(Self {
@@ -115,68 +116,59 @@ impl KeyboardMapper {
 
     /// Refresh available profiles based on device ID and rotation
     pub fn refresh_profiles(&self, device_id: &str, device_rotation: u32) -> Result<()> {
-        let mut available_profiles = Vec::new();
+        let avail_profiles = self.config.filter_profiles(device_id, device_rotation);
 
-        self.config
-            .profiles
-            .iter()
-            .filter(|profile| profile.device_id == device_id && profile.rotation == device_rotation)
-            .for_each(|profile| {
-                available_profiles.push(profile.clone());
-            });
-
-        if available_profiles.is_empty() {
+        if avail_profiles.is_empty() {
             info!(
                 "No matching profiles found for device ID '{}' with rotation {}.",
                 device_id, device_rotation
             );
             info!("Disable custom key mappings for this device/rotation.");
 
-            self.active_profile.lock().take();
+            {
+                self.active_profile.lock().take();
+            }
         } else {
             info!(
                 "Found {} matching profiles for device ID '{}' with rotation {}.",
-                available_profiles.len(),
+                avail_profiles.len(),
                 device_id,
                 device_rotation
             );
-            self.active_profile
-                .lock()
-                .replace(available_profiles[0].clone());
-            info!("Active profile set to: {}", available_profiles[0].name);
+            {
+                self.active_profile
+                    .lock()
+                    .replace(avail_profiles[0].clone());
+            }
+            info!("Active profile set to: {}", avail_profiles[0].name);
         }
 
-        let mut avail_lock = self.avail_profiles.lock();
-        *avail_lock = available_profiles;
-
-        Ok(())
-    }
-
-    /// Load profile by index
-    pub fn load_profile(&mut self, index: usize) -> Result<()> {
-        let avail_profiles = self.avail_profiles.lock();
-        if index < avail_profiles.len() {
-            self.active_profile
-                .lock()
-                .replace(avail_profiles[index].clone());
-            info!("Profile switched to: {}", avail_profiles[index].name);
-        } else {
-            error!("Profile index {} out of range.", index);
-            return Err(anyhow!("Profile index out of range."));
+        {
+            *self.avail_profiles.lock() = avail_profiles;
         }
+
         Ok(())
     }
 
     /// Load profile by name
-    pub fn load_profile_by_name(&mut self, name: &str) -> Result<()> {
-        let avail_profiles = self.avail_profiles.lock();
-        if let Some(profile) = avail_profiles.iter().find(|p| p.name == name) {
-            self.active_profile.lock().replace(profile.clone());
-            info!("Profile switched to: {}", profile.name);
-        } else {
-            error!("Profile '{}' not found.", name);
-            return Err(anyhow!("Profile not found."));
+    pub fn load_profile(&mut self, name: &str) -> Result<()> {
+        let profile = {
+            let avail_profiles = self.avail_profiles.lock();
+            avail_profiles.iter().find(|p| p.name == name).cloned()
+        };
+
+        let profile = match profile {
+            Some(p) => p,
+            None => {
+                error!("Profile '{}' not found.", name);
+                return Err(anyhow!("Profile not found: {}.", name));
+            }
+        };
+
+        {
+            self.active_profile.lock().replace(profile);
         }
+
         Ok(())
     }
 
@@ -209,25 +201,23 @@ impl KeyboardMapper {
 
     /// Handle custom keyboard event
     pub fn handle_custom_keymapping_event(&self, key: &Key, pressed: bool) -> Result<()> {
-        let active_profile = self.active_profile.lock();
-        if active_profile.is_none() {
-            return Ok(());
-        }
-
         // TODO: handle key hold actions
         if !pressed {
             return Ok(());
         }
 
-        active_profile
-            .as_ref()
-            .unwrap()
-            .mappings
-            .lock()
-            .get(key)
-            .map(|action| self.adb_shell.send_input(action))
-            .or_else(|| Some(self.handle_standard_key_event(key)))
-            .transpose()?;
+        let profile = {
+            let active_profile = self.active_profile.lock();
+            active_profile.as_ref().cloned()
+        };
+
+        if let Some(profile) = &profile
+            && let Some(action) = profile.get_mapping(key)
+        {
+            self.adb_shell.send_input(&action)?;
+        } else {
+            self.handle_standard_key_event(key)?;
+        }
 
         Ok(())
     }
@@ -236,12 +226,6 @@ impl KeyboardMapper {
     pub fn get_avail_profiles(&self) -> Vec<String> {
         let avail_profiles = self.avail_profiles.lock();
         avail_profiles.iter().map(|p| p.name.clone()).collect()
-    }
-
-    /// Get number of profiles
-    pub fn get_avail_profiles_count(&self) -> usize {
-        let avail_profiles = self.avail_profiles.lock();
-        avail_profiles.len()
     }
 
     /// Get active profile (for read-only access)

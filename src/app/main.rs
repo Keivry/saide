@@ -35,8 +35,6 @@ use {
     tracing::{debug, error, info, trace, warn},
 };
 
-const CONFIG_PATH: &str = "config.toml";
-
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 
@@ -107,9 +105,7 @@ static TOOLBAR_BUTTONS: Lazy<Vec<ToolbarButton>> = Lazy::new(|| {
 
 /// Main UI state
 pub struct SAideApp {
-    config: Arc<SAideConfig>,
-
-    /// Configuration file manager
+    /// Configuration manager
     config_manager: ConfigManager,
 
     /// Scrcpy process manager
@@ -194,7 +190,9 @@ pub struct SAideApp {
 }
 
 impl SAideApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, config: SAideConfig) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, config_manager: ConfigManager) -> Self {
+        let config = config_manager.config();
+
         // Register YUV render resources with wgpu renderer
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
             let resources = YuvRenderResources::new(&wgpu_state.device, wgpu_state.target_format);
@@ -213,9 +211,7 @@ impl SAideApp {
         let vsync = config.gpu.vsync;
 
         Self {
-            config: Arc::new(config),
-
-            config_manager: ConfigManager::new(CONFIG_PATH),
+            config_manager,
 
             scrcpy: None,
 
@@ -275,6 +271,9 @@ impl SAideApp {
         }
     }
 
+    // Get current configuration
+    pub fn config(&self) -> Arc<SAideConfig> { self.config_manager.config() }
+
     /// Background initialization function
     fn init(&mut self) {
         self.init_state = InitState::InProgress;
@@ -284,7 +283,7 @@ impl SAideApp {
         self.init_rx = Some(rx);
 
         // Scrcpy initialization
-        let config = self.config.clone();
+        let config = self.config();
         let scrcpy_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Ensure no existing scrcpy process is running
@@ -303,7 +302,7 @@ impl SAideApp {
             }
 
             // Initialize scrcpy manager
-            let mut scrcpy = Scrcpy::new(config.scrcpy.clone());
+            let mut scrcpy = Scrcpy::new(Arc::clone(&config.scrcpy));
 
             if let Err(e) = scrcpy
                 .spawn()?
@@ -394,7 +393,7 @@ impl SAideApp {
             Ok(())
         });
 
-        let kbd_config = self.config.clone();
+        let kbd_config = self.config();
         let kbd_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize keyboard mapper
@@ -409,7 +408,7 @@ impl SAideApp {
             Ok(())
         });
 
-        let mouse_config = self.config.clone();
+        let mouse_config = self.config();
         let mouse_tx = tx.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Initialize mouse mapper
@@ -425,8 +424,8 @@ impl SAideApp {
         });
 
         // V4L2 capture initialization
+        let v4l2_config = self.config();
         let v4l2_tx = tx.clone();
-        let v4l2_config = self.config.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Channel for frame transfer
             let (tx, rx) = bounded::<Arc<Yu12Frame>>(1);
@@ -560,7 +559,7 @@ impl SAideApp {
         self.mapping_config_window.toggle();
     }
 
-    pub fn start(config: SAideConfig) -> anyhow::Result<()> {
+    pub fn start(config_manager: ConfigManager) -> anyhow::Result<()> {
         // Run main GUI application
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
@@ -572,7 +571,7 @@ impl SAideApp {
             renderer: eframe::Renderer::Wgpu,
             wgpu_options: egui_wgpu::WgpuConfiguration {
                 // Use AutoVsync/AutoNoVsync based on config
-                present_mode: if config.gpu.vsync {
+                present_mode: if config_manager.config().gpu.vsync {
                     wgpu::PresentMode::AutoVsync
                 } else {
                     wgpu::PresentMode::AutoNoVsync
@@ -580,7 +579,7 @@ impl SAideApp {
 
                 wgpu_setup: egui_wgpu::WgpuSetup::from(egui_wgpu::WgpuSetupCreateNew {
                     instance_descriptor: wgpu::InstanceDescriptor {
-                        backends: (&config.gpu.backend).into(),
+                        backends: (&config_manager.config().gpu.backend).into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -597,7 +596,7 @@ impl SAideApp {
         eframe::run_native(
             "SAide",
             options,
-            Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, config)))),
+            Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, config_manager)))),
         )
         .map_err(|e| anyhow!("eframe error: {}", e))
     }
@@ -733,7 +732,7 @@ impl SAideApp {
             profile.add_mapping(key, action);
 
             // Save to config file
-            if let Err(e) = self.config_manager.save_profile(&profile) {
+            if let Err(e) = self.config_manager.save() {
                 error!("Failed to save config: {}", e);
             } else {
                 info!("Mapping saved successfully");
@@ -755,7 +754,7 @@ impl SAideApp {
             profile.remove_mapping(&key);
 
             // Save to config file
-            if let Err(e) = self.config_manager.save_profile(&profile) {
+            if let Err(e) = self.config_manager.save() {
                 error!("Failed to save config: {}", e);
             } else {
                 info!("Mapping deleted successfully");
@@ -1071,7 +1070,7 @@ impl SAideApp {
             ui.separator();
             ui.label(format!(
                 "FPS: {:>3}",
-                self.fps.min(self.config.scrcpy.video.max_fps as f32) as u32
+                self.fps.min(self.config().scrcpy.video.max_fps as f32) as u32
             ));
             ui.separator();
             ui.label(format!(
@@ -1107,7 +1106,7 @@ impl SAideApp {
                                 .keyboard_mapper
                                 .as_mut()
                                 .unwrap()
-                                .load_profile_by_name(profile_name)
+                                .load_profile(profile_name)
                             {
                                 error!("Failed to set active keyboard profile: {}", e);
                             } else {
@@ -1287,9 +1286,11 @@ impl eframe::App for SAideApp {
             }
         }
 
+        let config = self.config();
+
         // Frame rate limiting for non-vsync mode
         // Sleep to limit frame rate if no new frame and no input
-        if !self.config.gpu.vsync
+        if !config.gpu.vsync
             && !self.has_new_frame
             && !has_input
             && let Some(last_paint) = self.last_paint_instant
@@ -1302,7 +1303,7 @@ impl eframe::App for SAideApp {
             }
         }
 
-        if !self.config.gpu.vsync {
+        if !config.gpu.vsync {
             // Update last paint time for frame rate limiting
             self.last_paint_instant = Some(Instant::now());
             self.has_new_frame = false;

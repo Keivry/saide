@@ -45,8 +45,6 @@ impl MappingConfigWindow {
         }
     }
 
-    pub fn show(&mut self) { self.visible = true; }
-
     pub fn hide(&mut self) {
         self.visible = false;
         self.reset_state();
