@@ -1,5 +1,6 @@
 mod main;
-mod mapping_config;
+mod mappings;
+mod modal;
 mod utils;
 
 pub use main::SAideApp;

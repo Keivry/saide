@@ -1,7 +1,7 @@
 use {
     crate::{
         app::{
-            mapping_config::{MappingConfigEvent, MappingConfigWindow},
+            mappings::{MappingConfigEvent, MappingConfigWindow},
             utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_device_coords},
         },
         config::{
@@ -644,7 +644,7 @@ impl SAideApp {
 
     /// Process mapping configuration window events
     fn process_mapping_config_events(&mut self, ctx: &egui::Context) {
-        if self.init_state != InitState::Ready {
+        if self.init_state != InitState::Ready || !self.mapping_config_window.is_visible() {
             return;
         }
 
@@ -694,14 +694,20 @@ impl SAideApp {
 
         // Handle dialogs
         if self.mapping_config_window.is_input_dialog_open()
-            && let Some(pending_pos) = self.mapping_config_window.get_pending_input()
+            && let Some(pending_pos) = self.mapping_config_window.get_pos()
             && let Some(key) = self
                 .mapping_config_window
                 .show_key_input_dialog(ctx, pending_pos)
         {
-            self.add_mapping(key, pending_pos);
+            if let Some(action) = self.get_mapping(&key)
+                && let AdbAction::Tap { x, y } = action
+            {
+                self.mapping_config_window
+                    .request_override_dialog(key, (x, y), pending_pos);
+            } else {
+                self.add_mapping(key, pending_pos);
+            }
         }
-
         if self.mapping_config_window.is_delete_dialog_open()
             && let Some((key, pos)) = self.mapping_config_window.get_delete_target()
             && let Some(confirmed) = self
@@ -710,6 +716,15 @@ impl SAideApp {
             && confirmed
         {
             self.delete_mapping(key);
+        }
+        if self.mapping_config_window.is_override_dialog_open()
+            && let Some((key, pos, new_pos)) = self.mapping_config_window.get_override_target()
+            && let Some(confirmed) = self
+                .mapping_config_window
+                .show_override_confirm_dialog(ctx, key, pos, new_pos)
+            && confirmed
+        {
+            self.add_mapping(key, new_pos);
         }
     }
 
@@ -759,6 +774,18 @@ impl SAideApp {
             } else {
                 info!("Mapping deleted successfully");
             }
+        }
+    }
+
+    fn get_mapping(&self, key: &Key) -> Option<AdbAction> {
+        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+            return None;
+        };
+
+        if let Some(profile) = keyboard_mapper.get_active_profile() {
+            profile.get_mapping(key)
+        } else {
+            None
         }
     }
 

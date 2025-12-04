@@ -184,6 +184,8 @@ impl Profile {
     pub fn get_mapping(&self, key: &Key) -> Option<AdbAction> {
         self.mappings.inner.lock().get(key).cloned()
     }
+
+    pub fn contains_key(&self, key: &Key) -> bool { self.mappings.inner.lock().contains_key(key) }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
