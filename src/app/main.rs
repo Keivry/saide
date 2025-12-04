@@ -1269,13 +1269,11 @@ impl eframe::App for SAideApp {
                 // Process mapping configuration window
                 self.process_mapping_config_events(ctx);
 
-                if self.mapping_config_window.visible {
-                    // When mapping config window is open, skip normal input processing
-                    return;
+                // When mapping config window is open, skip normal input processing
+                if !self.mapping_config_window.visible {
+                    // Handle input events
+                    self.process_input_events(ctx);
                 }
-
-                // Handle input events
-                self.process_input_events(ctx);
 
                 // Check for device monitor events
                 self.process_device_monitor_events();
