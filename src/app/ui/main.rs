@@ -2,6 +2,7 @@ use {
     super::{
         super::utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_device_coords},
         mapping::{MappingConfigEvent, MappingConfigWindow},
+        player::V4l2Player,
         status_bar::{StatusBar, StatusBarEvent},
         toolbar::{Toolbar, ToolbarEvent},
     },
@@ -17,12 +18,12 @@ use {
             mouse::{MouseMapper, MouseState},
             scrcpy::Scrcpy,
         },
-        v4l2::{V4l2Capture, Yu12Frame, YuvRenderResources, new_yuv_render_callback},
+        v4l2::YuvRenderResources,
     },
     anyhow::anyhow,
     crossbeam_channel::{Receiver, bounded},
     eframe::{
-        egui::{self, Color32, RichText},
+        egui::{self, Color32},
         egui_wgpu,
     },
     std::{
@@ -51,19 +52,16 @@ enum DeviceMonitorEvent {
     ImStateChanged(bool),
 }
 
-const INIT_RESULT_CHANNEL_CAPACITY: usize = 9;
+const INIT_RESULT_CHANNEL_CAPACITY: usize = 6;
 
-/// Initialization result type
-enum InitResult {
+/// Initialization event
+enum InitEvent {
     Scrcpy(Scrcpy),
     KeyboardMapper(Option<KeyboardMapper>),
     MouseMapper(Option<MouseMapper>),
     DeviceMonitor(Receiver<DeviceMonitorEvent>),
-    FrameReceiver(Receiver<Arc<Yu12Frame>>),
     DeviceId(String),
     PhysicalSize((u32, u32)),
-    VideoDimensions((u32, u32)),
-    CaptureOrientation(u32),
     Error(anyhow::Error),
 }
 
@@ -73,13 +71,16 @@ enum InitState {
     NotStarted,
     InProgress,
     Ready,
-    Failed,
+    Failed(String),
 }
 
 /// Main UI state
 pub struct SAideApp {
     toolbar: Toolbar,
+
     status_bar: StatusBar,
+
+    player: V4l2Player,
 
     /// Configuration manager
     config_manager: ConfigManager,
@@ -96,16 +97,6 @@ pub struct SAideApp {
     /// Device monitor receiver
     device_monitor_rx: Option<Receiver<DeviceMonitorEvent>>,
 
-    /// Video frame receiver
-    frame_rx: Option<Receiver<Arc<Yu12Frame>>>,
-    /// Latest video frame
-    frame: Option<Arc<Yu12Frame>>,
-    /// Timestamp of last received frame
-    last_frame_instant: Option<Instant>,
-
-    // Flag indicating new frame availability
-    has_new_frame: bool,
-
     /// Timestamp of last paint
     last_paint_instant: Option<Instant>,
 
@@ -121,22 +112,13 @@ pub struct SAideApp {
     // V4l2 capture orientation (0-3), counter-clockwise
     capture_orientation: u32,
 
-    // Video render rotation state (0-3), clockwise
-    video_rotation: u32,
-
-    /// Video display rectangle in egui coordinates
-    video_rect: egui::Rect,
-
-    video_original_width: u32,
-    video_original_height: u32,
-
     // Frame rate limiter duration
     frame_rate_limiter: Option<Duration>,
 
     /// Initialization state machine
     init_state: InitState,
     init_instant: Option<Instant>,
-    init_rx: Option<Receiver<InitResult>>,
+    init_rx: Option<Receiver<InitEvent>>,
 
     /// Keyboard mapping switch
     keyboard_enabled: bool,
@@ -177,10 +159,22 @@ impl SAideApp {
 
         let max_fps = config.scrcpy.video.max_fps;
         let vsync = config.gpu.vsync;
+        let capture_orientation = match config.scrcpy.v4l2.capture_orientation {
+            0 => 0,
+            90 => 1,
+            180 => 2,
+            270 => 3,
+            _ => 0,
+        };
 
         Self {
             toolbar: Toolbar::new(),
-            status_bar: StatusBar::new(max_fps as f32),
+            status_bar: {
+                let mut status_bar = StatusBar::new(max_fps as f32);
+                status_bar.set_capture_orientation(capture_orientation);
+                status_bar
+            },
+            player: V4l2Player::new(cc, config),
 
             config_manager,
 
@@ -192,12 +186,6 @@ impl SAideApp {
 
             device_monitor_rx: None,
 
-            frame_rx: None,
-            frame: None,
-            last_frame_instant: None,
-
-            has_new_frame: false,
-
             last_paint_instant: None,
 
             device_id: None,
@@ -206,14 +194,7 @@ impl SAideApp {
 
             device_orientation: 0,
 
-            video_original_width: 0,
-            video_original_height: 0,
-
-            capture_orientation: 0,
-
-            video_rect: egui::Rect::NOTHING,
-
-            video_rotation: 0,
+            capture_orientation,
 
             frame_rate_limiter: if vsync {
                 None
@@ -246,7 +227,7 @@ impl SAideApp {
         self.init_state = InitState::InProgress;
         self.init_instant = Some(Instant::now());
 
-        let (tx, rx) = bounded::<InitResult>(INIT_RESULT_CHANNEL_CAPACITY);
+        let (tx, rx) = bounded::<InitEvent>(INIT_RESULT_CHANNEL_CAPACITY);
         self.init_rx = Some(rx);
 
         // Scrcpy initialization
@@ -260,7 +241,7 @@ impl SAideApp {
             if sys.processes().values().any(|process| {
                 process.exe().and_then(|path| path.file_name()) == Some(OsStr::new("scrcpy"))
             }) {
-                scrcpy_tx.send(InitResult::Error(anyhow!(
+                scrcpy_tx.send(InitEvent::Error(anyhow!(
                     "Existing scrcpy process detected , please terminate it first",
                 )))?;
 
@@ -276,11 +257,11 @@ impl SAideApp {
                 .wait_for_ready(Duration::from_secs(config.general.init_timeout as u64))
             {
                 scrcpy.terminate().ok();
-                scrcpy_tx.send(InitResult::Error(anyhow!("Failed to start scrcpy: {}", e)))?;
+                scrcpy_tx.send(InitEvent::Error(anyhow!("Failed to start scrcpy: {}", e)))?;
             }
             debug!("Scrcpy process started and ready");
 
-            scrcpy_tx.send(InitResult::Scrcpy(scrcpy))?;
+            scrcpy_tx.send(InitEvent::Scrcpy(scrcpy))?;
             Ok(())
         });
 
@@ -304,7 +285,7 @@ impl SAideApp {
             // Get device ID
             let device_id = AdbShell::get_device_id()?;
             debug!("Using device ID: {}", device_id);
-            dm_tx.send(InitResult::DeviceId(device_id))?;
+            dm_tx.send(InitEvent::DeviceId(device_id))?;
 
             // Get device physical screen size
             let physical_size = AdbShell::get_physical_screen_size()?;
@@ -312,12 +293,12 @@ impl SAideApp {
                 "Device physical screen size: {}x{}",
                 physical_size.0, physical_size.1
             );
-            dm_tx.send(InitResult::PhysicalSize(physical_size))?;
+            dm_tx.send(InitEvent::PhysicalSize(physical_size))?;
 
             // Create channel for rotation events
             let (event_tx, event_rx) =
                 bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
-            dm_tx.send(InitResult::DeviceMonitor(event_rx))?;
+            dm_tx.send(InitEvent::DeviceMonitor(event_rx))?;
 
             // Start rotation and im state monitoring
             let mut last_rotation = None;
@@ -371,7 +352,7 @@ impl SAideApp {
                 .transpose()?;
             debug!("Keyboard mapper initialized");
 
-            kbd_tx.send(InitResult::KeyboardMapper(keyboard_mapper))?;
+            kbd_tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
             Ok(())
         });
 
@@ -386,58 +367,7 @@ impl SAideApp {
                 .transpose()?;
             debug!("Mouse mapper initialized");
 
-            mouse_tx.send(InitResult::MouseMapper(mouse_mapper))?;
-            Ok(())
-        });
-
-        // V4L2 capture initialization
-        let v4l2_config = self.config();
-        let v4l2_tx = tx.clone();
-        thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Channel for frame transfer
-            let (tx, rx) = bounded::<Arc<Yu12Frame>>(1);
-
-            let mut capture = match V4l2Capture::new(
-                &v4l2_config.scrcpy.v4l2.device,
-                Duration::from_secs(u64::from(v4l2_config.general.init_timeout)),
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to initialize V4L2 capture");
-                    return Err(e);
-                }
-            };
-            debug!("V4L2 capture initialized");
-
-            // Get capture dimensions and orientation
-            let (width, height) = capture.dimensions();
-            let capture_orientation = v4l2_config.scrcpy.v4l2.capture_orientation / 90;
-            debug!(
-                "V4L2 capture dimensions: {}x{}, orientation: {}",
-                width,
-                height,
-                capture_orientation * 90
-            );
-
-            // Start capture thread
-            let _ = thread::spawn(move || {
-                loop {
-                    match capture.capture_frame() {
-                        Ok(frame) => {
-                            let _ = tx.send(Arc::new(frame));
-                        }
-                        Err(e) => {
-                            error!("Capture error: {}", e);
-                            break;
-                        }
-                    }
-                }
-            });
-            debug!("V4L2 capture thread started");
-
-            v4l2_tx.send(InitResult::FrameReceiver(rx))?;
-            v4l2_tx.send(InitResult::VideoDimensions((width, height)))?;
-            v4l2_tx.send(InitResult::CaptureOrientation(capture_orientation))?;
+            mouse_tx.send(InitEvent::MouseMapper(mouse_mapper))?;
             Ok(())
         });
     }
@@ -447,70 +377,48 @@ impl SAideApp {
         if let Some(rx) = &self.init_rx {
             while let Ok(result) = rx.try_recv() {
                 match result {
-                    InitResult::Scrcpy(scrcpy) => {
+                    InitEvent::Scrcpy(scrcpy) => {
                         self.scrcpy = Some(scrcpy);
                     }
-                    InitResult::KeyboardMapper(keyboard_mapper) => {
+                    InitEvent::KeyboardMapper(keyboard_mapper) => {
                         self.keyboard_mapper = keyboard_mapper;
                     }
-                    InitResult::MouseMapper(mouse_mapper) => {
+                    InitEvent::MouseMapper(mouse_mapper) => {
                         self.mouse_mapper = mouse_mapper;
                     }
-                    InitResult::DeviceMonitor(_device_monitor_rx) => {
+                    InitEvent::DeviceMonitor(_device_monitor_rx) => {
                         self.device_monitor_rx = Some(_device_monitor_rx);
                     }
-                    InitResult::FrameReceiver(frame_rx) => {
-                        self.frame_rx = Some(frame_rx);
-                    }
-                    InitResult::DeviceId(device_id) => {
+                    InitEvent::DeviceId(device_id) => {
                         self.device_id = Some(device_id);
                     }
-                    InitResult::PhysicalSize(size) => self.device_physical_size = size,
-                    InitResult::VideoDimensions((width, height)) => {
-                        self.video_original_width = width;
-                        self.video_original_height = height;
-                        self.status_bar.set_video_resolution(width, height);
-                    }
-                    InitResult::CaptureOrientation(orientation) => {
-                        self.capture_orientation = orientation;
-                        self.status_bar.set_capture_orientation(orientation);
-                    }
-                    InitResult::Error(e) => {
+                    InitEvent::PhysicalSize(size) => self.device_physical_size = size,
+                    InitEvent::Error(e) => {
                         error!("Initialization error: {}", e);
-                        self.init_state = InitState::Failed;
+                        self.init_state = InitState::Failed(e.to_string());
                         return;
                     }
                 }
             }
 
             // Check if all components are initialized
-            if self.scrcpy.is_some()
-                && self.device_monitor_rx.is_some()
-                && self.frame_rx.is_some()
-                && self.video_original_width > 0
-                && self.video_original_height > 0
-            {
+            if self.scrcpy.is_some() && self.device_monitor_rx.is_some() && self.player.ready() {
                 self.init_state = InitState::Ready;
                 info!("Initialization completed successfully");
 
                 // Resize window to match video dimensions
                 self.resize(ctx);
-            }
-        }
-    }
 
-    /// Get effective video dimensions considering rotation
-    fn effective_dimensions(&self) -> (u32, u32) {
-        if self.video_rotation & 1 == 0 {
-            (self.video_original_width, self.video_original_height)
-        } else {
-            (self.video_original_height, self.video_original_width)
+                // Pass video dimensions to status bar
+                self.status_bar
+                    .set_video_resolution(self.player.dimensions());
+            }
         }
     }
 
     /// Resize the application window to match video dimensions
     fn resize(&mut self, ctx: &egui::Context) {
-        let (w, h) = self.effective_dimensions();
+        let (w, h) = self.player.dimensions();
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             w as f32 + Toolbar::width(),
             h as f32 + StatusBar::height(),
@@ -519,8 +427,13 @@ impl SAideApp {
 
     /// Rotate video by 90 degrees clockwise
     fn rotate(&mut self, ctx: &egui::Context) {
-        self.video_rotation = (self.video_rotation + 1) % 4;
-        self.status_bar.set_video_rotation(self.video_rotation);
+        let video_rotation = (self.player.rotation() + 1) % 4;
+
+        // Sync rotation to player and status bar
+        self.player.set_rotation(video_rotation);
+        self.status_bar.set_video_rotation(video_rotation);
+
+        // Resize window to match new video dimensions
         self.resize(ctx);
     }
 
@@ -573,10 +486,11 @@ impl SAideApp {
 
     // Check if position is within video rectangle
     fn is_in_video_rect(&self, pos: &egui::Pos2) -> bool {
-        pos.x >= self.video_rect.left()
-            && pos.x <= self.video_rect.right()
-            && pos.y >= self.video_rect.top()
-            && pos.y <= self.video_rect.bottom()
+        let video_rect = self.player.video_rect();
+        pos.x >= video_rect.left()
+            && pos.x <= video_rect.right()
+            && pos.y >= video_rect.top()
+            && pos.y <= video_rect.bottom()
     }
 
     /// Process device monitor events
@@ -973,33 +887,6 @@ impl SAideApp {
         });
     }
 
-    fn receive_frame(&mut self) {
-        let Some(rx) = &self.frame_rx else {
-            trace!("Skipping frame receiving - not initialized");
-            return;
-        };
-
-        // Always receive latest frame
-        while let Ok(frame) = rx.try_recv() {
-            // Update frame and timestamp
-            self.frame = Some(frame);
-            self.has_new_frame = true;
-        }
-
-        // Update FPS calculation
-        if let Some(last_instant) = self.last_frame_instant {
-            let elapsed = last_instant.elapsed().as_secs_f32();
-            if elapsed > 0.0 {
-                let fps = 0.95 * self.status_bar.fps() + 0.05 * (1.0 / elapsed);
-                self.status_bar.set_fps(fps);
-            }
-        }
-
-        if self.has_new_frame {
-            self.last_frame_instant = Some(Instant::now());
-        }
-    }
-
     fn refresh_mapping_profiles(&mut self) {
         let (keyboard_mapper, device_id) =
             match (self.keyboard_mapper.as_mut(), self.device_id.as_ref()) {
@@ -1031,7 +918,7 @@ impl SAideApp {
     }
 
     /// Draw the base UI panels (toolbar and status bar)
-    fn draw_base_ui(&mut self, ctx: &egui::Context) {
+    fn draw_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("Toolbar")
             .frame(egui::Frame::NONE.fill(BG_COLOR))
             .resizable(false)
@@ -1063,95 +950,10 @@ impl SAideApp {
             });
     }
 
-    /// Draw the main V4L2 video player area
-    fn draw_v4l2_player(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(ctx, |ui| {
-                // Get available rectangle
-                let rect = ui.available_size();
-
-                // Always maintain aspect ratio
-                let (eff_w, eff_h) = self.effective_dimensions();
-                let aspect = eff_w as f32 / eff_h as f32;
-
-                let (width, height) = if rect.x / rect.y > aspect {
-                    (rect.y * aspect, rect.y)
-                } else {
-                    (rect.x, rect.x / aspect)
-                };
-
-                // Create centered rectangle
-                self.video_rect =
-                    egui::Rect::from_center_size(ui.max_rect().center(), egui::vec2(width, height));
-
-                // Draw video frame or placeholder
-                if let Some(frame) = &self.frame {
-                    let callback = egui_wgpu::Callback::new_paint_callback(
-                        self.video_rect,
-                        new_yuv_render_callback(Arc::clone(frame), self.video_rotation),
-                    );
-                    ui.painter().add(callback);
-                } else {
-                    ui.painter()
-                        .rect_filled(self.video_rect, 0.0, egui::Color32::from_gray(32));
-                    ui.painter().text(
-                        self.video_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "Waiting for video...",
-                        egui::FontId::proportional(24.0),
-                        egui::Color32::GRAY,
-                    );
-                }
-            });
-    }
-
-    fn draw_loading_overlay(&mut self, ctx: &egui::Context, message: &str) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.with_layout(
-                egui::Layout::top_down_justified(egui::Align::Center),
-                |ui| {
-                    ui.add_space(100.0);
-                    ui.label(
-                        RichText::new(message)
-                            .size(24.0)
-                            .color(egui::Color32::WHITE),
-                    );
-                    ui.add_space(10.0);
-                    ui.label("This may take a few seconds...");
-                },
-            );
-        });
-    }
-
-    fn draw_error_overlay(&mut self, ctx: &egui::Context, message: &str) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.with_layout(
-                egui::Layout::top_down_justified(egui::Align::Center),
-                |ui| {
-                    ui.add_space(100.0);
-                    ui.label(
-                        RichText::new("Initialization Failed")
-                            .size(32.0)
-                            .color(egui::Color32::RED),
-                    );
-                    ui.add_space(10.0);
-                    ui.label(RichText::new(message).size(16.0));
-                    ui.add_space(20.0);
-
-                    if ui.button("Retry").clicked() {
-                        // Reset to NotStarted to allow retry
-                        self.init_state = InitState::NotStarted;
-                    }
-                },
-            )
-        });
-    }
-
     fn coodinates_transform_params(&self) -> CoordinatesTransformParams {
         CoordinatesTransformParams {
-            video_rect: self.video_rect,
-            video_rotation: self.video_rotation,
+            video_rect: self.player.video_rect(),
+            video_rotation: self.player.rotation(),
             device_physical_size: self.device_physical_size,
             device_orientation: self.device_orientation,
             capture_orientation: self.capture_orientation,
@@ -1161,11 +963,8 @@ impl SAideApp {
 
 impl eframe::App for SAideApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Check if there is any input event
-        let has_input = ctx.input(|i| !i.events.is_empty() || i.pointer.any_down());
-
         // Draw base UI (toolbar and status bar) - always visible
-        self.draw_base_ui(ctx);
+        self.draw_panel(ctx);
 
         // Handle initialization state transitions
         match self.init_state {
@@ -1174,18 +973,10 @@ impl eframe::App for SAideApp {
                 self.init();
             }
             InitState::InProgress => {
-                self.draw_loading_overlay(ctx, "Initializing...");
-
                 // Check initialization progress
                 self.check_init_stage(ctx);
             }
             InitState::Ready => {
-                // Fully initialized, show main UI
-                self.draw_v4l2_player(ctx);
-
-                // Receive new video frames
-                self.receive_frame();
-
                 // Process mapping configuration window
                 self.process_mapping_config_events(ctx);
 
@@ -1198,33 +989,39 @@ impl eframe::App for SAideApp {
                 // Check for device monitor events
                 self.process_device_monitor_events();
             }
-            InitState::Failed => {
-                // Failed state, waiting for user action
-                self.draw_error_overlay(ctx, "Initialization failed.");
+            InitState::Failed(ref reason) => {
+                // Set player to failed state
+                self.player.failed(reason);
             }
         }
 
-        let config = self.config();
+        // Check if there is any input event, for frame rate limiting
+        let has_input = ctx.input(|i| !i.events.is_empty() || i.pointer.any_down());
+        // Flag indicating if a new video frame was received, for frame rate limiting
+        let has_new_frame = self.player.has_new_frame();
+
+        // Draw video frame
+        self.player.draw(ctx);
+
+        self.status_bar.set_fps(self.player.fps());
 
         // Frame rate limiting for non-vsync mode
         // Sleep to limit frame rate if no new frame and no input
-        if !config.gpu.vsync
-            && !self.has_new_frame
-            && !has_input
-            && let Some(last_paint) = self.last_paint_instant
-            && let Some(limit_next_frame_timer) = self.frame_rate_limiter
-        {
-            let elapsed = last_paint.elapsed();
-            if elapsed < limit_next_frame_timer {
-                // limit frame rate
-                thread::sleep(limit_next_frame_timer - elapsed);
+        if !self.config().gpu.vsync {
+            if !has_new_frame
+                && !has_input
+                && let Some(last_paint) = self.last_paint_instant
+                && let Some(limit_next_frame_timer) = self.frame_rate_limiter
+            {
+                let elapsed = last_paint.elapsed();
+                if elapsed < limit_next_frame_timer {
+                    // limit frame rate
+                    thread::sleep(limit_next_frame_timer - elapsed);
+                }
             }
-        }
 
-        if !config.gpu.vsync {
             // Update last paint time for frame rate limiting
             self.last_paint_instant = Some(Instant::now());
-            self.has_new_frame = false;
         }
 
         // Request repaint for next frame

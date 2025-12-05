@@ -6,7 +6,14 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    v4l::{Device, FourCC, buffer::Type, io::traits::CaptureStream, prelude::*, video::Capture},
+    v4l::{
+        Device,
+        FourCC,
+        buffer::Type,
+        io::traits::{CaptureStream, Stream},
+        prelude::*,
+        video::Capture,
+    },
 };
 
 /// YU12 frame data (Planar YUV 4:2:0)
@@ -74,6 +81,10 @@ impl V4l2Capture {
             height: self.height,
             data,
         })
+    }
+
+    pub fn stop_streaming(&mut self) -> Result<()> {
+        self.stream.stop().context("Failed to stop streaming")
     }
 
     /// Get current frame dimensions

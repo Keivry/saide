@@ -71,9 +71,9 @@ impl StatusBar {
         self
     }
 
-    pub fn set_video_resolution(&mut self, width: u32, height: u32) -> &mut Self {
-        self.video_original_width = width;
-        self.video_original_height = height;
+    pub fn set_video_resolution(&mut self, dimensions: (u32, u32)) -> &mut Self {
+        self.video_original_width = dimensions.0;
+        self.video_original_height = dimensions.1;
         self
     }
 
