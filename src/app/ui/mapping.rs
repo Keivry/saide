@@ -1,7 +1,7 @@
 use {
     super::{
-        modal::{ModalDialog, ModalDialogResult},
-        utils::{device_to_screen_coords, extract_position},
+        super::utils::{CoordinatesTransformParams, device_to_screen_coords, extract_position},
+        dialog::{ModalDialog, ModalDialogResult},
     },
     crate::config::mapping::{Key, KeyMapping},
     eframe::egui::{self, Color32, FontId, Pos2, Stroke},
@@ -100,7 +100,7 @@ impl MappingConfigWindow {
         &mut self,
         ctx: &egui::Context,
         mappings: &KeyMapping,
-        trans_params: &super::utils::CoordinatesTransformParams,
+        trans_params: &CoordinatesTransformParams,
     ) -> MappingConfigEvent {
         if !self.visible {
             return MappingConfigEvent::None;

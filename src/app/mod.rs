@@ -1,6 +1,4 @@
-mod main;
-mod mappings;
-mod modal;
+mod ui;
 mod utils;
 
-pub use main::SAideApp;
+pub use ui::SAideApp;

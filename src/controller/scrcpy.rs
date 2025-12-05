@@ -192,3 +192,7 @@ impl Scrcpy {
         args
     }
 }
+
+impl Drop for Scrcpy {
+    fn drop(&mut self) { let _ = self.terminate(); }
+}
