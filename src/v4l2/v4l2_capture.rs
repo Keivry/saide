@@ -22,6 +22,11 @@ pub struct Yu12Frame {
     pub width: u32,
     pub height: u32,
     pub data: Arc<[u8]>,
+
+    /// Frame sequence number
+    pub seq: u32,
+    /// Capture timestamp
+    pub timestamp: Instant,
 }
 
 pub struct V4l2Capture {
@@ -30,6 +35,7 @@ pub struct V4l2Capture {
     stream: MmapStream<'static>,
     width: u32,
     height: u32,
+    seq: u32,
 }
 
 impl V4l2Capture {
@@ -66,12 +72,16 @@ impl V4l2Capture {
             stream,
             width: fmt.width,
             height: fmt.height,
+            seq: 0,
         })
     }
 
     /// Capture a single frame (blocking)
     pub fn capture_frame(&mut self) -> Result<Yu12Frame> {
         let (buffer, _meta) = self.stream.next().context("Failed to capture frame")?;
+
+        let timestamp = Instant::now();
+        self.seq += 1;
 
         // Create Arc directly from slice (single allocation)
         let data: Arc<[u8]> = Arc::from(buffer);
@@ -80,6 +90,8 @@ impl V4l2Capture {
             width: self.width,
             height: self.height,
             data,
+            seq: self.seq,
+            timestamp,
         })
     }
 

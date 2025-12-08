@@ -1,4 +1,5 @@
 use {
+    super::VideoStats,
     crate::{
         config::SAideConfig,
         v4l2::{V4l2Capture, Yu12Frame, YuvRenderResources, new_yuv_render_callback},
@@ -43,8 +44,12 @@ pub struct V4l2Player {
     frame_rx: Option<Receiver<Arc<Yu12Frame>>>,
     /// Latest video frame
     frame: Option<Arc<Yu12Frame>>,
-    /// Timestamp of last received frame
-    last_frame_instant: Option<Instant>,
+
+    /// Total number of frames dropped
+    dropped_frames: u32,
+
+    /// Latency measurement in milliseconds from V4l2 capture to display
+    latency_ms: u32,
 
     // Flag indicating new frame availability
     has_new_frame: bool,
@@ -87,7 +92,10 @@ impl V4l2Player {
 
             frame_rx: None,
             frame: None,
-            last_frame_instant: None,
+
+            dropped_frames: 0,
+            latency_ms: 0,
+
             has_new_frame: false,
 
             video_rotation: 0,
@@ -178,16 +186,27 @@ impl V4l2Player {
     // Check if player is ready
     pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Initialized) }
 
+    pub fn video_stats(&self) -> VideoStats {
+        VideoStats {
+            fps: self.fps,
+            total_frames: self.last_frame_seq().unwrap_or(0),
+            dropped_frames: self.dropped_frames,
+            latency_ms: self.latency_ms as f32,
+        }
+    }
+
     // Set player state to failed with reason
     pub fn failed(&mut self, reason: &str) { self.state = PlayerState::Failed(reason.into()); }
-
-    pub fn fps(&self) -> f32 { self.fps }
 
     pub fn rotation(&self) -> u32 { self.video_rotation }
 
     pub fn set_rotation(&mut self, rotation: u32) { self.video_rotation = rotation % 4; }
 
     pub fn video_rect(&self) -> egui::Rect { self.video_rect }
+
+    pub fn last_frame_seq(&self) -> Option<u32> { self.frame.as_ref().map(|f| f.seq) }
+
+    pub fn last_frame_instant(&self) -> Option<Instant> { self.frame.as_ref().map(|f| f.timestamp) }
 
     pub fn has_new_frame(&self) -> bool { self.has_new_frame }
 
@@ -208,21 +227,36 @@ impl V4l2Player {
 
         // Always receive latest frame
         while let Ok(frame) = rx.try_recv() {
+            // Calculate FPS based on time between frames
+            if let Some(last_timestamp) = self.last_frame_instant() {
+                let elapsed = frame.timestamp.duration_since(last_timestamp).as_secs_f32();
+                if elapsed > 0.0 {
+                    // Smooth FPS with exponential moving average (alpha = 0.1)
+                    let instant_fps = 1.0 / elapsed;
+                    self.fps = if self.fps > 0.0 {
+                        self.fps * 0.9 + instant_fps * 0.1
+                    } else {
+                        instant_fps
+                    };
+                }
+            }
+
+            // Calculate dropped frames based on sequence number
+            if let Some(last_frame_seq) = self.last_frame_seq() {
+                let expected_seq = last_frame_seq + 1;
+                if frame.seq > expected_seq {
+                    let dropped = frame.seq - expected_seq;
+                    self.dropped_frames += dropped;
+                    trace!(
+                        "Dropped {} frames (seq {} -> {})",
+                        dropped, last_frame_seq, frame.seq
+                    );
+                }
+            }
+
             // Update frame and timestamp
             self.frame = Some(frame);
             self.has_new_frame = true;
-        }
-
-        // Update FPS calculation
-        if let Some(last_instant) = self.last_frame_instant {
-            let elapsed = last_instant.elapsed().as_secs_f32();
-            if elapsed > 0.0 {
-                self.fps = 1.0 / elapsed;
-            }
-        }
-
-        if self.has_new_frame {
-            self.last_frame_instant = Some(Instant::now());
         }
     }
 
@@ -316,6 +350,11 @@ impl V4l2Player {
                         new_yuv_render_callback(Arc::clone(frame), self.video_rotation),
                     );
                     ui.painter().add(callback);
+
+                    // Update latency measurement
+                    self.latency_ms = (self.latency_ms as f32 * 0.9
+                        + frame.timestamp.elapsed().as_millis() as f32 * 0.1)
+                        as u32;
                 } else {
                     ui.painter()
                         .rect_filled(self.video_rect, 0.0, egui::Color32::from_gray(32));

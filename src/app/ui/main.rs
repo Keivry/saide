@@ -1,6 +1,7 @@
 use {
     super::{
         super::utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_device_coords},
+        VideoStats,
         mapping::{MappingConfigEvent, MappingConfigWindow},
         player::V4l2Player,
         status_bar::{StatusBar, StatusBarEvent},
@@ -171,7 +172,7 @@ impl SAideApp {
             toolbar: Toolbar::new(),
             status_bar: {
                 let mut status_bar = StatusBar::new(max_fps as f32);
-                status_bar.set_capture_orientation(capture_orientation);
+                status_bar.update_capture_orientation(capture_orientation);
                 status_bar
             },
             player: V4l2Player::new(cc, config),
@@ -411,7 +412,7 @@ impl SAideApp {
 
                 // Pass video dimensions to status bar
                 self.status_bar
-                    .set_video_resolution(self.player.dimensions());
+                    .update_video_resolution(self.player.dimensions());
             }
         }
     }
@@ -431,7 +432,7 @@ impl SAideApp {
 
         // Sync rotation to player and status bar
         self.player.set_rotation(video_rotation);
-        self.status_bar.set_video_rotation(video_rotation);
+        self.status_bar.update_video_rotation(video_rotation);
 
         // Resize window to match new video dimensions
         self.resize(ctx);
@@ -523,7 +524,7 @@ impl SAideApp {
         if rotated {
             self.refresh_mapping_profiles();
             self.status_bar
-                .set_device_orientation(self.device_orientation);
+                .update_device_orientation(self.device_orientation);
         }
     }
 
@@ -907,8 +908,9 @@ impl SAideApp {
                     active_profile_name, avail_profile_names
                 );
 
-                self.status_bar.set_available_profiles(avail_profile_names);
-                self.status_bar.set_active_profile(active_profile_name);
+                self.status_bar
+                    .update_available_profiles(avail_profile_names);
+                self.status_bar.update_active_profile(active_profile_name);
             }
             Err(e) => {
                 self.status_bar.reset_profiles();
@@ -944,7 +946,7 @@ impl SAideApp {
                             error!("Failed to change active profile to {}: {}", profile, e);
                         });
                     }
-                    self.status_bar.set_active_profile(Some(profile));
+                    self.status_bar.update_active_profile(Some(profile));
                 }
                 StatusBarEvent::None => {}
             });
@@ -1003,7 +1005,8 @@ impl eframe::App for SAideApp {
         // Draw video frame
         self.player.draw(ctx);
 
-        self.status_bar.set_fps(self.player.fps());
+        self.status_bar
+            .update_video_stats(self.player.video_stats());
 
         // Frame rate limiting for non-vsync mode
         // Sleep to limit frame rate if no new frame and no input

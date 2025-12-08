@@ -1,3 +1,8 @@
+use {
+    super::VideoStats,
+    std::time::{Duration, Instant},
+};
+
 #[derive(Clone, PartialEq, Eq)]
 pub enum StatusBarEvent {
     None,
@@ -6,6 +11,8 @@ pub enum StatusBarEvent {
 }
 
 const STATUSBAR_HEIGHT: f32 = 32.0;
+const STATUSBAR_REFRESH_FPS: u64 = 5;
+const STATUSBAR_REFRESH_INTERVAL_MS: Duration = Duration::from_millis(1000 / STATUSBAR_REFRESH_FPS);
 
 pub struct StatusBar {
     /// Available custom keyboard mapping profiles names
@@ -25,10 +32,13 @@ pub struct StatusBar {
     video_original_width: u32,
     video_original_height: u32,
 
-    // Current FPS
-    fps: f32,
-
     max_fps: f32,
+
+    /// Current video statistics
+    video_stats: VideoStats,
+
+    /// Timestamp of the last update, used to limit update frequency for video stats
+    last_update: Instant,
 }
 
 impl StatusBar {
@@ -41,14 +51,18 @@ impl StatusBar {
             video_rotation: 0,
             video_original_width: 0,
             video_original_height: 0,
-            fps: 0.0,
             max_fps,
+
+            video_stats: VideoStats::default(),
+
+            last_update: Instant::now(),
         }
     }
 
     pub fn height() -> f32 { STATUSBAR_HEIGHT }
 
-    pub fn fps(&self) -> f32 { self.fps }
+    #[allow(dead_code)]
+    pub fn fps(&self) -> f32 { self.video_stats.fps }
 
     pub fn reset_profiles(&mut self) -> &mut Self {
         self.avail_profile_names.clear();
@@ -56,38 +70,44 @@ impl StatusBar {
         self
     }
 
-    pub fn set_active_profile(&mut self, profile_name: Option<String>) -> &mut Self {
+    pub fn update_active_profile(&mut self, profile_name: Option<String>) -> &mut Self {
         self.active_profile_name = profile_name;
         self
     }
 
-    pub fn set_available_profiles(&mut self, profile_names: Vec<String>) -> &mut Self {
+    pub fn update_available_profiles(&mut self, profile_names: Vec<String>) -> &mut Self {
         self.avail_profile_names = profile_names;
         self
     }
 
-    pub fn set_fps(&mut self, fps: f32) -> &mut Self {
-        self.fps = fps;
+    /// Update video statistics, limited to STATUSBAR_REFRESH_FPS updates per second
+    pub fn update_video_stats(&mut self, stats: VideoStats) -> &mut Self {
+        if self.last_update.elapsed() < STATUSBAR_REFRESH_INTERVAL_MS {
+            return self;
+        }
+
+        self.video_stats = stats;
+        self.last_update = Instant::now();
         self
     }
 
-    pub fn set_video_resolution(&mut self, dimensions: (u32, u32)) -> &mut Self {
+    pub fn update_video_resolution(&mut self, dimensions: (u32, u32)) -> &mut Self {
         self.video_original_width = dimensions.0;
         self.video_original_height = dimensions.1;
         self
     }
 
-    pub fn set_device_orientation(&mut self, orientation: u32) -> &mut Self {
+    pub fn update_device_orientation(&mut self, orientation: u32) -> &mut Self {
         self.device_orientation = orientation;
         self
     }
 
-    pub fn set_capture_orientation(&mut self, orientation: u32) -> &mut Self {
+    pub fn update_capture_orientation(&mut self, orientation: u32) -> &mut Self {
         self.capture_orientation = orientation;
         self
     }
 
-    pub fn set_video_rotation(&mut self, rotation: u32) -> &mut Self {
+    pub fn update_video_rotation(&mut self, rotation: u32) -> &mut Self {
         self.video_rotation = rotation;
         self
     }
@@ -101,20 +121,35 @@ impl StatusBar {
                 self.video_original_width, self.video_original_height
             ));
             ui.separator();
-            ui.label(format!("FPS: {:>3}", self.fps.min(self.max_fps) as u32));
-            ui.separator();
-            ui.label(format!(
-                "Device Rotation: {:>3}°",
-                self.device_orientation * 90
-            ));
-            ui.separator();
+
             ui.label(format!(
                 "Capture Orientation: {:>3}°",
                 self.capture_orientation * 90
             ));
             ui.separator();
+
             ui.label(format!("Video Rotation: {:>3}°", self.video_rotation * 90));
             ui.separator();
+
+            ui.label(format!(
+                "Device Rotation: {:>3}°",
+                self.device_orientation * 90
+            ));
+            ui.separator();
+
+            ui.label(format!(
+                "FPS: {:>3}",
+                self.video_stats.fps.min(self.max_fps) as u32
+            ));
+            ui.separator();
+
+            ui.label(format!(
+                "Frames: {:>4}/{:<4}",
+                self.video_stats.dropped_frames, self.video_stats.total_frames
+            ));
+            ui.separator();
+
+            ui.label(format!("Latency: {:>3}ms", self.video_stats.latency_ms));
 
             ui.label("Profile:");
             egui::ComboBox::from_id_salt("mapping_profile_combobox")
