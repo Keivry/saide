@@ -6,7 +6,7 @@ struct Uniforms {
     rotation: u32,
 };
 
-@group(0) @binding(4) var<uniform> uniforms: Uniforms;
+@group(0) @binding(2) var<uniform> uniforms: Uniforms;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -63,17 +63,27 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return output;
 }
 
-@group(0) @binding(0) var tex_y: texture_2d<f32>;
-@group(0) @binding(1) var tex_u: texture_2d<f32>;
-@group(0) @binding(2) var tex_v: texture_2d<f32>;
-@group(0) @binding(3) var tex_sampler: sampler;
+// Single combined YUV texture (Y + V + U packed vertically)
+// Texture layout (width × height*2):
+//   [0, 0.5)      : Y plane
+//   [0.5, 0.75)   : V plane (half width, left-aligned)
+//   [0.75, 1.0)   : U plane (half width, left-aligned)
+@group(0) @binding(0) var tex_yuv: texture_2d<f32>;
+@group(0) @binding(1) var tex_sampler: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Sample YUV planes
-    let y = textureSample(tex_y, tex_sampler, in.tex_coord).r;
-    let u = textureSample(tex_u, tex_sampler, in.tex_coord).r;
-    let v = textureSample(tex_v, tex_sampler, in.tex_coord).r;
+    // Sample Y from top half [0, 0.5)
+    let y_coord = vec2<f32>(in.tex_coord.x, in.tex_coord.y * 0.5);
+    let y = textureSample(tex_yuv, tex_sampler, y_coord).r;
+    
+    // Sample V from second quarter [0.5, 0.75)
+    let v_coord = vec2<f32>(in.tex_coord.x * 0.5, 0.5 + in.tex_coord.y * 0.25);
+    let v = textureSample(tex_yuv, tex_sampler, v_coord).r;
+    
+    // Sample U from last quarter [0.75, 1.0)
+    let u_coord = vec2<f32>(in.tex_coord.x * 0.5, 0.75 + in.tex_coord.y * 0.25);
+    let u = textureSample(tex_yuv, tex_sampler, u_coord).r;
 
     // BT.601 limited range to full range conversion
     let y_norm = (y - 16.0 / 255.0) * (255.0 / 219.0);

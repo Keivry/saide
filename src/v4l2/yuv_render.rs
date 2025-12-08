@@ -58,12 +58,8 @@ pub struct YuvRenderResources {
 }
 
 struct YuvTextures {
-    y: wgpu::Texture,
-    u: wgpu::Texture,
-    v: wgpu::Texture,
-    y_view: wgpu::TextureView,
-    u_view: wgpu::TextureView,
-    v_view: wgpu::TextureView,
+    combined: wgpu::Texture,
+    combined_view: wgpu::TextureView,
 }
 
 impl YuvRenderResources {
@@ -76,6 +72,7 @@ impl YuvRenderResources {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("YUV Bind Group Layout"),
             entries: &[
+                // Binding 0: Combined YUV texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -86,34 +83,16 @@ impl YuvRenderResources {
                     },
                     count: None,
                 },
+                // Binding 1: Sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // Binding 2: Rotation uniform
                 wgpu::BindGroupLayoutEntry {
-                    binding: 4,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -219,22 +198,14 @@ impl YuvRenderResources {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&textures.y_view),
+                        resource: wgpu::BindingResource::TextureView(&textures.combined_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&textures.u_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&textures.v_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
                         resource: wgpu::BindingResource::Sampler(&self.sampler),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 4,
+                        binding: 2,
                         resource: self.uniform_buffer.as_entire_binding(),
                     },
                 ],
@@ -251,30 +222,19 @@ impl YuvRenderResources {
         let u_data = &frame.data[y_size..y_size + uv_size];
         let v_data = &frame.data[y_size + uv_size..];
 
-        Self::write_texture(queue, &textures.y, y_data, width, height);
-        Self::write_texture(queue, &textures.u, u_data, uv_width, uv_height);
-        Self::write_texture(queue, &textures.v, v_data, uv_width, uv_height);
-    }
-
-    fn write_texture(
-        queue: &wgpu::Queue,
-        texture: &wgpu::Texture,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) {
+        // Upload Y plane to rows [0, height)
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture,
+                texture: &textures.combined,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            data,
+            y_data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width),
-                rows_per_image: Some(height),
+                rows_per_image: None,
             },
             wgpu::Extent3d {
                 width,
@@ -282,37 +242,80 @@ impl YuvRenderResources {
                 depth_or_array_layers: 1,
             },
         );
+
+        // Upload V plane to rows [height, height + height/2)
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &textures.combined,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: height,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            v_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(uv_width),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: uv_width,
+                height: uv_height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        // Upload U plane to rows [height + height/2, height*2)
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &textures.combined,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: height + uv_height,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            u_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(uv_width),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: uv_width,
+                height: uv_height,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     fn create_textures(device: &wgpu::Device, width: u32, height: u32) -> YuvTextures {
-        let create_tex = |label, w, h| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            })
-        };
+        // Combined texture: Y (height) + V (height/2) + U (height/2) = height * 2
+        let combined_height = height * 2;
 
-        let y = create_tex("Y Texture", width, height);
-        let u = create_tex("U Texture", width / 2, height / 2);
-        let v = create_tex("V Texture", width / 2, height / 2);
+        let combined = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("YUV Combined Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height: combined_height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
 
         YuvTextures {
-            y_view: y.create_view(&wgpu::TextureViewDescriptor::default()),
-            u_view: u.create_view(&wgpu::TextureViewDescriptor::default()),
-            v_view: v.create_view(&wgpu::TextureViewDescriptor::default()),
-            y,
-            u,
-            v,
+            combined_view: combined.create_view(&wgpu::TextureViewDescriptor::default()),
+            combined,
         }
     }
 }
