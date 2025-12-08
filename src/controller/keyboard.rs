@@ -151,6 +151,7 @@ impl KeyboardMapper {
     }
 
     /// Load profile by name
+    #[allow(dead_code)]
     pub fn load_profile(&mut self, name: &str) -> Result<()> {
         let profile = {
             let avail_profiles = self.avail_profiles.lock();

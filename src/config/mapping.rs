@@ -9,6 +9,7 @@ use {
 pub type Key = egui::Key;
 pub type Modifiers = egui::Modifiers;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
     pub id: String,
@@ -185,6 +186,7 @@ impl Profile {
         self.mappings.inner.lock().get(key).cloned()
     }
 
+    #[allow(dead_code)]
     pub fn contains_key(&self, key: &Key) -> bool { self.mappings.inner.lock().contains_key(key) }
 }
 
@@ -214,8 +216,10 @@ impl Mappings {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn add_profile(&self, profile: Arc<Profile>) { self.profiles.lock().push(profile); }
 
+    #[allow(dead_code)]
     pub fn remove_profile(&self, profile_name: &str) {
         self.profiles
             .lock()

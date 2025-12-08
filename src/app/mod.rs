@@ -1,4 +1,3 @@
-mod ui;
+pub mod init;
+pub mod ui;
 mod utils;
-
-pub use ui::SAideApp;

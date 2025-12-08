@@ -1,6 +1,14 @@
 use {
     super::{
-        super::utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_device_coords},
+        super::{
+            init::{
+                DeviceMonitorEvent,
+                INIT_RESULT_CHANNEL_CAPACITY,
+                InitEvent,
+                start_initialization,
+            },
+            utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_device_coords},
+        },
         indicator::Indicator,
         mapping::{MappingConfigEvent, MappingConfigWindow},
         player::V4l2Player,
@@ -13,56 +21,23 @@ use {
             mapping::{AdbAction, Key, MouseButton, WheelDirection},
         },
         controller::{
-            adb::AdbShell,
             keyboard::KeyboardMapper,
             mouse::{MouseMapper, MouseState},
             scrcpy::Scrcpy,
         },
         v4l2::YuvRenderResources,
     },
-    anyhow::anyhow,
     crossbeam_channel::{Receiver, bounded},
-    eframe::{
-        egui::{self, Color32},
-        egui_wgpu,
-    },
+    eframe::egui::{self, Color32},
     std::{
-        ffi::OsStr,
-        process::Command,
         sync::Arc,
         thread,
         time::{Duration, Instant},
     },
-    sysinfo::{ProcessesToUpdate, System},
-    tracing::{debug, error, info, trace, warn},
+    tracing::{debug, error, info, trace},
 };
 
-const DEFAULT_WIDTH: u32 = 1280;
-const DEFAULT_HEIGHT: u32 = 720;
-
 const BG_COLOR: Color32 = Color32::from_rgb(32, 32, 32);
-
-const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
-const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 1;
-enum DeviceMonitorEvent {
-    /// Device rotated event with new orientation (0-3), clockwise
-    Rotated(u32),
-    /// Device input method (IME) state changed, true = shown, false = hidden
-    ImStateChanged(bool),
-}
-
-const INIT_RESULT_CHANNEL_CAPACITY: usize = 6;
-
-/// Initialization event
-enum InitEvent {
-    Scrcpy(Scrcpy),
-    KeyboardMapper(Option<KeyboardMapper>),
-    MouseMapper(Option<MouseMapper>),
-    DeviceMonitor(Receiver<DeviceMonitorEvent>),
-    DeviceId(String),
-    PhysicalSize((u32, u32)),
-    Error(anyhow::Error),
-}
 
 /// Initialization state enum
 #[derive(PartialEq)]
@@ -229,146 +204,7 @@ impl SAideApp {
         let (tx, rx) = bounded::<InitEvent>(INIT_RESULT_CHANNEL_CAPACITY);
         self.init_rx = Some(rx);
 
-        // Scrcpy initialization
-        let config = self.config();
-        let scrcpy_tx = tx.clone();
-        thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Ensure no existing scrcpy process is running
-            let mut sys = System::new_all();
-            sys.refresh_processes(ProcessesToUpdate::All, true);
-
-            if sys.processes().values().any(|process| {
-                process.exe().and_then(|path| path.file_name()) == Some(OsStr::new("scrcpy"))
-            }) {
-                scrcpy_tx.send(InitEvent::Error(anyhow!(
-                    "Existing scrcpy process detected , please terminate it first",
-                )))?;
-
-                // Early return on error
-                return Ok(());
-            }
-
-            // Initialize scrcpy manager
-            let mut scrcpy = Scrcpy::new(Arc::clone(&config.scrcpy));
-
-            if let Err(e) = scrcpy
-                .spawn()?
-                .wait_for_ready(Duration::from_secs(config.general.init_timeout as u64))
-            {
-                scrcpy.terminate().ok();
-                scrcpy_tx.send(InitEvent::Error(anyhow!("Failed to start scrcpy: {}", e)))?;
-            }
-            debug!("Scrcpy process started and ready");
-
-            scrcpy_tx.send(InitEvent::Scrcpy(scrcpy))?;
-            Ok(())
-        });
-
-        // Delay to allow scrcpy to start ADB server
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_millis(500) {
-            // check if adb is responsive
-            if Command::new("adb")
-                .args(["shell", "echo", "ok"])
-                .output()
-                .is_ok()
-            {
-                break;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-
-        // Device monitor initialization
-        let dm_tx = tx.clone();
-        thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Get device ID
-            let device_id = AdbShell::get_device_id()?;
-            debug!("Using device ID: {}", device_id);
-            dm_tx.send(InitEvent::DeviceId(device_id))?;
-
-            // Get device physical screen size
-            let physical_size = AdbShell::get_physical_screen_size()?;
-            debug!(
-                "Device physical screen size: {}x{}",
-                physical_size.0, physical_size.1
-            );
-            dm_tx.send(InitEvent::PhysicalSize(physical_size))?;
-
-            // Create channel for rotation events
-            let (event_tx, event_rx) =
-                bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
-            dm_tx.send(InitEvent::DeviceMonitor(event_rx))?;
-
-            // Start rotation and im state monitoring
-            let mut last_rotation = None;
-            loop {
-                match AdbShell::get_screen_orientation() {
-                    Ok(current_rotation) => {
-                        if Some(current_rotation) != last_rotation {
-                            debug!(
-                                "Rotation changed: {:?} -> {}",
-                                last_rotation, current_rotation
-                            );
-                            last_rotation = Some(current_rotation);
-
-                            // Send rotation event
-                            if let Err(e) =
-                                event_tx.send(DeviceMonitorEvent::Rotated(current_rotation))
-                            {
-                                error!("Failed to send rotation event: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to get screen orientation: {}", e);
-                    }
-                }
-
-                // Poll input method state
-                if let Ok(im_state) = AdbShell::get_ime_state() {
-                    event_tx
-                        .send(DeviceMonitorEvent::ImStateChanged(im_state))
-                        .unwrap_or_else(|e| {
-                            error!("Failed to send IME state event: {}", e);
-                        });
-                }
-
-                thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
-            }
-
-            Ok(())
-        });
-
-        let kbd_config = self.config();
-        let kbd_tx = tx.clone();
-        thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Initialize keyboard mapper
-            let keyboard_mapper = kbd_config
-                .general
-                .keyboard_enabled
-                .then_some(KeyboardMapper::new(kbd_config.mappings.clone()))
-                .transpose()?;
-            debug!("Keyboard mapper initialized");
-
-            kbd_tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
-            Ok(())
-        });
-
-        let mouse_config = self.config();
-        let mouse_tx = tx.clone();
-        thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Initialize mouse mapper
-            let mouse_mapper = mouse_config
-                .general
-                .mouse_enabled
-                .then_some(MouseMapper::new())
-                .transpose()?;
-            debug!("Mouse mapper initialized");
-
-            mouse_tx.send(InitEvent::MouseMapper(mouse_mapper))?;
-            Ok(())
-        });
+        start_initialization(&self.config_manager, tx);
     }
 
     /// Check initialization progress and update state
@@ -439,48 +275,6 @@ impl SAideApp {
     /// Toggle mapping configuration window
     fn toggle_mapping_config(&mut self, _ctx: &egui::Context) {
         self.mapping_config_window.toggle();
-    }
-
-    pub fn start(config_manager: ConfigManager) -> anyhow::Result<()> {
-        // Run main GUI application
-        let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_title("SAide")
-                .with_inner_size([
-                    DEFAULT_WIDTH as f32 + Toolbar::width(),
-                    DEFAULT_HEIGHT as f32,
-                ]),
-            renderer: eframe::Renderer::Wgpu,
-            wgpu_options: egui_wgpu::WgpuConfiguration {
-                // Use AutoVsync/AutoNoVsync based on config
-                present_mode: if config_manager.config().gpu.vsync {
-                    wgpu::PresentMode::AutoVsync
-                } else {
-                    wgpu::PresentMode::AutoNoVsync
-                },
-
-                wgpu_setup: egui_wgpu::WgpuSetup::from(egui_wgpu::WgpuSetupCreateNew {
-                    instance_descriptor: wgpu::InstanceDescriptor {
-                        backends: (&config_manager.config().gpu.backend).into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-
-                // Request low latency for real-time video
-                desired_maximum_frame_latency: Some(1),
-
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        eframe::run_native(
-            "SAide",
-            options,
-            Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, config_manager)))),
-        )
-        .map_err(|e| anyhow!("eframe error: {}", e))
     }
 
     // Check if position is within video rectangle

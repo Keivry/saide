@@ -33,6 +33,7 @@
 
 ## 已完成
 
+- [x] 拆分 app/ui/main.rs 到 src/app/main.rs，分离业务逻辑和 UI 代码
 - [x] 重构 status_bar 为角落状态指示器 + 浮动详细面板（commit: 重构状态栏为角落指示器和浮动面板）
 - [x] 实现 V4L2 视频捕获模块
 - [x] 实现 YU12 → RGB WGPU 着色器

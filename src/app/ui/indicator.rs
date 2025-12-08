@@ -72,7 +72,6 @@ impl Indicator {
         }
     }
 
-    #[allow(dead_code)]
     pub fn fps(&self) -> f32 { self.video_stats.fps }
 
     pub fn reset_profiles(&mut self) -> &mut Self {
