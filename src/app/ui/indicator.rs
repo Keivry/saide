@@ -67,7 +67,7 @@ impl Indicator {
 
             last_update: Instant::now(),
 
-            position: IndicatorPosition::BottomLeft,
+            position: IndicatorPosition::TopLeft,
             floating_panel_visible: false,
         }
     }
@@ -172,15 +172,16 @@ impl Indicator {
                                 .color(egui::Color32::from_rgb(100, 255, 100))
                                 .size(14.0),
                             );
-                            ui.add_space(INDICATOR_SPACING);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Latency: {}ms",
-                                    self.video_stats.latency_ms
-                                ))
-                                .color(egui::Color32::from_rgb(255, 200, 100))
-                                .size(14.0),
-                            );
+
+                            // ui.add_space(INDICATOR_SPACING);
+                            // ui.label(
+                            //     egui::RichText::new(format!(
+                            //         "Latency: {}ms",
+                            //         self.video_stats.latency_ms
+                            //     ))
+                            //     .color(egui::Color32::from_rgb(255, 200, 100))
+                            //     .size(14.0),
+                            // );
                         });
                     })
                     .response
