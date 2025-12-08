@@ -1,10 +1,9 @@
 use {
     super::{
         super::utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_device_coords},
-        VideoStats,
+        indicator::Indicator,
         mapping::{MappingConfigEvent, MappingConfigWindow},
         player::V4l2Player,
-        status_bar::{StatusBar, StatusBarEvent},
         toolbar::{Toolbar, ToolbarEvent},
     },
     crate::{
@@ -42,7 +41,6 @@ const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 
 const BG_COLOR: Color32 = Color32::from_rgb(32, 32, 32);
-const FG_COLOR: Color32 = Color32::from_rgb(220, 220, 220);
 
 const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
 const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 1;
@@ -79,7 +77,7 @@ enum InitState {
 pub struct SAideApp {
     toolbar: Toolbar,
 
-    status_bar: StatusBar,
+    indicator: Indicator,
 
     player: V4l2Player,
 
@@ -170,10 +168,10 @@ impl SAideApp {
 
         Self {
             toolbar: Toolbar::new(),
-            status_bar: {
-                let mut status_bar = StatusBar::new(max_fps as f32);
-                status_bar.update_capture_orientation(capture_orientation);
-                status_bar
+            indicator: {
+                let mut indicator = Indicator::new(max_fps as f32);
+                indicator.update_capture_orientation(capture_orientation);
+                indicator
             },
             player: V4l2Player::new(cc, config),
 
@@ -410,8 +408,8 @@ impl SAideApp {
                 // Resize window to match video dimensions
                 self.resize(ctx);
 
-                // Pass video dimensions to status bar
-                self.status_bar
+                // Pass video dimensions to indicator
+                self.indicator
                     .update_video_resolution(self.player.dimensions());
             }
         }
@@ -422,7 +420,7 @@ impl SAideApp {
         let (w, h) = self.player.dimensions();
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             w as f32 + Toolbar::width(),
-            h as f32 + StatusBar::height(),
+            h as f32,
         )));
     }
 
@@ -430,9 +428,9 @@ impl SAideApp {
     fn rotate(&mut self, ctx: &egui::Context) {
         let video_rotation = (self.player.rotation() + 1) % 4;
 
-        // Sync rotation to player and status bar
+        // Sync rotation to player and indicator
         self.player.set_rotation(video_rotation);
-        self.status_bar.update_video_rotation(video_rotation);
+        self.indicator.update_video_rotation(video_rotation);
 
         // Resize window to match new video dimensions
         self.resize(ctx);
@@ -450,7 +448,7 @@ impl SAideApp {
                 .with_title("SAide")
                 .with_inner_size([
                     DEFAULT_WIDTH as f32 + Toolbar::width(),
-                    DEFAULT_HEIGHT as f32 + StatusBar::height(),
+                    DEFAULT_HEIGHT as f32,
                 ]),
             renderer: eframe::Renderer::Wgpu,
             wgpu_options: egui_wgpu::WgpuConfiguration {
@@ -523,7 +521,7 @@ impl SAideApp {
         // Refresh keyboard profiles if needed
         if rotated {
             self.refresh_mapping_profiles();
-            self.status_bar
+            self.indicator
                 .update_device_orientation(self.device_orientation);
         }
     }
@@ -894,7 +892,7 @@ impl SAideApp {
                 (Some(km), Some(did)) => (km, did),
                 _ => {
                     debug!("Keyboard mapper or device ID not available for profile refresh");
-                    self.status_bar.reset_profiles();
+                    self.indicator.reset_profiles();
                     return;
                 }
             };
@@ -908,19 +906,16 @@ impl SAideApp {
                     active_profile_name, avail_profile_names
                 );
 
-                self.status_bar
-                    .update_available_profiles(avail_profile_names);
-                self.status_bar.update_active_profile(active_profile_name);
+                self.indicator.update_active_profile(active_profile_name);
             }
             Err(e) => {
-                self.status_bar.reset_profiles();
+                self.indicator.reset_profiles();
                 debug!("Failed to refresh keyboard profiles: {}", e);
             }
         }
     }
 
-    /// Draw the base UI panels (toolbar and status bar)
-    fn draw_panel(&mut self, ctx: &egui::Context) {
+    fn draw_toolbar(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("Toolbar")
             .frame(egui::Frame::NONE.fill(BG_COLOR))
             .resizable(false)
@@ -934,22 +929,16 @@ impl SAideApp {
                 }
                 ToolbarEvent::None => {}
             });
+    }
 
-        egui::TopBottomPanel::top("Status Bar")
-            .frame(egui::Frame::NONE.fill(egui::Color32::from_gray(50)))
-            .resizable(false)
-            .exact_height(StatusBar::height())
-            .show(ctx, |ui| match self.status_bar.draw(ui) {
-                StatusBarEvent::ProfileChanged(profile) => {
-                    if let Some(keyboard_mapper) = self.keyboard_mapper.as_mut() {
-                        keyboard_mapper.load_profile(&profile).unwrap_or_else(|e| {
-                            error!("Failed to change active profile to {}: {}", profile, e);
-                        });
-                    }
-                    self.status_bar.update_active_profile(Some(profile));
-                }
-                StatusBarEvent::None => {}
-            });
+    /// Draw indicator overlay on video
+    fn draw_indicator(&mut self, ctx: &egui::Context) {
+        let video_rect = self.player.video_rect();
+
+        egui::Area::new(egui::Id::new("indicator"))
+            .fixed_pos(egui::pos2(0.0, 0.0))
+            .interactable(false)
+            .show(ctx, |ui| self.indicator.draw_indicator(ui, video_rect));
     }
 
     fn coodinates_transform_params(&self) -> CoordinatesTransformParams {
@@ -965,8 +954,8 @@ impl SAideApp {
 
 impl eframe::App for SAideApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Draw base UI (toolbar and status bar) - always visible
-        self.draw_panel(ctx);
+        // Draw base UI (toolbar) - always visible
+        self.draw_toolbar(ctx);
 
         // Handle initialization state transitions
         match self.init_state {
@@ -1005,8 +994,12 @@ impl eframe::App for SAideApp {
         // Draw video frame
         self.player.draw(ctx);
 
-        self.status_bar
-            .update_video_stats(self.player.video_stats());
+        // Draw indicator overlay on top of video
+        if self.init_state == InitState::Ready {
+            self.draw_indicator(ctx);
+        }
+
+        self.indicator.update_video_stats(self.player.video_stats());
 
         // Frame rate limiting for non-vsync mode
         // Sleep to limit frame rate if no new frame and no input
