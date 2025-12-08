@@ -67,7 +67,7 @@ impl Indicator {
 
             last_update: Instant::now(),
 
-            position: IndicatorPosition::TopLeft,
+            position: IndicatorPosition::BottomLeft,
             floating_panel_visible: false,
         }
     }
