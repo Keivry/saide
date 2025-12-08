@@ -1,7 +1,7 @@
 use {
     crate::controller::utils::*,
     eframe::egui::{self, PointerButton},
-    parking_lot::Mutex,
+    parking_lot::RwLock,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, ops::Deref, sync::Arc},
 };
@@ -9,7 +9,6 @@ use {
 pub type Key = egui::Key;
 pub type Modifiers = egui::Modifiers;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
     pub id: String,
@@ -95,7 +94,7 @@ pub enum AdbAction {
 }
 #[derive(Debug, Default)]
 pub struct KeyMapping {
-    inner: Arc<Mutex<HashMap<Key, AdbAction>>>,
+    inner: Arc<RwLock<HashMap<Key, AdbAction>>>,
 }
 
 impl<'de> Deserialize<'de> for KeyMapping {
@@ -116,7 +115,7 @@ impl<'de> Deserialize<'de> for KeyMapping {
             m.insert(rm.key, rm.action);
         });
         Ok(KeyMapping {
-            inner: Arc::new(Mutex::new(m)),
+            inner: Arc::new(RwLock::new(m)),
         })
     }
 }
@@ -133,7 +132,7 @@ impl Serialize for KeyMapping {
             action: &'a AdbAction,
         }
 
-        let mappings = self.inner.lock();
+        let mappings = self.inner.read();
         let raw_mappings = mappings
             .iter()
             .map(|(key, action)| RawMapping { key, action })
@@ -143,7 +142,7 @@ impl Serialize for KeyMapping {
 }
 
 impl Deref for KeyMapping {
-    type Target = Arc<Mutex<HashMap<Key, AdbAction>>>;
+    type Target = Arc<RwLock<HashMap<Key, AdbAction>>>;
 
     fn deref(&self) -> &Self::Target { &self.inner }
 }
@@ -166,13 +165,13 @@ pub struct Profile {
 impl Profile {
     /// Add a mapping to the profile, returning a new profile
     pub fn add_mapping(&self, key: Key, action: AdbAction) -> &Self {
-        self.mappings.inner.lock().insert(key, action);
+        self.mappings.inner.write().insert(key, action);
         self
     }
 
     /// Remove a mapping from the profile, returning a new profile
     pub fn remove_mapping(&self, key: &Key) -> &Self {
-        self.mappings.inner.lock().remove(key);
+        self.mappings.inner.write().remove(key);
         self
     }
 
@@ -183,11 +182,10 @@ impl Profile {
 
     /// Get the ADB action for a given key, if it exists
     pub fn get_mapping(&self, key: &Key) -> Option<AdbAction> {
-        self.mappings.inner.lock().get(key).cloned()
+        self.mappings.inner.read().get(key).cloned()
     }
 
-    #[allow(dead_code)]
-    pub fn contains_key(&self, key: &Key) -> bool { self.mappings.inner.lock().contains_key(key) }
+    pub fn contains_key(&self, key: &Key) -> bool { self.mappings.inner.read().contains_key(key) }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -202,27 +200,25 @@ pub struct Mappings {
         deserialize_with = "deserialize_profiles",
         serialize_with = "serialize_mutex_arc_vec"
     )]
-    pub profiles: Mutex<Vec<Arc<Profile>>>,
+    pub profiles: RwLock<Vec<Arc<Profile>>>,
 }
 
 impl Mappings {
     /// Filter profiles based on device ID and rotation
     pub fn filter_profiles(&self, device_id: &str, rotation: u32) -> Vec<Arc<Profile>> {
         self.profiles
-            .lock()
+            .read()
             .iter()
             .filter(|profile| profile.matches(device_id, rotation))
             .cloned()
             .collect()
     }
 
-    #[allow(dead_code)]
-    pub fn add_profile(&self, profile: Arc<Profile>) { self.profiles.lock().push(profile); }
+    pub fn add_profile(&self, profile: Arc<Profile>) { self.profiles.write().push(profile); }
 
-    #[allow(dead_code)]
     pub fn remove_profile(&self, profile_name: &str) {
         self.profiles
-            .lock()
+            .write()
             .retain(|profile| profile.name != profile_name);
     }
 }
@@ -230,23 +226,23 @@ impl Mappings {
 fn default_toggle_key() -> String { "F10".to_string() }
 fn default_true() -> bool { true }
 
-fn deserialize_profiles<'de, D>(deserializer: D) -> Result<Mutex<Vec<Arc<Profile>>>, D::Error>
+fn deserialize_profiles<'de, D>(deserializer: D) -> Result<RwLock<Vec<Arc<Profile>>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let profiles: Vec<Profile> = Deserialize::deserialize(deserializer)?;
     let arc_profiles = profiles.into_iter().map(Arc::new).collect();
-    Ok(Mutex::new(arc_profiles))
+    Ok(RwLock::new(arc_profiles))
 }
 
 fn serialize_mutex_arc_vec<S>(
-    profiles: &Mutex<Vec<Arc<Profile>>>,
+    profiles: &RwLock<Vec<Arc<Profile>>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    let profiles = profiles.lock();
+    let profiles = profiles.read();
     let vec_profiles: Vec<&Profile> = profiles.iter().map(|p| p.as_ref()).collect();
     vec_profiles.serialize(serializer)
 }

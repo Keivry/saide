@@ -234,7 +234,7 @@ pub fn find_nearest_mapping(
 ) -> Option<(Key, (u32, u32))> {
     let mut nearest: Option<(Key, (u32, u32), f32)> = None;
 
-    for (key, action) in mappings.lock().iter() {
+    for (key, action) in mappings.read().iter() {
         if let Some((x, y)) = extract_position(action) {
             let dx = device_pos.0 as f32 - x as f32;
             let dy = device_pos.1 as f32 - y as f32;

@@ -156,7 +156,7 @@ impl MappingConfigWindow {
                 });
 
                 // Draw existing mappings
-                mappings.lock().iter().for_each(|(key, action)| {
+                mappings.read().iter().for_each(|(key, action)| {
                     if let Some(screen_pos) = extract_position(action)
                         .and_then(|device_pos| device_to_screen_coords(device_pos, trans_params))
                     {

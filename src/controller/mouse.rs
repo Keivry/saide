@@ -17,7 +17,7 @@ const LONG_PRESS_DURATION_MS: u128 = 300;
 const DRAG_UPDATE_INTERVAL_MS: u128 = 50;
 
 /// Mouse button state for tracking press/drag/long-press
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MouseState {
     /// No button pressed
     Idle,
@@ -57,7 +57,7 @@ impl MouseMapper {
     pub fn update(&self) -> Result<()> {
         let state = {
             let state = self.left_button_state.lock();
-            *state
+            state.clone()
         };
 
         match state {
@@ -118,7 +118,7 @@ impl MouseMapper {
 
     pub fn get_button_state(&self) -> MouseState {
         let state = self.left_button_state.lock();
-        *state
+        state.clone()
     }
 
     pub fn update_button_state(&self, new_state: MouseState) {

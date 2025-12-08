@@ -4,7 +4,8 @@ use {
         controller::adb::AdbShell,
     },
     anyhow::{Result, anyhow},
-    parking_lot::Mutex,
+    arc_swap::ArcSwap,
+    parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc},
     tracing::{error, info},
 };
@@ -95,8 +96,8 @@ pub struct KeyboardMapper {
 
     adb_shell: AdbShell,
 
-    avail_profiles: Mutex<Vec<Arc<Profile>>>,
-    active_profile: Mutex<Option<Arc<Profile>>>,
+    avail_profiles: RwLock<Vec<Arc<Profile>>>,
+    active_profile: ArcSwap<Option<Arc<Profile>>>,
 }
 
 impl KeyboardMapper {
@@ -109,8 +110,8 @@ impl KeyboardMapper {
 
             adb_shell: adb,
 
-            avail_profiles: Mutex::new(Vec::new()),
-            active_profile: Mutex::new(None),
+            avail_profiles: RwLock::new(Vec::new()),
+            active_profile: ArcSwap::from_pointee(None),
         })
     }
 
@@ -125,9 +126,7 @@ impl KeyboardMapper {
             );
             info!("Disable custom key mappings for this device/rotation.");
 
-            {
-                self.active_profile.lock().take();
-            }
+            self.active_profile.store(Arc::new(None))
         } else {
             info!(
                 "Found {} matching profiles for device ID '{}' with rotation {}.",
@@ -137,24 +136,22 @@ impl KeyboardMapper {
             );
             {
                 self.active_profile
-                    .lock()
-                    .replace(avail_profiles[0].clone());
+                    .store(Arc::new(Some(avail_profiles[0].clone())));
             }
             info!("Active profile set to: {}", avail_profiles[0].name);
         }
 
         {
-            *self.avail_profiles.lock() = avail_profiles;
+            *self.avail_profiles.write() = avail_profiles;
         }
 
         Ok(())
     }
 
     /// Load profile by name
-    #[allow(dead_code)]
     pub fn load_profile(&mut self, name: &str) -> Result<()> {
         let profile = {
-            let avail_profiles = self.avail_profiles.lock();
+            let avail_profiles = self.avail_profiles.read();
             avail_profiles.iter().find(|p| p.name == name).cloned()
         };
 
@@ -167,7 +164,8 @@ impl KeyboardMapper {
         };
 
         {
-            self.active_profile.lock().replace(profile);
+            self.active_profile.store(Arc::new(Some(profile.clone())));
+            info!("Active profile set to: {}", profile.name);
         }
 
         Ok(())
@@ -176,9 +174,10 @@ impl KeyboardMapper {
     /// Get active profile name
     pub fn get_active_profile_name(&self) -> Option<String> {
         self.active_profile
-            .lock()
+            .load()
             .as_ref()
-            .map(|profile| profile.name.clone())
+            .as_ref()
+            .map(|p| p.name.clone())
     }
 
     /// Handle keyboard event
@@ -207,12 +206,7 @@ impl KeyboardMapper {
             return Ok(());
         }
 
-        let profile = {
-            let active_profile = self.active_profile.lock();
-            active_profile.as_ref().cloned()
-        };
-
-        if let Some(profile) = &profile
+        if let Some(profile) = self.active_profile.load().as_ref()
             && let Some(action) = profile.get_mapping(key)
         {
             self.adb_shell.send_input(&action)?;
@@ -225,10 +219,12 @@ impl KeyboardMapper {
 
     /// Get list of available profiles
     pub fn get_avail_profiles(&self) -> Vec<String> {
-        let avail_profiles = self.avail_profiles.lock();
+        let avail_profiles = self.avail_profiles.read();
         avail_profiles.iter().map(|p| p.name.clone()).collect()
     }
 
     /// Get active profile (for read-only access)
-    pub fn get_active_profile(&self) -> Option<Arc<Profile>> { self.active_profile.lock().clone() }
+    pub fn get_active_profile(&self) -> Option<Arc<Profile>> {
+        self.active_profile.load().as_ref().clone()
+    }
 }
