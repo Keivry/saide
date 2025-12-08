@@ -9,9 +9,9 @@ capture_orientation = 270
 buffer = 0
 
 [scrcpy.video]
-bit_rate = "24M"
+bit_rate = "16M"
 max_fps = 60
-max_size = 1600
+max_size = 1280
 codec = "h264"
 encoder = "c2.mtk.avc.encoder"
 
