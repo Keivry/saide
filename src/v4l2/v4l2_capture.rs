@@ -54,8 +54,8 @@ impl V4l2Capture {
             thread::sleep(Duration::from_millis(100));
         };
 
-        // Create memory-mapped stream with 4 buffers
-        let stream = MmapStream::with_buffers(&device, Type::VideoCapture, 4)
+        // Create memory-mapped stream with 2 buffers
+        let stream = MmapStream::with_buffers(&device, Type::VideoCapture, 2)
             .context("Failed to create stream")?;
 
         // SAFETY: We ensure device outlives stream by storing both in struct

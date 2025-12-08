@@ -143,7 +143,8 @@ impl V4l2Player {
             debug!("V4L2 capture dimensions: {}x{}", width, height,);
 
             // Start capture thread
-            let (frame_tx, frame_rx) = bounded::<Arc<Yu12Frame>>(1);
+            // Use a zero-capacity channel to always get the latest frame
+            let (frame_tx, frame_rx) = bounded::<Arc<Yu12Frame>>(0);
             let handle = thread::spawn(move || {
                 loop {
                     match capture.capture_frame() {
