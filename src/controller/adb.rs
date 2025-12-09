@@ -13,7 +13,7 @@ use {
         thread,
         time::Duration,
     },
-    tracing::{debug, info, trace, warn},
+    tracing::{debug, trace, warn},
 };
 
 const MODIFIER_ALT: u8 = 57; // KEYCODE_ALT_LEFT
@@ -63,7 +63,7 @@ impl AdbShell {
 
     /// Connect to ADB shell
     pub fn connect(&self) -> Result<()> {
-        info!("Connecting to ADB shell...");
+        debug!("Connecting to ADB shell...");
 
         // Hold lock for entire connect operation to prevent race conditions
         let mut state = self.state.lock();
@@ -136,13 +136,13 @@ impl AdbShell {
         state.child = Some(child);
         state.stdin = Some(stdin);
 
-        info!("Successfully connected to ADB shell");
+        debug!("Successfully connected to ADB shell");
         Ok(())
     }
 
     /// Disconnect from ADB shell
     pub fn disconnect(&self) -> Result<()> {
-        info!("Disconnecting from ADB shell...");
+        debug!("Disconnecting from ADB shell...");
 
         // Signal and join reader thread with timeout
         if let Some(ref mut capture) = *self.output_capture.lock() {
@@ -202,7 +202,7 @@ impl AdbShell {
             }
         }
 
-        info!("Disconnected from ADB shell");
+        debug!("Disconnected from ADB shell");
         Ok(())
     }
 
