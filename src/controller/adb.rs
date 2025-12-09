@@ -104,7 +104,7 @@ impl AdbShell {
 
             // Clear output buffer and reset shutdown signal
             capture.buffer.lock().clear();
-            capture.shutdown_signal.store(false, Ordering::Relaxed);
+            capture.shutdown_signal.store(false, Ordering::SeqCst);
 
             // Start background reader thread
             let output_buffer = Arc::clone(&capture.buffer);
@@ -112,7 +112,7 @@ impl AdbShell {
             let reader_thread = thread::spawn(move || {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines() {
-                    if shutdown_signal.load(Ordering::Relaxed) {
+                    if shutdown_signal.load(Ordering::SeqCst) {
                         debug!("ADB output reader received shutdown signal");
                         break;
                     }
@@ -147,7 +147,7 @@ impl AdbShell {
         // Signal and join reader thread with timeout
         if let Some(ref mut capture) = *self.output_capture.lock() {
             // Signal shutdown
-            capture.shutdown_signal.store(true, Ordering::Relaxed);
+            capture.shutdown_signal.store(true, Ordering::SeqCst);
 
             // Close stdin to unblock reader (stdin.read will return EOF)
             self.state.lock().stdin.take();
@@ -174,6 +174,8 @@ impl AdbShell {
 
         let mut state = self.state.lock();
         if let Some(mut child) = state.child.take() {
+            drop(state); // Release lock before potentially long-running wait
+
             // Send SIGTERM first for graceful shutdown
             #[cfg(unix)]
             {
@@ -199,16 +201,13 @@ impl AdbShell {
                 Err(_) => warn!("Wait for adb shell process timed out"),
             }
         }
-        state.stdin.take();
 
         info!("Disconnected from ADB shell");
         Ok(())
     }
 
-    /// Check if connected to ADB shell
-    pub fn is_connected(&self) -> bool { self.state.lock().child.is_some() }
-
     /// Get buffered output lines (if capture_output was enabled)
+    #[allow(dead_code)]
     pub fn read_output(&self) -> Option<Vec<String>> {
         self.output_capture
             .lock()
@@ -218,10 +217,6 @@ impl AdbShell {
 
     /// Send input command to Android device
     pub fn send_input(&self, command: &AdbAction) -> Result<()> {
-        if !self.is_connected() {
-            return Err(anyhow!("ADB shell not connected"));
-        }
-
         let cmd_str = match command {
             AdbAction::Tap { x, y } => {
                 format!(
@@ -258,7 +253,8 @@ impl AdbShell {
             }
             AdbAction::KeyCombo { modifiers, keycode } => {
                 // Build key combination command
-                let mut cmd = "input keycombination ".to_string();
+                let mut cmd = String::with_capacity(64);
+                cmd.push_str("input keycombination ");
                 if modifiers.alt {
                     cmd.push_str(&format!("{} ", MODIFIER_ALT));
                 }
@@ -283,10 +279,9 @@ impl AdbShell {
             }
         };
 
-        // Clone stdin Arc to reduce lock hold time during I/O
         let mut state = self.state.lock();
         let Some(ref mut stdin) = state.stdin else {
-            return Err(anyhow!("ADB shell stdin not available"));
+            return Err(anyhow!("ADB shell not connected"));
         };
 
         stdin
@@ -312,24 +307,32 @@ impl AdbShell {
         debug!("wm size output: {}", output_str.trim());
 
         // Parse output like "Physical size: 1080x2340"
-        if let Some(line) = output_str
+        let Some(line) = output_str
             .lines()
             .find(|line| line.contains("Physical size:"))
-            && let Some(size_part) = line.split(':').nth(1)
-        {
-            let size_str = size_part.trim();
-            let parts: Vec<&str> = size_str.split('x').collect();
-            if parts.len() == 2 {
-                let width = parts[0].trim().parse::<u32>()?;
-                let height = parts[1].trim().parse::<u32>()?;
-                return Ok((width, height));
-            }
-        }
+        else {
+            return Err(anyhow!(
+                "Failed to find 'Physical size:' in output: {}",
+                output_str.trim()
+            ));
+        };
 
-        Err(anyhow!(
-            "Failed to parse screen size from output: {}",
-            output_str.trim()
-        ))
+        let Some(size_part) = line.split(':').nth(1) else {
+            return Err(anyhow!("Failed to parse size from line: {}", line));
+        };
+
+        let size_str = size_part.trim();
+        let mut parts = size_str.split('x');
+        let width = parts
+            .next()
+            .and_then(|w| w.trim().parse::<u32>().ok())
+            .ok_or_else(|| anyhow!("Failed to parse width from: {}", size_str))?;
+        let height = parts
+            .next()
+            .and_then(|h| h.trim().parse::<u32>().ok())
+            .ok_or_else(|| anyhow!("Failed to parse height from: {}", size_str))?;
+
+        Ok((width, height))
     }
 
     /// Get Android device screen orientation using separate adb command
@@ -347,29 +350,32 @@ impl AdbShell {
         );
 
         // Parse output like "mCurrentRotation=ROTATION_0"
-        if let Some(line) = output_str
+        let Some(line) = output_str
             .lines()
             .find(|line| line.contains("mCurrentRotation"))
-            && let Some(rotation_part) = line.split('=').nth(1)
-        {
-            let rotation_str = rotation_part.trim();
-            // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
-            return Ok(match rotation_str {
-                "ROTATION_0" => 0,
-                "ROTATION_90" => 1,
-                "ROTATION_180" => 2,
-                "ROTATION_270" => 3,
-                other => return Err(anyhow!("Unknown rotation value: {}", other)),
-            });
-        }
+        else {
+            return Err(anyhow!(
+                "Failed to find 'mCurrentRotation' in output: {}",
+                output_str.trim()
+            ));
+        };
 
-        Err(anyhow!(
-            "Failed to parse screen orientation from output: {}",
-            output_str.trim()
-        ))
+        let Some(rotation_part) = line.split('=').nth(1) else {
+            return Err(anyhow!("Failed to parse rotation from line: {}", line));
+        };
+
+        let rotation_str = rotation_part.trim();
+        // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
+        Ok(match rotation_str {
+            "ROTATION_0" => 0,
+            "ROTATION_90" => 1,
+            "ROTATION_180" => 2,
+            "ROTATION_270" => 3,
+            other => return Err(anyhow!("Unknown rotation value: {}", other)),
+        })
     }
 
-    // Get android device input method state
+    /// Get android device input method state
     pub fn get_ime_state() -> Result<bool> {
         let exit_status = Command::new("adb")
             .args([
@@ -380,10 +386,7 @@ impl AdbShell {
             .status()
             .context("Failed to execute adb shell dumpsys window InputMethod command")?;
 
-        if exit_status.success() {
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(exit_status.success())
     }
 
     pub fn get_device_id() -> Result<String> {
