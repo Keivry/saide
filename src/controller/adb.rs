@@ -5,8 +5,13 @@ use {
     std::{
         io::{BufRead, BufReader, Write},
         process::{Child, ChildStdin, Command, Stdio},
-        sync::{Arc, Condvar},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
         thread,
+        time::Duration,
     },
     tracing::{debug, info, trace, warn},
 };
@@ -15,36 +20,44 @@ const MODIFIER_ALT: u8 = 57; // KEYCODE_ALT_LEFT
 const MODIFIER_CTRL: u8 = 113; // KEYCODE_CTRL_LEFT
 const MODIFIER_SHIFT: u8 = 59; // KEYCODE_SHIFT_LEFT
 
+const THREAD_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+struct AdbShellState {
+    child: Option<Child>,
+    stdin: Option<ChildStdin>,
+}
+
+/// Output capture state (only created when capture_output is enabled)
+struct OutputCapture {
+    buffer: Arc<Mutex<Vec<String>>>,
+    reader_thread: Option<thread::JoinHandle<()>>,
+    shutdown_signal: Arc<AtomicBool>,
+}
+
 /// ADB Shell connection manager for sending input commands to Android device
 pub struct AdbShell {
-    /// ADB shell child process
-    child: Mutex<Option<Child>>,
-    /// Stdin of the shell process for sending commands
-    stdin: Mutex<Option<ChildStdin>>,
-    /// Connection state
-    connected: Mutex<bool>,
-    /// Output buffer for shell responses (thread-safe)
-    output_buffer: Arc<Mutex<Option<Vec<String>>>>,
-    /// Condition variable for signaling new output
-    output_condvar: Arc<Option<Condvar>>,
-    /// Background thread handle
-    reader_thread: Mutex<Option<thread::JoinHandle<()>>>,
+    /// State of the ADB shell connection
+    state: Mutex<AdbShellState>,
 
-    /// Capture output flag
-    capture_output: bool,
+    /// Output capture (only if enabled)
+    output_capture: Mutex<Option<OutputCapture>>,
 }
 
 impl AdbShell {
     /// Create a new ADB shell connection manager
     pub fn new(capture_output: bool) -> Self {
         Self {
-            child: Mutex::new(None),
-            stdin: Mutex::new(None),
-            connected: Mutex::new(false),
-            output_buffer: Arc::new(Mutex::new(capture_output.then_some(Vec::new()))),
-            output_condvar: Arc::new(capture_output.then_some(Condvar::new())),
-            reader_thread: Mutex::new(None),
-            capture_output,
+            state: Mutex::new(AdbShellState::default()),
+            output_capture: Mutex::new(if capture_output {
+                Some(OutputCapture {
+                    buffer: Arc::new(Mutex::new(Vec::new())),
+                    reader_thread: None,
+                    shutdown_signal: Arc::new(AtomicBool::new(false)),
+                })
+            } else {
+                None
+            }),
         }
     }
 
@@ -52,11 +65,14 @@ impl AdbShell {
     pub fn connect(&self) -> Result<()> {
         info!("Connecting to ADB shell...");
 
-        {
-            // Kill any existing connection
-            if let Some(mut child) = self.child.lock().take() {
-                let _ = child.kill();
-            }
+        // Hold lock for entire connect operation to prevent race conditions
+        let mut state = self.state.lock();
+
+        // Kill any existing connection
+        if state.child.is_some() {
+            drop(state); // Release lock before disconnect
+            self.disconnect()?;
+            state = self.state.lock(); // Re-acquire lock
         }
 
         // Spawn new adb shell process
@@ -65,16 +81,12 @@ impl AdbShell {
             .arg("adb")
             .arg("shell")
             .stdin(Stdio::piped())
-            .stdout(if self.capture_output {
+            .stdout(if self.output_capture.lock().is_some() {
                 Stdio::piped()
             } else {
                 Stdio::null()
             })
-            .stderr(if self.capture_output {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
+            .stderr(Stdio::null())
             .spawn()
             .context("Failed to spawn adb shell process")?;
 
@@ -84,48 +96,45 @@ impl AdbShell {
             .ok_or_else(|| anyhow!("Failed to take stdin from adb shell process"))?;
 
         // Start output capture thread if enabled
-        if self.capture_output {
+        if let Some(ref mut capture) = *self.output_capture.lock() {
             let stdout = child
                 .stdout
                 .take()
                 .ok_or_else(|| anyhow!("Failed to take stdout from adb shell process"))?;
 
-            // Clear output buffer
-            {
-                let mut buffer = self.output_buffer.lock();
-                buffer.as_mut().unwrap().clear();
-            }
+            // Clear output buffer and reset shutdown signal
+            capture.buffer.lock().clear();
+            capture.shutdown_signal.store(false, Ordering::Relaxed);
 
-            // Start background reader thread (take ownership of stdout)
-            let output_buffer = Arc::clone(&self.output_buffer);
-            let output_condvar = Arc::clone(&self.output_condvar);
+            // Start background reader thread
+            let output_buffer = Arc::clone(&capture.buffer);
+            let shutdown_signal = Arc::clone(&capture.shutdown_signal);
             let reader_thread = thread::spawn(move || {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines() {
+                    if shutdown_signal.load(Ordering::Relaxed) {
+                        debug!("ADB output reader received shutdown signal");
+                        break;
+                    }
                     match line {
                         Ok(line) => {
-                            let mut buffer = output_buffer.lock();
-                            buffer.as_mut().unwrap().push(line);
-                            if let Some(condvar) = &*output_condvar {
-                                condvar.notify_one();
-                            }
+                            output_buffer.lock().push(line);
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            debug!("ADB output reader error: {}", e);
+                            break;
+                        }
                     }
                 }
+                debug!("ADB output reader thread exiting");
             });
 
-            {
-                *self.reader_thread.lock() = Some(reader_thread);
-            }
+            capture.reader_thread = Some(reader_thread);
         }
 
         // Update connection state
-        {
-            self.child.lock().replace(child);
-            self.stdin.lock().replace(stdin);
-            *self.connected.lock() = true;
-        }
+        state.child = Some(child);
+        state.stdin = Some(stdin);
 
         info!("Successfully connected to ADB shell");
         Ok(())
@@ -135,38 +144,82 @@ impl AdbShell {
     pub fn disconnect(&self) -> Result<()> {
         info!("Disconnecting from ADB shell...");
 
-        {
-            if let Some(mut child) = self.child.lock().take() {
+        // Signal and join reader thread with timeout
+        if let Some(ref mut capture) = *self.output_capture.lock() {
+            // Signal shutdown
+            capture.shutdown_signal.store(true, Ordering::Relaxed);
+
+            // Close stdin to unblock reader (stdin.read will return EOF)
+            self.state.lock().stdin.take();
+
+            if let Some(thread) = capture.reader_thread.take() {
+                // Wait for thread with timeout using channel
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    let _ = thread.join();
+                    let _ = tx.send(());
+                });
+
+                match rx.recv_timeout(THREAD_JOIN_TIMEOUT) {
+                    Ok(_) => debug!("Reader thread exited cleanly"),
+                    Err(_) => {
+                        warn!(
+                            "Reader thread join timed out after {:?}",
+                            THREAD_JOIN_TIMEOUT
+                        );
+                    }
+                }
+            }
+        }
+
+        let mut state = self.state.lock();
+        if let Some(mut child) = state.child.take() {
+            // Send SIGTERM first for graceful shutdown
+            #[cfg(unix)]
+            {
+                if let Ok(pid) = child.id().try_into() {
+                    unsafe {
+                        libc::kill(pid, libc::SIGTERM);
+                    }
+                }
+            }
+
+            // Wait with timeout using channel
+            let (tx, rx) = mpsc::channel();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(500));
                 let _ = child.kill();
+                let result = child.wait();
+                let _ = tx.send(result);
+            });
+
+            match rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(Ok(_)) => debug!("ADB shell process exited cleanly"),
+                Ok(Err(e)) => warn!("Failed to wait for adb shell process: {}", e),
+                Err(_) => warn!("Wait for adb shell process timed out"),
             }
         }
-
-        // Join the reader thread
-        {
-            let mut reader_thread = self.reader_thread.lock();
-            if let Some(thread) = reader_thread.take() {
-                drop(thread);
-            }
-        }
-
-        {
-            *self.connected.lock() = false;
-        }
+        state.stdin.take();
 
         info!("Disconnected from ADB shell");
         Ok(())
     }
 
     /// Check if connected to ADB shell
-    pub fn is_connected(&self) -> bool { *self.connected.lock() }
+    pub fn is_connected(&self) -> bool { self.state.lock().child.is_some() }
+
+    /// Get buffered output lines (if capture_output was enabled)
+    pub fn read_output(&self) -> Option<Vec<String>> {
+        self.output_capture
+            .lock()
+            .as_ref()
+            .map(|capture| capture.buffer.lock().drain(..).collect())
+    }
 
     /// Send input command to Android device
     pub fn send_input(&self, command: &AdbAction) -> Result<()> {
         if !self.is_connected() {
-            warn!("ADB shell not connected, attempting to reconnect...");
-            if let Err(e) = self.connect() {
-                return Err(anyhow!("Failed to reconnect to ADB shell: {}", e));
-            }
+            return Err(anyhow!("ADB shell not connected"));
         }
 
         let cmd_str = match command {
@@ -230,18 +283,18 @@ impl AdbShell {
             }
         };
 
-        {
-            let mut stdin = self.stdin.lock();
-            let Some(stdin) = stdin.as_mut() else {
-                return Err(anyhow!("ADB shell stdin not available"));
-            };
+        // Clone stdin Arc to reduce lock hold time during I/O
+        let mut state = self.state.lock();
+        let Some(ref mut stdin) = state.stdin else {
+            return Err(anyhow!("ADB shell stdin not available"));
+        };
 
-            stdin
-                .write_all(cmd_str.as_bytes())
-                .context("Failed to write input command")?;
+        stdin
+            .write_all(cmd_str.as_bytes())
+            .context("Failed to write input command")?;
 
-            stdin.flush().context("Failed to flush input command")?;
-        }
+        stdin.flush().context("Failed to flush input command")?;
+        drop(state);
 
         debug!("Sent ADB input command: {}", cmd_str.trim());
         Ok(())
