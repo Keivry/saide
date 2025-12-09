@@ -135,7 +135,7 @@ impl KeyboardMapper {
             );
             info!("Disable custom key mappings for this device/rotation.");
 
-            self.active_profile.store(Arc::new(None))
+            self.active_profile.store(Arc::new(None));
         } else {
             info!(
                 "Found {} matching profiles for device ID '{}' with rotation {}.",
@@ -143,39 +143,32 @@ impl KeyboardMapper {
                 device_id,
                 device_rotation
             );
-            {
-                self.active_profile
-                    .store(Arc::new(Some(avail_profiles[0].clone())));
-            }
+            self.active_profile
+                .store(Arc::new(Some(avail_profiles[0].clone())));
             info!("Active profile set to: {}", avail_profiles[0].name);
         }
 
-        {
-            *self.avail_profiles.write() = avail_profiles;
-        }
+        *self.avail_profiles.write() = avail_profiles;
 
         Ok(())
     }
 
     /// Load profile by name
+    #[allow(dead_code)]
     pub fn load_profile(&mut self, name: &str) -> Result<()> {
-        let profile = {
-            let avail_profiles = self.avail_profiles.read();
-            avail_profiles.iter().find(|p| p.name == name).cloned()
-        };
-
-        let profile = match profile {
-            Some(p) => p,
-            None => {
+        let profile = self
+            .avail_profiles
+            .read()
+            .iter()
+            .find(|p| p.name == name)
+            .cloned()
+            .ok_or_else(|| {
                 error!("Profile '{}' not found.", name);
-                return Err(anyhow!("Profile not found: {}.", name));
-            }
-        };
+                anyhow!("Profile not found: {}.", name)
+            })?;
 
-        {
-            self.active_profile.store(Arc::new(Some(profile.clone())));
-            info!("Active profile set to: {}", profile.name);
-        }
+        self.active_profile.store(Arc::new(Some(profile.clone())));
+        info!("Active profile set to: {}", profile.name);
 
         Ok(())
     }
@@ -230,9 +223,7 @@ impl KeyboardMapper {
             .fold(text.to_owned(), |acc, (k, v)| acc.replace(k, v));
 
         debug!("Handling text input event: {}", text);
-        self.adb_shell.send_input(&AdbAction::Text {
-            text: text.to_owned(),
-        })?;
+        self.adb_shell.send_input(&AdbAction::Text { text })?;
         Ok(true)
     }
 

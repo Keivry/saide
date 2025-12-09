@@ -9,12 +9,6 @@ use {
 pub type Key = egui::Key;
 pub type Modifiers = egui::Modifiers;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Device {
-    pub id: String,
-    pub model: String,
-}
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     Left,
@@ -185,6 +179,7 @@ impl Profile {
         self.mappings.inner.read().get(key).cloned()
     }
 
+    #[allow(dead_code)]
     pub fn contains_key(&self, key: &Key) -> bool { self.mappings.inner.read().contains_key(key) }
 }
 
@@ -214,8 +209,10 @@ impl Mappings {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn add_profile(&self, profile: Arc<Profile>) { self.profiles.write().push(profile); }
 
+    #[allow(dead_code)]
     pub fn remove_profile(&self, profile_name: &str) {
         self.profiles
             .write()

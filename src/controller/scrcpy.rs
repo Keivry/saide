@@ -83,53 +83,49 @@ impl Scrcpy {
             return Err(anyhow!("scrcpy process has exited unexpectedly"));
         }
 
-        if let Some(child) = self.child.as_mut() {
-            let stdout = child
-                .stdout
-                .take()
-                .context("Failed to take scrcpy stdout")?;
+        let Some(child) = self.child.as_mut() else {
+            return Err(anyhow!("scrcpy process is not running"));
+        };
 
-            let start = Instant::now();
-            let expected_output = EXPECT_OUTPUT.replace("{device}", &self.config.v4l2.device);
+        let stdout = child
+            .stdout
+            .take()
+            .context("Failed to take scrcpy stdout")?;
 
-            let (tx, rx) = unbounded::<ScrcpyState>();
+        let start = Instant::now();
+        let expected_output = EXPECT_OUTPUT.replace("{device}", &self.config.v4l2.device);
 
-            // Thread to read stdout lines
-            thread::spawn({
-                let mut reader = BufReader::new(stdout);
-                let mut line = String::new();
+        let (tx, rx) = unbounded::<ScrcpyState>();
 
-                move || {
-                    while let Ok(bytes_read) = reader.read_line(&mut line) {
-                        if bytes_read == 0 {
-                            break; // EOF
-                        }
+        // Thread to read stdout lines
+        thread::spawn({
+            let reader = BufReader::new(stdout);
 
-                        if line.contains(&expected_output) {
-                            let _ = tx.send(ScrcpyState::Ready);
-                            break;
-                        }
-                        line.clear();
+            move || {
+                for line in reader.lines().map_while(Result::ok) {
+                    if line.contains(&expected_output) {
+                        let _ = tx.send(ScrcpyState::Ready);
+                        break;
                     }
                 }
-            });
-
-            // Main loop to wait for events or timeout
-            while start.elapsed() < timeout {
-                if let Ok(state) = rx.recv_timeout(Duration::from_millis(100))
-                    && let ScrcpyState::Ready = state
-                {
-                    self.state = ScrcpyState::Ready;
-                    return Ok(());
-                }
             }
+        });
 
-            self.state = ScrcpyState::Timeout;
-            return Err(anyhow!("Timeout to wait for scrcpy to be ready"));
+        // Main loop to wait for events or timeout
+        while start.elapsed() < timeout {
+            let Ok(state) = rx.recv_timeout(Duration::from_millis(100)) else {
+                continue;
+            };
+            let ScrcpyState::Ready = state else {
+                continue;
+            };
+
+            self.state = ScrcpyState::Ready;
+            return Ok(());
         }
 
-        // If we reach here, scrcpy process is not running
-        Err(anyhow!("scrcpy process is not running"))
+        self.state = ScrcpyState::Timeout;
+        Err(anyhow!("Timeout to wait for scrcpy to be ready"))
     }
 
     /// Build scrcpy command arguments
@@ -175,9 +171,9 @@ impl Scrcpy {
             args.push(self.config.video.codec.clone());
         }
 
-        if self.config.video.encoder.is_some() {
+        if let Some(ref encoder) = self.config.video.encoder {
             args.push("--video-encoder".to_string());
-            args.push(self.config.video.encoder.clone().unwrap());
+            args.push(encoder.clone());
         }
 
         // Other options

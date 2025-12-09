@@ -55,10 +55,7 @@ impl MouseMapper {
     /// Update mouse state - call this every frame
     /// Checks for long press timeout and sends drag updates
     pub fn update(&self) -> Result<()> {
-        let state = {
-            let state = self.left_button_state.lock();
-            state.clone()
-        };
+        let state = self.left_button_state.lock().clone();
 
         match state {
             MouseState::Pressed {
@@ -79,17 +76,14 @@ impl MouseMapper {
                 }
             }
             MouseState::Dragging {
-                start_x,
-                start_y,
                 current_x,
                 current_y,
                 last_update,
+                ..
             } => {
-                // Only send update if position changed and enough time passed
+                // Only send update if enough time passed
                 let elapsed = last_update.elapsed().as_millis();
-                if elapsed >= DRAG_UPDATE_INTERVAL_MS
-                    && (start_x != current_x || start_y != current_y)
-                {
+                if elapsed >= DRAG_UPDATE_INTERVAL_MS {
                     // Send TouchMove event for drag updates
                     self.adb_shell.send_input(&AdbAction::TouchMove {
                         x: current_x,
@@ -100,7 +94,7 @@ impl MouseMapper {
                         current_x, current_y, elapsed
                     );
 
-                    // Update state: new start position is current position
+                    // Update last_update timestamp
                     self.update_button_state(MouseState::Dragging {
                         start_x: current_x,
                         start_y: current_y,
@@ -116,14 +110,10 @@ impl MouseMapper {
         Ok(())
     }
 
-    pub fn get_button_state(&self) -> MouseState {
-        let state = self.left_button_state.lock();
-        state.clone()
-    }
+    pub fn get_button_state(&self) -> MouseState { self.left_button_state.lock().clone() }
 
     pub fn update_button_state(&self, new_state: MouseState) {
-        let mut state = self.left_button_state.lock();
-        *state = new_state;
+        *self.left_button_state.lock() = new_state;
     }
 
     /// Handle mouse button event
@@ -288,9 +278,8 @@ impl MouseMapper {
             MouseState::Dragging {
                 start_x,
                 start_y,
-                current_x: _,
-                current_y: _,
                 last_update,
+                ..
             } => {
                 // Update current position
                 self.update_button_state(MouseState::Dragging {

@@ -350,6 +350,7 @@ impl MappingConfigWindow {
             .and_then(|key| self.delete_target_pos.map(|pos| (key, pos)).or(None))
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_override_target(&self) -> Option<(Key, (u32, u32), (u32, u32))> {
         self.override_key.and_then(|key| {
             self.override_pos.and_then(|pos| {

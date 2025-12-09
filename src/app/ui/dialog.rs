@@ -39,24 +39,28 @@ impl ModalDialog {
     }
 
     /// Set custom confirm button label, or disable confirm button if None
+    #[allow(dead_code)]
     pub fn with_confirm(mut self, label: Option<&str>) -> Self {
         self.confirm = label.map(|s| s.into());
         self
     }
 
     /// Set custom confirm button label, or disable confirm button if None
+    #[allow(dead_code)]
     pub fn set_confirm(&mut self, label: Option<&str>) -> &mut Self {
         self.confirm = label.map(|s| s.into());
         self
     }
 
     /// Set custom cancel button label, or disable cancel button if None
+    #[allow(dead_code)]
     pub fn with_cancel(mut self, label: Option<&str>) -> Self {
         self.cancel = label.map(|s| s.into());
         self
     }
 
     /// Set custom cancel button label, or disable cancel button if None
+    #[allow(dead_code)]
     pub fn set_cancel(&mut self, label: Option<&str>) -> &mut Self {
         self.cancel = label.map(|s| s.into());
         self
@@ -72,6 +76,7 @@ impl ModalDialog {
     }
 
     /// Enable or disable key capture mode, which captures key input and disables confirm/cancel
+    #[allow(dead_code)]
     pub fn set_key_capture(&mut self, enable: bool) -> &mut Self {
         if enable {
             self.confirm = None;
@@ -88,12 +93,14 @@ impl ModalDialog {
     }
 
     /// Set the dialog title
+    #[allow(dead_code)]
     pub fn set_title(&mut self, title: &str) -> &mut Self {
         self.title = title.into();
         self
     }
 
     /// Set the dialog message
+    #[allow(dead_code)]
     pub fn with_message(mut self, message: &str) -> Self {
         self.message = message.into();
         self
