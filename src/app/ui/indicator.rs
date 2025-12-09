@@ -67,7 +67,7 @@ impl Indicator {
 
             last_update: Instant::now(),
 
-            position: IndicatorPosition::TopLeft,
+            position: IndicatorPosition::BottomLeft,
             floating_panel_visible: false,
         }
     }
@@ -119,34 +119,22 @@ impl Indicator {
     /// Draw indicator in video corner, returns the rectangle of the drawn indicator
     pub fn draw_indicator(&mut self, ui: &mut egui::Ui, video_rect: egui::Rect) -> egui::Rect {
         // Calculate indicator position based on corner_position
-        let (indicator_pos, align) = match self.position {
-            IndicatorPosition::TopLeft => (
-                egui::pos2(
-                    video_rect.left() + INDICATOR_PADDING,
-                    video_rect.top() + INDICATOR_PADDING,
-                ),
-                egui::Align2::LEFT_TOP,
+        let indicator_pos = match self.position {
+            IndicatorPosition::TopLeft => egui::pos2(
+                video_rect.left() + INDICATOR_PADDING,
+                video_rect.top() + INDICATOR_PADDING,
             ),
-            IndicatorPosition::TopRight => (
-                egui::pos2(
-                    video_rect.right() - INDICATOR_PADDING,
-                    video_rect.top() + INDICATOR_PADDING,
-                ),
-                egui::Align2::RIGHT_TOP,
+            IndicatorPosition::TopRight => egui::pos2(
+                video_rect.right() - INDICATOR_PADDING,
+                video_rect.top() + INDICATOR_PADDING,
             ),
-            IndicatorPosition::BottomLeft => (
-                egui::pos2(
-                    video_rect.left() + INDICATOR_PADDING,
-                    video_rect.bottom() - INDICATOR_PADDING,
-                ),
-                egui::Align2::LEFT_BOTTOM,
+            IndicatorPosition::BottomLeft => egui::pos2(
+                video_rect.left() + INDICATOR_PADDING,
+                video_rect.bottom() - INDICATOR_PADDING,
             ),
-            IndicatorPosition::BottomRight => (
-                egui::pos2(
-                    video_rect.right() - INDICATOR_PADDING,
-                    video_rect.bottom() - INDICATOR_PADDING,
-                ),
-                egui::Align2::RIGHT_BOTTOM,
+            IndicatorPosition::BottomRight => egui::pos2(
+                video_rect.right() - INDICATOR_PADDING,
+                video_rect.bottom() - INDICATOR_PADDING,
             ),
         };
 
@@ -163,7 +151,7 @@ impl Indicator {
                     .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
                         ui.style_mut().interaction.selectable_labels = false;
-                        ui.with_layout(egui::Layout::left_to_right(align.y()), |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "FPS: {}",
@@ -173,6 +161,7 @@ impl Indicator {
                                 .size(14.0),
                             );
 
+                            // Draw Latency info (disabled for now)
                             // ui.add_space(INDICATOR_SPACING);
                             // ui.label(
                             //     egui::RichText::new(format!(
@@ -212,17 +201,20 @@ impl Indicator {
         let panel_id = ui.id().with("stats_floating_panel");
 
         // Position panel below or above indicator based on corner position
-        let panel_pos = match self.position {
-            IndicatorPosition::TopLeft | IndicatorPosition::TopRight => {
-                egui::pos2(indicator_rect.left(), indicator_rect.bottom() + 4.0)
-            }
-            IndicatorPosition::BottomLeft | IndicatorPosition::BottomRight => {
-                egui::pos2(indicator_rect.left(), indicator_rect.top() - 4.0)
-            }
+        let (panel_pos, anchor) = match self.position {
+            IndicatorPosition::TopLeft | IndicatorPosition::TopRight => (
+                egui::pos2(indicator_rect.left(), indicator_rect.bottom() + 4.0),
+                egui::Align2::LEFT_TOP,
+            ),
+            IndicatorPosition::BottomLeft | IndicatorPosition::BottomRight => (
+                egui::pos2(indicator_rect.left(), indicator_rect.top() - 4.0),
+                egui::Align2::LEFT_BOTTOM,
+            ),
         };
 
         egui::Area::new(panel_id)
             .fixed_pos(panel_pos)
+            .anchor(anchor, egui::Vec2::ZERO)
             .constrain(true)
             .order(egui::Order::Tooltip)
             .show(ui.ctx(), |ui| {
