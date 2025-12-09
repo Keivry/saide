@@ -1,13 +1,14 @@
 use {
     crate::{
-        config::mapping::{AdbAction, Key, Mappings, Modifiers, Profile},
+        config::mapping::{AdbAction, Mappings, Modifiers, Profile},
         controller::adb::AdbShell,
     },
     anyhow::{Result, anyhow},
     arc_swap::ArcSwap,
+    egui::Key,
     parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc},
-    tracing::{error, info},
+    tracing::{debug, error, info},
 };
 
 lazy_static::lazy_static! {
@@ -34,11 +35,6 @@ lazy_static::lazy_static! {
         m.insert(Key::PageUp,       92);   // KEYCODE_PAGE_UP
         m.insert(Key::PageDown,     93);   // KEYCODE_PAGE_DOWN
 
-        // ────── 编辑命令（Copy/Cut/Paste 在 Android 没有单键，用组合键处理，这里留空或映射常用快捷键） ──────
-        // m.insert(Key::Copy,      ???);   // 无单键
-        // m.insert(Key::Cut,       ???);
-        // m.insert(Key::Paste,     ???);
-
         // ────── 字母 A-Z ──────
         m.insert(Key::A, 29); m.insert(Key::B, 30); m.insert(Key::C, 31);
         m.insert(Key::D, 32); m.insert(Key::E, 33); m.insert(Key::F, 34);
@@ -56,15 +52,7 @@ lazy_static::lazy_static! {
         m.insert(Key::Num6,13);  m.insert(Key::Num7,14);  m.insert(Key::Num8,15);
         m.insert(Key::Num9,16);
 
-        // ────── 功能键 F1~F35（Android 官方支持到 F12，后面是扩展键码） ──────
-        for i in 1..=35 {
-            if let Some(key) = Key::from_name(&format!("F{i}")) {
-                m.insert(key, 130 + i); // F1=131, F2=132, ..., F35=165
-            }
-        }
-
         // ────── 标点符号（完整覆盖 egui 新增键） ──────
-        m.insert(Key::Colon,           243);  // KEYCODE_COLON (Android 8.0+)
         m.insert(Key::Comma,            55);  // KEYCODE_COMMA
         m.insert(Key::Period,           56);  // KEYCODE_PERIOD
         m.insert(Key::Slash,            76);  // KEYCODE_SLASH
@@ -75,17 +63,38 @@ lazy_static::lazy_static! {
         m.insert(Key::CloseBracket,     72);  // KEYCODE_RIGHT_BRACKET ]
         m.insert(Key::Minus,            69);  // KEYCODE_MINUS
         m.insert(Key::Equals,           70);  // KEYCODE_EQUALS
-        m.insert(Key::Plus,             81);  // KEYCODE_PLUS
-        m.insert(Key::Backtick,         68);  // KEYCODE_GRAVE ( ` )
-        m.insert(Key::Pipe,            228);  // KEYCODE_PIPE (Android 11+)
-        m.insert(Key::Questionmark,    232);  // KEYCODE_QUESTION (Android 11+)
-        m.insert(Key::Exclamationmark, 231);  // KEYCODE_EXPLAMATION (Android 11+)
-        m.insert(Key::OpenCurlyBracket,  71); // 没有专用键码，通常用 Shift + [
-        m.insert(Key::CloseCurlyBracket, 72); // 没有专用键码，通常用 Shift + ]
 
-        // ────── 特殊键 ──────
-        m.insert(Key::BrowserBack,       4);   // 官方说明就是 Back 键
+        // ────── 功能键 F1~F12 ──────
+        for i in 1..=12 {
+            if let Some(key) = Key::from_name(&format!("F{i}")) {
+                m.insert(key, 130 + i);
+            }
+        }
 
+        m
+    };
+
+    /// Mapping from egui Key to Android shifted keycode
+    pub static ref EGUI_TO_ANDROID_SHIFT_KEY: HashMap<Key, u8> = {
+        let mut m = HashMap::new();
+        m.insert(Key::Exclamationmark,   8);        // KEYCODE_1
+        m.insert(Key::Pipe,              73);       // KEYCODE_BACKSLASH
+        m.insert(Key::OpenCurlyBracket,  71);       // KEYCODE_LEFT_BRACKET
+        m.insert(Key::CloseCurlyBracket, 72);       // KEYCODE_RIGHT_BRACKET
+        m.insert(Key::Colon,             74);       // KEYCODE_SEMICOLON
+        m.insert(Key::Questionmark,      76);       // KEYCODE_SLASH
+        m
+    };
+
+    /// Keys that should not be handled, handled via text input instead
+    pub static ref SHOULD_NOT_HANDLED_KEYS: Vec<Key> = vec![
+        Key::Backtick
+    ];
+
+    // Text input special character mappings before sending to adb shell
+    pub static ref TEXT_MAPPINGS: HashMap<String, String > = {
+        let mut m = HashMap::new();
+        m.insert("`".to_owned(), "\\`".to_owned());
         m
     };
 }
@@ -181,40 +190,75 @@ impl KeyboardMapper {
     }
 
     /// Handle keyboard event
-    pub fn handle_standard_key_event(&self, key: &Key) -> Result<()> {
+    pub fn handle_standard_key_event(&self, key: &Key) -> Result<bool> {
+        if SHOULD_NOT_HANDLED_KEYS.contains(key) {
+            return Ok(false);
+        }
+
         if let Some(keycode) = EGUI_TO_ANDROID_KEY.get(key) {
+            debug!("Handling standard key event: {:?}", key);
             self.adb_shell
                 .send_input(&AdbAction::Key { keycode: *keycode })?;
+            return Ok(true);
         }
-        Ok(())
+
+        Ok(false)
     }
 
-    pub fn handle_keycombo_event(&self, modifiers: Modifiers, key: &Key) -> Result<()> {
+    /// Handle shifted key event, returns true if handled
+    pub fn handle_shifted_key_event(&self, key: &Key) -> Result<bool> {
+        if let Some(keycode) = EGUI_TO_ANDROID_SHIFT_KEY.get(key) {
+            debug!("Handling shifted key event: {:?}", key);
+            self.adb_shell.send_input(&AdbAction::KeyCombo {
+                modifiers: Modifiers::SHIFT,
+                keycode: *keycode,
+            })?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Handle text input event
+    pub fn handle_text_input_event(&self, text: &str) -> Result<bool> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(false);
+        }
+
+        let text = TEXT_MAPPINGS
+            .iter()
+            .fold(text.to_owned(), |acc, (k, v)| acc.replace(k, v));
+
+        debug!("Handling text input event: {}", text);
+        self.adb_shell.send_input(&AdbAction::Text {
+            text: text.to_owned(),
+        })?;
+        Ok(true)
+    }
+
+    /// Handle key combo event, returns true if handled
+    pub fn handle_keycombo_event(&self, modifiers: Modifiers, key: &Key) -> Result<bool> {
         if let Some(keycode) = EGUI_TO_ANDROID_KEY.get(key) {
+            debug!("Handling key combo event: {:?} + {:?}", modifiers, key);
             self.adb_shell.send_input(&AdbAction::KeyCombo {
                 modifiers,
                 keycode: *keycode,
             })?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
-    /// Handle custom keyboard event
-    pub fn handle_custom_keymapping_event(&self, key: &Key, pressed: bool) -> Result<()> {
-        // TODO: handle key hold actions
-        if !pressed {
-            return Ok(());
-        }
-
+    /// Handle custom keyboard event, returns true if handled
+    pub fn handle_custom_keymapping_event(&self, key: &Key) -> Result<bool> {
         if let Some(profile) = self.active_profile.load().as_ref()
             && let Some(action) = profile.get_mapping(key)
         {
+            debug!("Handling custom key mapping event: {:?}", key);
             self.adb_shell.send_input(&action)?;
-        } else {
-            self.handle_standard_key_event(key)?;
+            return Ok(true);
         }
-
-        Ok(())
+        Ok(false)
     }
 
     /// Get list of available profiles

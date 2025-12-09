@@ -474,9 +474,9 @@ impl SAideApp {
         key: &egui::Key,
         pressed: bool,
         modifiers: egui::Modifiers,
-    ) {
+    ) -> anyhow::Result<bool> {
         if !pressed {
-            return;
+            return Ok(false);
         }
 
         debug!(
@@ -484,17 +484,26 @@ impl SAideApp {
             key, modifiers
         );
 
-        let result = if self.keyboard_custom_mapping_enabled && !self.device_ime_state {
-            keyboard_mapper.handle_custom_keymapping_event(key, pressed)
-        } else if modifiers.any() {
-            keyboard_mapper.handle_keycombo_event(modifiers, key)
-        } else {
-            keyboard_mapper.handle_standard_key_event(key)
-        };
-
-        if let Err(e) = result {
-            error!("Failed to handle keyboard event: {}", e);
+        // Handle custom keymapping first, if enabled and IME is off
+        if self.keyboard_custom_mapping_enabled
+            && !self.device_ime_state
+            && keyboard_mapper.handle_custom_keymapping_event(key)?
+        {
+            return Ok(true);
         }
+
+        // Handle shift-only key event
+        if modifiers.shift_only() && keyboard_mapper.handle_shifted_key_event(key)? {
+            return Ok(true);
+        }
+
+        // Handle other key combo events
+        if modifiers.any() && keyboard_mapper.handle_keycombo_event(modifiers, key)? {
+            return Ok(true);
+        }
+
+        // Handle standard key event
+        keyboard_mapper.handle_standard_key_event(key)
     }
 
     /// Process mouse button event
@@ -631,18 +640,43 @@ impl SAideApp {
         }
 
         ctx.input(|input| {
+            // Flag to ignore text events if egui::Event::Key was processed
+            let mut ignore_text_events = false;
+
             for event in &input.events {
                 // Process keyboard events
-                if let egui::Event::Key {
-                    key,
-                    pressed,
-                    modifiers,
-                    ..
-                } = event
-                    && self.keyboard_enabled
+                if self.keyboard_enabled
                     && let Some(ref keyboard_mapper) = self.keyboard_mapper
                 {
-                    self.process_keyboard_event(keyboard_mapper, key, *pressed, *modifiers);
+                    if let egui::Event::Key {
+                        key,
+                        pressed,
+                        modifiers,
+                        ..
+                    } = event
+                    {
+                        match self.process_keyboard_event(
+                            keyboard_mapper,
+                            key,
+                            *pressed,
+                            *modifiers,
+                        ) {
+                            Ok(handled) => {
+                                if handled {
+                                    ignore_text_events = true;
+                                }
+                            }
+                            Err(e) => {
+                                info!("Failed to handle keyboard event: {}", e);
+                            }
+                        }
+                    } else if !ignore_text_events
+                        && let egui::Event::Text(text) = event
+                        && !text.is_empty()
+                        && let Err(e) = keyboard_mapper.handle_text_input_event(text)
+                    {
+                        info!("Failed to handle text input event: {}", e);
+                    };
                 }
 
                 // Process mouse events

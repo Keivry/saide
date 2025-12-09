@@ -219,8 +219,7 @@ impl AdbShell {
                 cmd
             }
             AdbAction::Text { text } => {
-                let escaped = text.replace(' ', "%s");
-                format!("input text {}\n", escaped)
+                format!("input text {}\n", text)
             }
             AdbAction::Back => "input keyevent BACK\n".to_string(),
             AdbAction::Home => "input keyevent HOME\n".to_string(),
