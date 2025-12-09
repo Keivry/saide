@@ -1,22 +1,20 @@
 use {
     super::VideoStats,
+    crate::config::IndicatorPosition,
     std::time::{Duration, Instant},
 };
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IndicatorPosition {
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight,
-}
 
 const INDICATOR_REFRESH_FPS: u64 = 5;
 const INDICATOR_REFRESH_INTERVAL_MS: Duration = Duration::from_millis(1000 / INDICATOR_REFRESH_FPS);
 
-/// Minimal indicator size
 const INDICATOR_PADDING: f32 = 8.0;
-const INDICATOR_SPACING: f32 = 4.0;
+const PANEL_SPACING: f32 = 4.0;
+
+const INDICATOR_COLOR_FROM_LATENCY: [(f32, (u8, u8, u8, u8)); 3] = [
+    (0.0, (100, 255, 100, 200)),  // Green for latency 0-19ms
+    (20.0, (255, 255, 100, 200)), // Yellow for latency 20-49
+    (50.0, (255, 100, 100, 200)), // Red for latency 50ms+
+];
 
 /// Floating panel trigger key
 const TRIGGER_MODIFIER: egui::Modifiers = egui::Modifiers::CTRL;
@@ -53,7 +51,7 @@ pub struct Indicator {
 }
 
 impl Indicator {
-    pub fn new(max_fps: f32) -> Self {
+    pub fn new(position: IndicatorPosition, max_fps: f32) -> Self {
         Self {
             active_profile_name: None,
             device_orientation: 0,
@@ -67,12 +65,10 @@ impl Indicator {
 
             last_update: Instant::now(),
 
-            position: IndicatorPosition::BottomLeft,
+            position,
             floating_panel_visible: false,
         }
     }
-
-    pub fn fps(&self) -> f32 { self.video_stats.fps }
 
     pub fn reset_profiles(&mut self) -> &mut Self {
         self.active_profile_name = None;
@@ -116,31 +112,50 @@ impl Indicator {
         self
     }
 
+    /// Get color based on latency value
+    fn get_color_from_latency(&self) -> egui::Color32 {
+        let color = INDICATOR_COLOR_FROM_LATENCY
+            .iter()
+            .rev()
+            .find(|(threshold, _)| self.video_stats.latency_ms >= *threshold)
+            .map(|(_, color)| *color)
+            .unwrap_or(INDICATOR_COLOR_FROM_LATENCY[0].1);
+
+        egui::Color32::from_rgba_unmultiplied(color.0, color.1, color.2, color.3)
+    }
+
+    /// Get pivot point for indicator area based on position
+    fn get_pivot(&self) -> egui::Align2 {
+        match self.position {
+            IndicatorPosition::TopLeft => egui::Align2::LEFT_TOP,
+            IndicatorPosition::TopRight => egui::Align2::RIGHT_TOP,
+            IndicatorPosition::BottomLeft => egui::Align2::LEFT_BOTTOM,
+            IndicatorPosition::BottomRight => egui::Align2::RIGHT_BOTTOM,
+        }
+    }
+
     /// Draw indicator in video corner, returns the rectangle of the drawn indicator
     pub fn draw_indicator(&mut self, ui: &mut egui::Ui, video_rect: egui::Rect) -> egui::Rect {
-        // Calculate indicator position based on corner_position
+        // Calculate indicator top-left position based on corner_position
         let indicator_pos = match self.position {
-            IndicatorPosition::TopLeft => egui::pos2(
-                video_rect.left() + INDICATOR_PADDING,
-                video_rect.top() + INDICATOR_PADDING,
-            ),
-            IndicatorPosition::TopRight => egui::pos2(
-                video_rect.right() - INDICATOR_PADDING,
-                video_rect.top() + INDICATOR_PADDING,
-            ),
-            IndicatorPosition::BottomLeft => egui::pos2(
-                video_rect.left() + INDICATOR_PADDING,
-                video_rect.bottom() - INDICATOR_PADDING,
-            ),
-            IndicatorPosition::BottomRight => egui::pos2(
-                video_rect.right() - INDICATOR_PADDING,
-                video_rect.bottom() - INDICATOR_PADDING,
-            ),
+            IndicatorPosition::TopLeft => {
+                video_rect.left_top() + egui::vec2(INDICATOR_PADDING, INDICATOR_PADDING)
+            }
+            IndicatorPosition::TopRight => {
+                video_rect.right_top() + egui::vec2(-INDICATOR_PADDING, INDICATOR_PADDING)
+            }
+            IndicatorPosition::BottomLeft => {
+                video_rect.left_bottom() + egui::vec2(INDICATOR_PADDING, -INDICATOR_PADDING)
+            }
+            IndicatorPosition::BottomRight => {
+                video_rect.right_bottom() + egui::vec2(-INDICATOR_PADDING, -INDICATOR_PADDING)
+            }
         };
 
         let indicator_id = ui.id().with("indicator");
         let area_response = egui::Area::new(indicator_id)
             .fixed_pos(indicator_pos)
+            .pivot(self.get_pivot())
             .constrain(true)
             .interactable(false)
             .order(egui::Order::Foreground)
@@ -157,20 +172,9 @@ impl Indicator {
                                     "FPS: {}",
                                     self.video_stats.fps.min(self.max_fps) as u32
                                 ))
-                                .color(egui::Color32::from_rgb(100, 255, 100))
+                                .color(self.get_color_from_latency())
                                 .size(14.0),
                             );
-
-                            // Draw Latency info (disabled for now)
-                            // ui.add_space(INDICATOR_SPACING);
-                            // ui.label(
-                            //     egui::RichText::new(format!(
-                            //         "Latency: {}ms",
-                            //         self.video_stats.latency_ms
-                            //     ))
-                            //     .color(egui::Color32::from_rgb(255, 200, 100))
-                            //     .size(14.0),
-                            // );
                         });
                     })
                     .response
@@ -200,21 +204,35 @@ impl Indicator {
     fn draw_floating_panel(&self, ui: &mut egui::Ui, indicator_rect: egui::Rect) {
         let panel_id = ui.id().with("stats_floating_panel");
 
-        // Position panel below or above indicator based on corner position
-        let (panel_pos, anchor) = match self.position {
-            IndicatorPosition::TopLeft | IndicatorPosition::TopRight => (
-                egui::pos2(indicator_rect.left(), indicator_rect.bottom() + 4.0),
-                egui::Align2::LEFT_TOP,
-            ),
-            IndicatorPosition::BottomLeft | IndicatorPosition::BottomRight => (
-                egui::pos2(indicator_rect.left(), indicator_rect.top() - 4.0),
-                egui::Align2::LEFT_BOTTOM,
-            ),
+        // Calculate panel position to avoid overlapping indicator
+        let panel_pos = match self.position {
+            IndicatorPosition::TopLeft => {
+                // Panel below indicator, left aligned
+                egui::pos2(
+                    indicator_rect.left(),
+                    indicator_rect.bottom() + PANEL_SPACING,
+                )
+            }
+            IndicatorPosition::TopRight => {
+                // Panel below indicator, right aligned
+                egui::pos2(
+                    indicator_rect.right(),
+                    indicator_rect.bottom() + PANEL_SPACING,
+                )
+            }
+            IndicatorPosition::BottomLeft => {
+                // Panel above indicator, left aligned
+                egui::pos2(indicator_rect.left(), indicator_rect.top() - PANEL_SPACING)
+            }
+            IndicatorPosition::BottomRight => {
+                // Panel above indicator, right aligned
+                egui::pos2(indicator_rect.right(), indicator_rect.top() - PANEL_SPACING)
+            }
         };
 
         egui::Area::new(panel_id)
             .fixed_pos(panel_pos)
-            .anchor(anchor, egui::Vec2::ZERO)
+            .pivot(self.get_pivot())
             .constrain(true)
             .order(egui::Order::Tooltip)
             .show(ui.ctx(), |ui| {

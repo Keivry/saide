@@ -2,6 +2,7 @@
 keyboard_enabled = true
 mouse_enabled = true
 init_timeout = 15
+indicator_position = "bottom-left"
 
 [scrcpy.v4l2]
 device = "/dev/video0"

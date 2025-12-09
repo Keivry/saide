@@ -13,6 +13,19 @@ use {
     },
 };
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum IndicatorPosition {
+    #[default]
+    #[serde(rename = "top-left")]
+    TopLeft,
+    #[serde(rename = "top-right")]
+    TopRight,
+    #[serde(rename = "bottom-left")]
+    BottomLeft,
+    #[serde(rename = "bottom-right")]
+    BottomRight,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum GpuBackend {
@@ -60,6 +73,11 @@ pub struct GeneralConfig {
     pub mouse_enabled: bool,
     #[serde(default = "default_init_timeout")]
     pub init_timeout: u32,
+
+    #[serde(default = "default_true")]
+    pub indicator: bool,
+    #[serde(default)]
+    pub indicator_position: IndicatorPosition,
 }
 
 fn default_true() -> bool { true }

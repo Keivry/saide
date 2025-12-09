@@ -131,6 +131,7 @@ impl SAideApp {
         let mouse_enabled = config.general.mouse_enabled;
         let keyboard_custom_mapping_enabled = config.mappings.initial_state;
 
+        let indicator_position = config.general.indicator_position;
         let max_fps = config.scrcpy.video.max_fps;
         let vsync = config.gpu.vsync;
         let capture_orientation = match config.scrcpy.v4l2.capture_orientation {
@@ -144,7 +145,7 @@ impl SAideApp {
         Self {
             toolbar: Toolbar::new(),
             indicator: {
-                let mut indicator = Indicator::new(max_fps as f32);
+                let mut indicator = Indicator::new(indicator_position, max_fps as f32);
                 indicator.update_capture_orientation(capture_orientation);
                 indicator
             },
@@ -814,20 +815,19 @@ impl eframe::App for SAideApp {
             }
         }
 
-        // Check if there is any input event, for frame rate limiting
-        let has_input = ctx.input(|i| !i.events.is_empty() || i.pointer.any_down());
-        // Flag indicating if a new video frame was received, for frame rate limiting
-        let has_new_frame = self.player.has_new_frame();
-
         // Draw video frame
         self.player.draw(ctx);
 
         // Draw indicator overlay on top of video
-        if self.init_state == InitState::Ready {
+        if self.init_state == InitState::Ready && self.config().general.indicator {
+            self.indicator.update_video_stats(self.player.video_stats());
             self.draw_indicator(ctx);
         }
 
-        self.indicator.update_video_stats(self.player.video_stats());
+        // Check if there is any input event, for frame rate limiting
+        let has_input = ctx.input(|i| !i.events.is_empty() || i.pointer.any_down());
+        // Flag indicating if a new video frame was received, for frame rate limiting
+        let has_new_frame = self.player.has_new_frame();
 
         // Frame rate limiting for non-vsync mode
         // Sleep to limit frame rate if no new frame and no input
