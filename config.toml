@@ -2,6 +2,7 @@
 keyboard_enabled = true
 mouse_enabled = true
 init_timeout = 15
+indicator = true
 indicator_position = "bottom-left"
 
 [scrcpy.v4l2]
@@ -35,34 +36,28 @@ device_id = "10AF971ZLN004SU"
 rotation = 1
 
 [[mappings.profiles.mappings]]
-key = "T"
+key = "S"
 action = "Tap"
-x = 2274
-y = 74
+x = 2597
+y = 824
 
 [[mappings.profiles.mappings]]
-key = "Num3"
+key = "W"
 action = "Tap"
-x = 2563
-y = 456
+x = 2185
+y = 31
 
 [[mappings.profiles.mappings]]
-key = "F1"
+key = "Backtick"
 action = "Tap"
-x = 830
-y = 80
+x = 177
+y = 82
 
 [[mappings.profiles.mappings]]
-key = "Num5"
+key = "Num6"
 action = "Tap"
-x = 2245
-y = 459
-
-[[mappings.profiles.mappings]]
-key = "G"
-action = "Tap"
-x = 2232
-y = 880
+x = 2400
+y = 452
 
 [[mappings.profiles.mappings]]
 key = "Z"
@@ -71,10 +66,28 @@ x = 2482
 y = 376
 
 [[mappings.profiles.mappings]]
-key = "X"
+key = "G"
 action = "Tap"
-x = 708
-y = 1066
+x = 2232
+y = 880
+
+[[mappings.profiles.mappings]]
+key = "V"
+action = "Tap"
+x = 2485
+y = 527
+
+[[mappings.profiles.mappings]]
+key = "F1"
+action = "Tap"
+x = 830
+y = 80
+
+[[mappings.profiles.mappings]]
+key = "Num3"
+action = "Tap"
+x = 2563
+y = 456
 
 [[mappings.profiles.mappings]]
 key = "Q"
@@ -89,10 +102,10 @@ x = 2105
 y = 1066
 
 [[mappings.profiles.mappings]]
-key = "V"
+key = "Num5"
 action = "Tap"
-x = 2485
-y = 527
+x = 2245
+y = 459
 
 [[mappings.profiles.mappings]]
 key = "B"
@@ -107,16 +120,10 @@ x = 2596
 y = 1155
 
 [[mappings.profiles.mappings]]
-key = "Tab"
+key = "T"
 action = "Tap"
-x = 346
-y = 81
-
-[[mappings.profiles.mappings]]
-key = "Backslash"
-action = "Tap"
-x = 164
-y = 78
+x = 2274
+y = 74
 
 [[mappings.profiles.mappings]]
 key = "F2"
@@ -131,10 +138,10 @@ x = 172
 y = 836
 
 [[mappings.profiles.mappings]]
-key = "Num6"
+key = "Tab"
 action = "Tap"
-x = 2400
-y = 452
+x = 336
+y = 135
 
 [[mappings.profiles.mappings]]
 key = "D"
@@ -149,16 +156,10 @@ x = 2395
 y = 619
 
 [[mappings.profiles.mappings]]
-key = "W"
+key = "X"
 action = "Tap"
-x = 2185
-y = 31
-
-[[mappings.profiles.mappings]]
-key = "S"
-action = "Tap"
-x = 2597
-y = 824
+x = 708
+y = 1066
 
 [logging]
 level = "info"
