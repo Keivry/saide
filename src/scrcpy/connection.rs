@@ -203,6 +203,16 @@ impl ScrcpyConnection {
         }
     }
 
+    /// Read and parse a video packet
+    pub fn read_video_packet(&mut self) -> Result<super::protocol::VideoPacket> {
+        use super::protocol::video::VideoPacket;
+        VideoPacket::read_from(
+            self.video_stream
+                .as_mut()
+                .context("Video stream not available")?,
+        )
+    }
+
     /// Gracefully shutdown connection
     pub fn shutdown(&mut self) -> Result<()> {
         debug!("Shutting down connection");

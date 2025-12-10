@@ -1,96 +1,192 @@
 //! H.264 video decoder using FFmpeg
-//!
-//! Note: This is a simplified implementation that decodes packets directly.
-//! For production use, should handle codec parameters from stream.
 
-use super::{DecodedFrame, VideoDecoder};
-use anyhow::{Context, Result};
-use ffmpeg_next as ffmpeg;
-use tracing::info;
+use {
+    super::{DecodedFrame, VideoDecoder},
+    anyhow::{Context as AnyhowContext, Result, bail},
+    ffmpeg::{
+        codec,
+        format::Pixel,
+        software::scaling::{context::Context as ScalerContext, flag::Flags},
+        util::frame::video::Video as VideoFrame,
+    },
+    ffmpeg_next as ffmpeg,
+    tracing::{debug, info, trace, warn},
+};
 
 pub struct H264Decoder {
-    // We'll store decoder creation parameters and create it lazily on first packet
-    initialized: bool,
-    decoder: Option<ffmpeg::decoder::Video>,
+    decoder: ffmpeg::decoder::Video,
+    scaler: Option<ScalerContext>,
+    width: u32,
+    height: u32,
+    output_format: Pixel,
 }
 
 impl H264Decoder {
-    /// Create a new H.264 decoder
-    pub fn new(_width: u32, _height: u32) -> Result<Self> {
+    pub fn new(width: u32, height: u32) -> Result<Self> {
+        // Initialize FFmpeg (idempotent)
         ffmpeg::init().context("Failed to initialize FFmpeg")?;
-        
-        info!("H.264 decoder created (will initialize on first packet)");
+
+        // Find H.264 decoder
+        let codec = ffmpeg::decoder::find(codec::Id::H264).context("H.264 decoder not found")?;
+
+        info!("Found H.264 decoder: {}", codec.name());
+
+        // Create decoder context
+        let mut context = codec::context::Context::new_with_codec(codec);
+
+        // Set dimensions
+        unsafe {
+            (*context.as_mut_ptr()).width = width as i32;
+            (*context.as_mut_ptr()).height = height as i32;
+            (*context.as_mut_ptr()).pix_fmt = ffmpeg::format::Pixel::YUV420P.into();
+        }
+
+        // Open decoder
+        let decoder = context
+            .decoder()
+            .video()
+            .context("Failed to open H.264 decoder")?;
+
+        debug!("H.264 decoder initialized: {}x{}", width, height);
 
         Ok(Self {
-            initialized: false,
-            decoder: None,
+            decoder,
+            scaler: None,
+            width,
+            height,
+            output_format: Pixel::RGBA,
         })
     }
 
-    /// Initialize decoder from first packet
-    fn ensure_decoder(&mut self) -> Result<&mut ffmpeg::decoder::Video> {
-        if !self.initialized {
-            // Create a minimal decoder context
-            let decoder = ffmpeg::decoder::find(ffmpeg::codec::Id::H264)
-                .context("H.264 decoder not found")?
-                .video()
-                .context("Failed to create video decoder")?;
-
-            info!("H.264 decoder initialized");
-            self.decoder = Some(decoder);
-            self.initialized = true;
+    /// Initialize scaler when we know the actual input format
+    fn ensure_scaler(&mut self) -> Result<()> {
+        if self.scaler.is_some() {
+            return Ok(());
         }
 
-        Ok(self.decoder.as_mut().unwrap())
+        let input_format = self.decoder.format();
+        let input_width = self.decoder.width();
+        let input_height = self.decoder.height();
+
+        debug!(
+            "Initializing scaler: {}x{} {:?} -> {}x{} {:?}",
+            input_width, input_height, input_format, self.width, self.height, self.output_format
+        );
+
+        let scaler = ScalerContext::get(
+            input_format,
+            input_width,
+            input_height,
+            self.output_format,
+            self.width,
+            self.height,
+            Flags::BILINEAR,
+        )
+        .context("Failed to create scaler")?;
+
+        self.scaler = Some(scaler);
+        Ok(())
+    }
+
+    /// Send packet to decoder
+    fn send_packet(&mut self, data: &[u8], pts: i64) -> Result<()> {
+        let mut packet = ffmpeg::Packet::new(data.len());
+        packet.data_mut().unwrap().copy_from_slice(data);
+        packet.set_pts(Some(pts));
+        packet.set_dts(Some(pts));
+
+        self.decoder
+            .send_packet(&packet)
+            .context("Failed to send packet to decoder")?;
+
+        Ok(())
+    }
+
+    /// Receive decoded frames
+    fn receive_frames(&mut self) -> Result<Vec<DecodedFrame>> {
+        let mut frames = Vec::new();
+
+        loop {
+            let mut decoded = VideoFrame::empty();
+            match self.decoder.receive_frame(&mut decoded) {
+                Ok(_) => {
+                    trace!(
+                        "Decoded frame: {}x{} {:?} PTS={:?}",
+                        decoded.width(),
+                        decoded.height(),
+                        decoded.format(),
+                        decoded.timestamp()
+                    );
+
+                    // Ensure scaler is initialized
+                    self.ensure_scaler()?;
+
+                    // Convert to RGBA
+                    let mut rgb_frame = VideoFrame::empty();
+                    if let Some(scaler) = &mut self.scaler {
+                        scaler
+                            .run(&decoded, &mut rgb_frame)
+                            .context("Failed to scale frame")?;
+
+                        // Extract frame data
+                        let data = rgb_frame.data(0).to_vec();
+                        let pts = decoded.timestamp().unwrap_or(0);
+
+                        frames.push(DecodedFrame {
+                            width: self.width,
+                            height: self.height,
+                            data,
+                            pts,
+                            format: self.output_format,
+                        });
+                    }
+                }
+                Err(ffmpeg::Error::Other { errno: 11 }) => {
+                    // EAGAIN - need more data
+                    break;
+                }
+                Err(ffmpeg::Error::Eof) => {
+                    debug!("Decoder EOF");
+                    break;
+                }
+                Err(e) => {
+                    bail!("Decoder error: {}", e);
+                }
+            }
+        }
+
+        Ok(frames)
     }
 }
 
 impl VideoDecoder for H264Decoder {
     fn decode(&mut self, packet_data: &[u8], pts: i64) -> Result<Option<DecodedFrame>> {
-        let decoder = self.ensure_decoder()?;
-
-        // Create packet
-        let mut packet = ffmpeg::packet::Packet::copy(packet_data);
-        packet.set_pts(Some(pts));
-
-        // Send packet to decoder
-        decoder
-            .send_packet(&packet)
-            .context("Failed to send packet to decoder")?;
-
-        // Try to receive a frame
-        let mut decoded = ffmpeg::util::frame::Video::empty();
-        match decoder.receive_frame(&mut decoded) {
-            Ok(()) => {
-                let width = decoded.width();
-                let height = decoded.height();
-
-                // Copy Y plane (grayscale for now)
-                let y_plane = decoded.data(0);
-                let y_stride = decoded.stride(0);
-
-                let mut data = Vec::new();
-                for row in 0..height as usize {
-                    let start = row * y_stride;
-                    data.extend_from_slice(&y_plane[start..start + width as usize]);
-                }
-
-                Ok(Some(DecodedFrame {
-                    data,
-                    width,
-                    height,
-                    pts,
-                }))
-            }
-            Err(ffmpeg::Error::Other { errno: -11 }) => Ok(None), // EAGAIN
-            Err(e) => Err(e).context("Failed to receive frame"),
+        if packet_data.is_empty() {
+            warn!("Empty packet received");
+            return Ok(None);
         }
+
+        trace!("Decoding packet: {} bytes, PTS={}", packet_data.len(), pts);
+
+        // Send packet
+        self.send_packet(packet_data, pts)?;
+
+        // Try to receive frames
+        let frames = self.receive_frames()?;
+
+        // Return first frame if available
+        Ok(frames.into_iter().next())
     }
 
     fn flush(&mut self) -> Result<Vec<DecodedFrame>> {
-        if let Some(decoder) = &mut self.decoder {
-            decoder.send_eof().context("Failed to send EOF")?;
-        }
-        Ok(Vec::new())
+        debug!("Flushing decoder");
+
+        // Send EOF
+        self.decoder
+            .send_eof()
+            .context("Failed to send EOF to decoder")?;
+
+        // Receive all remaining frames
+        self.receive_frames()
     }
 }

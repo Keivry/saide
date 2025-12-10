@@ -3,7 +3,11 @@
 ## 进行中
 
 - [ ] **阶段 2**: 视频解码与渲染
-  - [ ] 2.1 FFmpeg 解码器集成
+  - [ ] 2.1 FFmpeg 解码器集成 (部分完成)
+    - [x] 添加 ffmpeg-next 依赖
+    - [x] 创建解码器模块框架
+    - [ ] 解决 ffmpeg-next 类型系统问题 (codec::Video vs decoder::Video)
+    - [ ] 完成 H.264 解码实现
   - [ ] 2.2 帧缓冲管理  
   - [ ] 2.3 渲染集成
   - [ ] 2.4 性能优化
@@ -16,10 +20,14 @@
 
 ## 已完成
 
-- [x] **阶段 1**: Scrcpy 协议实现 (commit: a7816f6)
+- [x] **阶段 1**: Scrcpy 协议实现 (commit: a7816f6, 78c8863)
   - [x] 协议解析（控制 + 视频）
   - [x] Server 连接管理
   - [x] 元数据处理（device + codec）
   - [x] 真实设备测试验证（10/10 包成功）
   - [x] 深入分析 send_codec_meta 行为
+
+## 技术债务
+
+- FFmpeg 解码器集成：需要研究 ffmpeg-next 正确用法或考虑直接使用 ffmpeg-sys
 

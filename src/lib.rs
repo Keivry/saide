@@ -1,6 +1,8 @@
-pub mod scrcpy;
 pub mod decoder;
+pub mod scrcpy;
 
 // Re-export commonly used types
-pub use scrcpy::protocol::{ControlMessage, VideoPacket};
-pub use decoder::{DecodedFrame, VideoDecoder, H264Decoder};
+pub use {
+    decoder::{DecodedFrame, H264Decoder, VideoDecoder},
+    scrcpy::protocol::{ControlMessage, VideoPacket},
+};
