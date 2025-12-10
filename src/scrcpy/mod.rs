@@ -1,3 +1,9 @@
+pub mod connection;
 pub mod protocol;
+pub mod server;
 
-pub use protocol::{control::ControlMessage, video::VideoPacket};
+pub use {
+    connection::ScrcpyConnection,
+    protocol::{control::ControlMessage, video::VideoPacket},
+    server::ServerParams,
+};
