@@ -20,6 +20,10 @@ path = "examples/test_connection.rs"
 name = "test_protocol"
 path = "examples/test_protocol.rs"
 
+[[example]]
+name = "test_decoder"
+path = "examples/test_decoder.rs"
+
 
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }
@@ -54,6 +58,9 @@ lazy_static = "1.5.0"
 parking_lot = "0.12.5"
 sysinfo = "0.37.2"
 arc-swap = "1.7.1"
+
+# Video decoding (FFmpeg)
+ffmpeg-next = "7.1"
 
 [profile.dev]
 opt-level = 0
