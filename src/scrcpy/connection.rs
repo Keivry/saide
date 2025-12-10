@@ -11,7 +11,7 @@ use {
         net::{TcpListener, TcpStream},
         process::Child,
     },
-    tracing::{debug, info, warn},
+    tracing::{debug, info},
 };
 
 /// Default port range for ADB reverse/forward
@@ -21,6 +21,9 @@ const DEFAULT_PORT_RANGE: (u16, u16) = (27183, 27199);
 pub struct ScrcpyConnection {
     /// Session ID
     pub scid: u32,
+
+    /// Device name (from device meta)
+    pub device_name: Option<String>,
 
     /// Video stream socket
     pub video_stream: Option<TcpStream>,
@@ -63,17 +66,11 @@ impl ScrcpyConnection {
         // Step 1: Push server
         push_server(serial, server_jar_path).context("Failed to push server to device")?;
 
-        // Step 2: Find available local port
+        // Step 2: Find available local port and start listening FIRST
+        // (as per scrcpy: client must listen before server starts)
         let local_port = find_available_port(DEFAULT_PORT_RANGE.0, DEFAULT_PORT_RANGE.1)
             .context("No available port in range")?;
 
-        debug!("Using local port: {}", local_port);
-
-        // Step 3: Setup ADB reverse tunnel
-        setup_reverse_tunnel(serial, &socket_name, local_port)
-            .context("Failed to setup reverse tunnel")?;
-
-        // Step 4: Start listening on local port
         let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))
             .context("Failed to bind to local port")?;
         listener
@@ -82,12 +79,18 @@ impl ScrcpyConnection {
 
         debug!("Listening on 127.0.0.1:{}", local_port);
 
-        // Step 5: Start server process
+        // Step 3: Setup ADB reverse tunnel (after listener is ready)
+        setup_reverse_tunnel(serial, &socket_name, local_port)
+            .context("Failed to setup reverse tunnel")?;
+
+        // Step 4: Start server process (it will connect to our listener via tunnel)
         let server_process =
             start_server(serial, &params).context("Failed to start server process")?;
 
-        // Step 6: Accept connections in order: Video, Audio (optional), Control
-        let video_stream = if params.video {
+        debug!("Server started, waiting for connections...");
+
+        // Step 5: Accept connections in order: Video, Audio (optional), Control
+        let mut video_stream = if params.video {
             Some(
                 accept_connection(&listener, "video")
                     .context("Failed to accept video connection")?,
@@ -116,8 +119,39 @@ impl ScrcpyConnection {
 
         info!("All sockets connected successfully");
 
+        // Step 6: Read device metadata from video stream (if enabled)
+        let device_name = if params.send_device_meta && video_stream.is_some() {
+            match super::server::read_device_meta(video_stream.as_mut().unwrap()) {
+                Ok(name) => {
+                    debug!("Device name: {}", name);
+                    Some(name)
+                }
+                Err(e) => {
+                    debug!("Failed to read device metadata: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Step 7: Read codec metadata from video stream (if enabled)
+        // Codec meta: 4 bytes codec_id + 4 bytes width + 4 bytes height
+        if params.send_codec_meta && video_stream.is_some() {
+            let mut codec_meta = [0u8; 12];
+            if let Err(e) = video_stream.as_mut().unwrap().read_exact(&mut codec_meta) {
+                debug!("Failed to read codec metadata: {}", e);
+            } else {
+                let codec_id = u32::from_be_bytes(codec_meta[0..4].try_into().unwrap());
+                let width = u32::from_be_bytes(codec_meta[4..8].try_into().unwrap());
+                let height = u32::from_be_bytes(codec_meta[8..12].try_into().unwrap());
+                debug!("Codec meta: id=0x{:08x}, {}x{}", codec_id, width, height);
+            }
+        }
+
         Ok(Self {
             scid,
+            device_name,
             video_stream,
             audio_stream,
             control_stream,
@@ -149,6 +183,17 @@ impl ScrcpyConnection {
         }
     }
 
+    /// Read exact number of bytes from video stream (blocking until complete)
+    pub fn read_video_exact(&mut self, buf: &mut [u8]) -> Result<()> {
+        if let Some(ref mut stream) = self.video_stream {
+            stream
+                .read_exact(buf)
+                .context("Failed to read exact bytes from video stream")
+        } else {
+            anyhow::bail!("Video stream not available")
+        }
+    }
+
     /// Check if server process is still running
     pub fn is_server_alive(&mut self) -> bool {
         if let Some(ref mut process) = self.server_process {
@@ -162,19 +207,26 @@ impl ScrcpyConnection {
     pub fn shutdown(&mut self) -> Result<()> {
         debug!("Shutting down connection");
 
-        // Close sockets
+        // Step 1: Remove reverse tunnel first (so server can't reconnect)
+        remove_reverse_tunnel(&self.serial, &get_socket_name(self.scid)).ok();
+
+        // Step 2: Close sockets (triggers server to exit)
         self.video_stream.take();
         self.audio_stream.take();
         self.control_stream.take();
 
-        // Kill server process
+        // Step 3: Wait for server process to exit gracefully
         if let Some(mut process) = self.server_process.take() {
-            process.kill().ok();
+            // Give server 1 second to exit gracefully
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+
+            // Force kill if still running
+            if process.try_wait().ok().flatten().is_none() {
+                debug!("Force killing server process");
+                process.kill().ok();
+            }
             process.wait().ok();
         }
-
-        // Remove reverse tunnel
-        remove_reverse_tunnel(&self.serial, &get_socket_name(self.scid)).ok();
 
         info!("Connection closed");
         Ok(())
@@ -228,7 +280,7 @@ fn setup_reverse_tunnel(serial: &str, socket_name: &str, local_port: u16) -> Res
 fn remove_reverse_tunnel(serial: &str, socket_name: &str) -> Result<()> {
     debug!("Removing reverse tunnel: {}", socket_name);
 
-    std::process::Command::new("adb")
+    let status = std::process::Command::new("adb")
         .args([
             "-s",
             serial,
@@ -236,13 +288,28 @@ fn remove_reverse_tunnel(serial: &str, socket_name: &str) -> Result<()> {
             "--remove",
             &format!("localabstract:{}", socket_name),
         ])
-        .status()
-        .ok();
+        .output(); // Use output() instead of status() to capture stderr
+
+    match status {
+        Ok(output) if output.status.success() => {
+            debug!("Reverse tunnel removed successfully");
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Ignore "not found" errors (tunnel already removed)
+            if !stderr.contains("not found") && !stderr.is_empty() {
+                debug!("Failed to remove tunnel: {}", stderr.trim());
+            }
+        }
+        Err(e) => {
+            debug!("Error removing tunnel: {}", e);
+        }
+    }
 
     Ok(())
 }
 
-/// Accept a single connection with timeout and dummy byte handling
+/// Accept a single connection with optional dummy byte handling
 fn accept_connection(listener: &TcpListener, channel: &str) -> Result<TcpStream> {
     debug!("Waiting for {} connection...", channel);
 
@@ -252,24 +319,15 @@ fn accept_connection(listener: &TcpListener, channel: &str) -> Result<TcpStream>
         .context("Failed to set blocking mode")?;
 
     // Accept connection
-    let (mut stream, addr) = listener
+    let (stream, addr) = listener
         .accept()
         .context(format!("Failed to accept {} connection", channel))?;
 
     debug!("{} connection accepted from {}", channel, addr);
 
-    // Read and verify dummy byte (should be 0x00)
-    let mut dummy = [0u8; 1];
-    stream
-        .read_exact(&mut dummy)
-        .context("Failed to read dummy byte")?;
-
-    if dummy[0] != 0 {
-        warn!(
-            "{} channel: unexpected dummy byte value: 0x{:02x}",
-            channel, dummy[0]
-        );
-    }
+    // NOTE: In adb reverse mode (default), the server does NOT send dummy byte
+    // Dummy byte is only sent in tunnel_forward mode (when server listens)
+    // The first byte is actual data, so we don't read it here
 
     debug!("{} channel ready", channel);
     Ok(stream)

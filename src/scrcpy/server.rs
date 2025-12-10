@@ -12,6 +12,8 @@ use {
 /// Server JAR file path on device
 const DEVICE_SERVER_PATH: &str = "/data/local/tmp/scrcpy-server.jar";
 
+/// Device name field length (as per DesktopConnection.java)
+
 /// Server configuration parameters
 #[derive(Debug, Clone)]
 pub struct ServerParams {
@@ -54,6 +56,9 @@ pub struct ServerParams {
     /// Send codec metadata (SPS/PPS)
     pub send_codec_meta: bool,
 
+    /// Send device metadata (device name, 64 bytes)
+    pub send_device_meta: bool,
+
     /// Log level (verbose, debug, info, warn, error)
     pub log_level: String,
 }
@@ -61,7 +66,8 @@ pub struct ServerParams {
 impl Default for ServerParams {
     fn default() -> Self {
         Self {
-            scid: rand::random(),
+            // Use only 31 bits to avoid signed int issues on Java side
+            scid: rand::random::<u32>() & 0x7FFF_FFFF,
             video: true,
             video_codec: "h264".to_string(),
             video_bit_rate: 8_000_000,
@@ -74,6 +80,7 @@ impl Default for ServerParams {
             send_dummy_byte: true,
             send_frame_meta: true,
             send_codec_meta: false,
+            send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
         }
     }
@@ -155,6 +162,12 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
     }
     if params.send_codec_meta {
         args.push("send_codec_meta=true".to_string());
+    } else {
+        args.push("send_codec_meta=false".to_string());
+    }
+    if !params.send_device_meta {
+        // send_device_meta defaults to true, only set if false
+        args.push("send_device_meta=false".to_string());
     }
 
     args
@@ -182,7 +195,25 @@ pub fn start_server(serial: &str, params: &ServerParams) -> Result<std::process:
 }
 
 /// Get socket name from scid (as per DesktopConnection.java)
-pub fn get_socket_name(scid: u32) -> String { format!("scrcpy_{:08x}", scid) }
+pub fn get_socket_name(scid: u32) -> String {
+    format!("scrcpy_{:08x}", scid)
+}
+
+/// Read device metadata from video stream
+///
+/// Server sends 64-byte device name at the beginning of video stream
+/// if send_device_meta=true (default)
+pub fn read_device_meta<R: std::io::Read>(stream: &mut R) -> Result<String> {
+    let mut buffer = [0u8; 64]; // DEVICE_NAME_FIELD_LENGTH
+    stream
+        .read_exact(&mut buffer)
+        .context("Failed to read device metadata")?;
+
+    // Find null terminator
+    let len = buffer.iter().position(|&b| b == 0).unwrap_or(64);
+
+    String::from_utf8(buffer[..len].to_vec()).context("Invalid UTF-8 in device name")
+}
 
 #[cfg(test)]
 mod tests {

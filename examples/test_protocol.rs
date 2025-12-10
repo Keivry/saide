@@ -2,8 +2,7 @@
 //!
 //! 测试控制协议和视频协议的正确性
 
-use saide::scrcpy::{ControlMessage, VideoPacket};
-use saide::scrcpy::protocol::control::AndroidKeyEventAction;
+use saide::scrcpy::{ControlMessage, VideoPacket, protocol::control::AndroidKeyEventAction};
 
 fn main() -> anyhow::Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -39,16 +38,8 @@ fn test_control_protocol() -> anyhow::Result<()> {
             ControlMessage::touch_up(200, 300, 1080, 2340),
             32,
         ),
-        (
-            "Key Down (BACK)",
-            ControlMessage::key_down(4, 0),
-            14,
-        ),
-        (
-            "Key Up (BACK)",
-            ControlMessage::key_up(4, 0),
-            14,
-        ),
+        ("Key Down (BACK)", ControlMessage::key_down(4, 0), 14),
+        ("Key Up (BACK)", ControlMessage::key_up(4, 0), 14),
         (
             "Text Injection",
             ControlMessage::InjectText {
@@ -61,11 +52,7 @@ fn test_control_protocol() -> anyhow::Result<()> {
             ControlMessage::scroll(500, 500, 1080, 2340, 0.0, 5.0),
             21,
         ),
-        (
-            "Collapse Panels",
-            ControlMessage::CollapsePanels,
-            1,
-        ),
+        ("Collapse Panels", ControlMessage::CollapsePanels, 1),
         (
             "Back or Screen On",
             ControlMessage::BackOrScreenOn {
@@ -78,12 +65,16 @@ fn test_control_protocol() -> anyhow::Result<()> {
     for (name, msg, expected_size) in &test_cases {
         let mut buf = Vec::new();
         msg.serialize(&mut buf)?;
-        
+
         if buf.len() == *expected_size {
             println!("  ✓ {}: {} 字节", name, buf.len());
         } else {
-            println!("  ✗ {}: 期望 {} 字节, 实际 {} 字节", 
-                     name, expected_size, buf.len());
+            println!(
+                "  ✗ {}: 期望 {} 字节, 实际 {} 字节",
+                name,
+                expected_size,
+                buf.len()
+            );
             anyhow::bail!("Size mismatch for {}", name);
         }
     }
@@ -115,11 +106,13 @@ fn test_video_protocol() -> anyhow::Result<()> {
     for (name, packet_bytes) in &test_cases {
         let mut cursor = std::io::Cursor::new(&packet_bytes);
         let packet = VideoPacket::read_from(&mut cursor)?;
-        
+
         println!("  ✓ {}", name);
         println!("      PTS: {}μs", packet.pts_us);
-        println!("      Config: {}, Keyframe: {}", 
-                 packet.is_config, packet.is_keyframe);
+        println!(
+            "      Config: {}, Keyframe: {}",
+            packet.is_config, packet.is_keyframe
+        );
         println!("      数据: {} 字节", packet.data.len());
     }
 
@@ -130,9 +123,9 @@ fn test_video_protocol() -> anyhow::Result<()> {
 
 fn create_video_packet(pts_us: u64, is_config: bool, is_keyframe: bool, payload: &[u8]) -> Vec<u8> {
     use byteorder::{BigEndian, WriteBytesExt};
-    
+
     let mut buf = Vec::new();
-    
+
     // pts_and_flags
     let mut pts_and_flags = pts_us;
     if is_config {
@@ -142,12 +135,12 @@ fn create_video_packet(pts_us: u64, is_config: bool, is_keyframe: bool, payload:
         pts_and_flags |= 1 << 62;
     }
     buf.write_u64::<BigEndian>(pts_and_flags).unwrap();
-    
+
     // packet_size
     buf.write_u32::<BigEndian>(payload.len() as u32).unwrap();
-    
+
     // payload
     buf.extend_from_slice(payload);
-    
+
     buf
 }

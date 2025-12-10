@@ -1,15 +1,11 @@
-//! Scrcpy 真实设备连接测试
-//!
-//! 使用方法:
-//!   cargo run --example test_connection [设备序列号]
-//!   
-//! 如果不指定序列号，将使用第一个可用设备
+//! Scrcpy 真实设备连接测试（最终版本）
 
-use anyhow::{Context, Result};
-use saide::scrcpy::{ControlMessage, ScrcpyConnection, ServerParams, VideoPacket};
+use {
+    anyhow::{Context, Result},
+    saide::scrcpy::{ScrcpyConnection, ServerParams, VideoPacket},
+};
 
 fn main() -> Result<()> {
-    // 初始化日志
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -18,18 +14,16 @@ fn main() -> Result<()> {
     println!("🧪 Scrcpy 协议实现测试");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    // 获取设备序列号
     let serial = get_device_serial()?;
     println!("📱 设备: {}", serial);
 
-    // 检查 server JAR
     let server_jar = "3rd-party/scrcpy-server-v3.3.3";
     if !std::path::Path::new(server_jar).exists() {
         anyhow::bail!("Server JAR 不存在: {}", server_jar);
     }
     println!("✓ Server JAR: {}", server_jar);
 
-    // 配置参数
+    // 使用默认配置（send_codec_meta=true, send_device_meta=true）
     let params = ServerParams {
         video: true,
         video_codec: "h264".to_string(),
@@ -44,38 +38,26 @@ fn main() -> Result<()> {
 
     println!("\n📋 配置:");
     println!("  SCID: {:08x}", params.scid);
-    println!("  视频: {} @ {}bps", params.video_codec, params.video_bit_rate);
-    println!("  分辨率: {}px, 帧率: {}fps", params.max_size, params.max_fps);
+    println!("  send_device_meta: {}", params.send_device_meta);
+    println!("  send_codec_meta: {}", params.send_codec_meta);
 
-    // 建立连接
     println!("\n🔌 建立连接中...");
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let mut conn = rt.block_on(async {
-        ScrcpyConnection::connect(&serial, server_jar, params).await
-    })?;
+    let mut conn =
+        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
 
     println!("✅ 连接成功!");
+    println!(
+        "  设备名称: {}",
+        conn.device_name.as_deref().unwrap_or("N/A")
+    );
     println!("  本地端口: {}", conn.local_port);
 
-    // 测试 1: 读取视频包
-    println!("\n📹 测试 1: 读取视频流");
+    println!("\n📹 测试: 读取 10 个视频包");
     test_video_packets(&mut conn)?;
 
-    // 测试 2: 发送控制消息
-    println!("\n🎮 测试 2: 发送控制消息");
-    test_control_messages(&mut conn)?;
-
-    // 测试 3: 进程状态
-    println!("\n⚙️  测试 3: 服务器状态");
-    if conn.is_server_alive() {
-        println!("✅ Server 进程正常运行");
-    } else {
-        println!("⚠️  Server 进程未检测到");
-    }
-
-    // 清理
     println!("\n🛑 关闭连接...");
     conn.shutdown()?;
 
@@ -97,7 +79,7 @@ fn get_device_serial() -> Result<String> {
         .context("执行 'adb devices' 失败")?;
 
     let output_str = String::from_utf8_lossy(&output.stdout);
-    
+
     for line in output_str.lines().skip(1) {
         if let Some(serial) = line.split_whitespace().next() {
             if !serial.is_empty() {
@@ -106,64 +88,62 @@ fn get_device_serial() -> Result<String> {
         }
     }
 
-    anyhow::bail!("未找到 Android 设备，请连接设备并启用 USB 调试")
+    anyhow::bail!("未找到 Android 设备")
 }
 
 fn test_video_packets(conn: &mut ScrcpyConnection) -> Result<()> {
-    let mut buf = vec![0u8; 65536];
     let mut stats = VideoStats::default();
 
-    println!("  读取 10 个视频包...");
-
     for i in 0..10 {
-        let size = conn.read_video(&mut buf)?;
-        
-        let mut cursor = std::io::Cursor::new(&buf[..size]);
+        let mut header = [0u8; 12];
+        conn.read_video_exact(&mut header)?;
+
+        let packet_size = u32::from_be_bytes(header[8..12].try_into()?) as usize;
+
+        let mut payload = vec![0u8; packet_size];
+        conn.read_video_exact(&mut payload)?;
+
+        let mut full_packet = Vec::with_capacity(12 + packet_size);
+        full_packet.extend_from_slice(&header);
+        full_packet.extend_from_slice(&payload);
+
+        let mut cursor = std::io::Cursor::new(&full_packet);
         match VideoPacket::read_from(&mut cursor) {
             Ok(packet) => {
                 stats.total += 1;
-                
                 if packet.is_config {
                     stats.config += 1;
-                    println!("  [{:2}] CONFIG    {} bytes (SPS/PPS)", i+1, packet.data.len());
+                    println!(
+                        "  [{:2}] CONFIG    {} bytes (SPS/PPS)",
+                        i + 1,
+                        packet.data.len()
+                    );
                 } else if packet.is_keyframe {
                     stats.keyframe += 1;
-                    println!("  [{:2}] KEYFRAME  {} bytes, PTS={}μs", 
-                             i+1, packet.data.len(), packet.pts_us);
+                    println!(
+                        "  [{:2}] KEYFRAME  {} bytes, PTS={}ms",
+                        i + 1,
+                        packet.data.len(),
+                        packet.pts_us / 1000
+                    );
                 } else {
                     stats.p_frame += 1;
-                    println!("  [{:2}] P-FRAME   {} bytes, PTS={}μs", 
-                             i+1, packet.data.len(), packet.pts_us);
+                    println!(
+                        "  [{:2}] P-FRAME   {} bytes, PTS={}ms",
+                        i + 1,
+                        packet.data.len(),
+                        packet.pts_us / 1000
+                    );
                 }
             }
-            Err(e) => {
-                println!("  [{:2}] ⚠️  解析失败: {}", i+1, e);
-            }
+            Err(e) => println!("  [{:2}] ⚠️  解析失败: {}", i + 1, e),
         }
     }
 
-    println!("\n  统计: 总计={}, CONFIG={}, 关键帧={}, P帧={}", 
-             stats.total, stats.config, stats.keyframe, stats.p_frame);
-    
-    Ok(())
-}
-
-fn test_control_messages(conn: &mut ScrcpyConnection) -> Result<()> {
-    let messages = vec![
-        ("折叠通知栏", ControlMessage::CollapsePanels),
-        ("触摸按下", ControlMessage::touch_down(500, 500, 1080, 2340)),
-        ("触摸抬起", ControlMessage::touch_up(500, 500, 1080, 2340)),
-    ];
-
-    for (name, msg) in messages {
-        let mut buf = Vec::new();
-        msg.serialize(&mut buf)?;
-        conn.send_control(&buf)?;
-        println!("  ✓ {} ({} 字节)", name, buf.len());
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-
-    println!("  ✅ 发送 {} 条消息", 3);
+    println!(
+        "\n  统计: 总计={}, CONFIG={}, 关键帧={}, P帧={}",
+        stats.total, stats.config, stats.keyframe, stats.p_frame
+    );
     Ok(())
 }
 
