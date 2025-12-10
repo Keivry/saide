@@ -2,36 +2,9 @@
 
 ## 进行中
 
-- [ ] 实现已有按键映射覆盖提示
 - [ ] 实现按键映射配置文件新增删除功能
 
 ## 待开始
-
-### 代码质量优化（Mutex 重构）
-
-- [ ] **mouse.rs**: `Mutex<MouseState>` → `Cell<MouseState>`
-  - 理由：单线程高频读写，Copy 类型，消除无意义的锁开销
-  - 收益：语义正确性 ✅ / 性能提升 ⭐ (每帧节省 ~50ns)
-  - 工作量：~30 分钟
-- [ ] **mapping.rs**: `Mutex<HashMap>` → `Arc<HashMap>` (静态配置) 或 `DashMap` (动态)
-  - 理由：配置加载后只读，每次查询都 lock 是浪费
-  - 收益：代码清晰度 ✅ / 性能提升 ⭐⭐ (每次按键节省 ~100ns)
-  - 工作量：~45 分钟
-- [ ] **keyboard.rs**: `Mutex<Option<Arc<Profile>>>` → `ArcSwap<Option<Profile>>`
-  - 理由：读频繁写稀疏，避免热路径上的锁竞争
-  - 收益：并发安全性 ✅ / 性能提升 ⭐
-  - 工作量：~30 分钟
-  - 依赖：需添加 `arc-swap` crate
-- [ ] **keyboard.rs + mapping.rs**: `Mutex<Vec<Arc<Profile>>>` → `RwLock`
-  - 理由：读多写少场景（仅在设备旋转时更新）
-  - 收益：并发性能 ⭐ / 优先级低
-  - 工作量：~20 分钟
-- [ ] **adb.rs**: 合并 `child/stdin/connected` 为单个 `Mutex<ConnectionState>`
-  - 理由：减少锁碎片化，避免多次 lock/unlock
-  - 收益：代码简洁性 ✅ / 潜在死锁风险降低
-  - 工作量：~40 分钟
-
-**注意**：以上优化主要提升代码质量和语义正确性，实际延迟改善 <1ms（瓶颈在 ADB 网络传输 1-5ms）
 
 ### 高优先级
 
@@ -59,6 +32,7 @@
 
 ## 已完成
 
+- [x] 实现已有按键映射覆盖提示
 - [x] 拆分 app/ui/main.rs 到 src/app/main.rs，分离业务逻辑和 UI 代码
 - [x] 重构 status_bar 为角落状态指示器 + 浮动详细面板（commit: 重构状态栏为角落指示器和浮动面板）
 - [x] 实现 V4L2 视频捕获模块
