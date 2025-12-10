@@ -4,6 +4,14 @@ description = "Scrcpy companion app with key/mouse mapping"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "saide"
+path = "src/lib.rs"
+
+[[bin]]
+name = "saide"
+path = "src/main.rs"
+
 
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }
@@ -20,6 +28,11 @@ serde = { version = "1.0", features = ["derive"] }
 
 # bytemuck for uniform buffer casting
 bytemuck = "1"
+
+# Scrcpy protocol dependencies
+byteorder = "1.5"
+rand = "0.8"
+tokio = { version = "1", features = ["net", "io-util", "time", "sync", "rt"] }
 
 once_cell = "1"
 
