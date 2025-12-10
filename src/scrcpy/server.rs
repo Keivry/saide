@@ -79,7 +79,7 @@ impl Default for ServerParams {
             tunnel_forward: false,
             send_dummy_byte: true,
             send_frame_meta: true,
-            send_codec_meta: false,
+            send_codec_meta: true, // Match scrcpy default (server ignores false?)
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
         }
@@ -195,9 +195,7 @@ pub fn start_server(serial: &str, params: &ServerParams) -> Result<std::process:
 }
 
 /// Get socket name from scid (as per DesktopConnection.java)
-pub fn get_socket_name(scid: u32) -> String {
-    format!("scrcpy_{:08x}", scid)
-}
+pub fn get_socket_name(scid: u32) -> String { format!("scrcpy_{:08x}", scid) }
 
 /// Read device metadata from video stream
 ///
