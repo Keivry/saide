@@ -21,8 +21,8 @@ name = "test_protocol"
 path = "examples/test_protocol.rs"
 
 [[example]]
-name = "test_decoder"
-path = "examples/test_decoder.rs"
+name = "test_decode_video"
+path = "examples/test_decode_video.rs"
 
 
 [dependencies]

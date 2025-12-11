@@ -13,7 +13,7 @@ use {
 const DEVICE_SERVER_PATH: &str = "/data/local/tmp/scrcpy-server.jar";
 
 /// Device name field length (as per DesktopConnection.java)
-
+///
 /// Server configuration parameters
 #[derive(Debug, Clone)]
 pub struct ServerParams {

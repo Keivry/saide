@@ -120,16 +120,20 @@ impl ScrcpyConnection {
         info!("All sockets connected successfully");
 
         // Step 6: Read device metadata from video stream (if enabled)
-        let device_name = if params.send_device_meta && video_stream.is_some() {
-            match super::server::read_device_meta(video_stream.as_mut().unwrap()) {
-                Ok(name) => {
-                    debug!("Device name: {}", name);
-                    Some(name)
+        let device_name = if params.send_device_meta {
+            if let Some(ref mut stream) = video_stream {
+                match super::server::read_device_meta(stream) {
+                    Ok(name) => {
+                        debug!("Device name: {}", name);
+                        Some(name)
+                    }
+                    Err(e) => {
+                        debug!("Failed to read device metadata: {}", e);
+                        None
+                    }
                 }
-                Err(e) => {
-                    debug!("Failed to read device metadata: {}", e);
-                    None
-                }
+            } else {
+                None
             }
         } else {
             None
@@ -137,9 +141,11 @@ impl ScrcpyConnection {
 
         // Step 7: Read codec metadata from video stream (if enabled)
         // Codec meta: 4 bytes codec_id + 4 bytes width + 4 bytes height
-        if params.send_codec_meta && video_stream.is_some() {
+        if params.send_codec_meta
+            && let Some(ref mut stream) = video_stream
+        {
             let mut codec_meta = [0u8; 12];
-            if let Err(e) = video_stream.as_mut().unwrap().read_exact(&mut codec_meta) {
+            if let Err(e) = stream.read_exact(&mut codec_meta) {
                 debug!("Failed to read codec metadata: {}", e);
             } else {
                 let codec_id = u32::from_be_bytes(codec_meta[0..4].try_into().unwrap());
@@ -204,7 +210,7 @@ impl ScrcpyConnection {
     }
 
     /// Read and parse a video packet
-    pub fn read_video_packet(&mut self) -> Result<super::protocol::VideoPacket> {
+    pub fn read_video_packet(&mut self) -> Result<super::protocol::video::VideoPacket> {
         use super::protocol::video::VideoPacket;
         VideoPacket::read_from(
             self.video_stream

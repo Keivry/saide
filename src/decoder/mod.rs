@@ -1,9 +1,13 @@
 //! Video decoder module using FFmpeg
 
 mod h264;
+mod rgba_render;
 
-pub use h264::H264Decoder;
 use {anyhow::Result, ffmpeg_next::format::Pixel};
+pub use {
+    h264::H264Decoder,
+    rgba_render::{RgbaRenderResources, new_rgba_render_callback},
+};
 
 /// Decoded video frame
 #[derive(Debug)]
