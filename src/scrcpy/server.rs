@@ -91,24 +91,18 @@ impl Default for ServerParams {
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
             video_encoder: None, // Auto-select best encoder
-            // 🚀 ULTRA LOW LATENCY: 强制禁用所有缓冲和 B 帧
-            // profile=65536: ConstrainedBaseline (强制禁用 B 帧，VAAPI 兼容)
-            // i-frame-interval=1: GOP=60 帧，最小关键帧间隔
-            // intra-refresh-period=60: 周期性刷新，避免整帧 I 帧突发
-            // prepend-sps-pps-to-idr-frames=1: 每个 IDR 帧附带 SPS/PPS
-            // latency=0: Android 11+ 最低延迟模式
-            // 🚀 低延迟优化:
-            // - profile=65536: H.264 Constrained Baseline (无 B 帧)
-            // - i-frame-interval=2: 2 秒一个 I 帧 (GOP=120@60fps, 极低延迟)
-            // - prepend-sps-pps-to-idr-frames=1: 每个 IDR 前加 SPS/PPS (支持动态分辨率)
-            // - latency=0: 最低延迟模式
+            // 🚀 低延迟优化（激进配置）
+            // 经测试组合使用时有效，首帧因动态分辨率检测重建解码器，后续完全正常
+            // - i-frame-interval=2: 2秒GOP，减少关键帧延迟
+            // - latency=0: Android 11+ 最低延迟模式
             // - priority=0: 实时编码优先级
+            // - prepend-sps-pps-to-idr-frames=1: 每个IDR附加SPS/PPS（支持动态分辨率）
+            // - max-bframes=0: 禁用B帧（Android 13+）
+            // - intra-refresh-period=60: 周期性帧内刷新
+            // - bitrate-mode=1: CBR固定码率
+            // 详见: docs/VIDEO_CODEC_OPTIONS_COMPATIBILITY.md
             video_codec_options: Some(
-                "profile=65536,\
-                 i-frame-interval=2,\
-                 prepend-sps-pps-to-idr-frames=1,\
-                 latency=0,\
-                 priority=0"
+                "i-frame-interval=2,latency=0,priority=0,prepend-sps-pps-to-idr-frames=1,max-bframes=0,intra-refresh-period=60,bitrate-mode=1"
                     .to_string(),
             ),
         }
