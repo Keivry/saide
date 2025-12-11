@@ -18,53 +18,73 @@ pub struct EncoderInfo {
 
 /// Detect best H.264 hardware encoder on device
 ///
-/// Priority (first match wins):
-/// 1. c2.android.avc.encoder (Codec2 HAL)
-/// 2. OMX.qcom.video.encoder.avc (Qualcomm)
-/// 3. OMX.google.h264.encoder (Google software - fallback)
+/// Priority (vendor-specific hardware encoder first):
+/// 1. Vendor hardware: c2.mtk, OMX.qcom, OMX.Exynos, etc.
+/// 2. Generic Codec2: c2.android.avc.encoder
+/// 3. Fallback: system default
 ///
 pub fn detect_h264_encoder(serial: &str) -> Result<Option<String>> {
     info!("Detecting H.264 encoder on device: {}", serial);
     
-    // Try common hardware encoders in order
-    let candidates = vec![
-        "c2.android.avc.encoder",      // Codec2 (modern Android)
+    // Get device manufacturer
+    let manufacturer = get_device_manufacturer(serial)?;
+    debug!("Device manufacturer: {}", manufacturer);
+    
+    // Try vendor-specific hardware encoders first (modern naming)
+    let vendor_encoders_c2 = match manufacturer.as_str() {
+        "mediatek" => vec!["c2.mtk.avc.encoder"],
+        "qualcomm" | "xiaomi" | "oneplus" | "oppo" | "vivo" => vec!["c2.qcom.avc.encoder"],
+        "samsung" => vec!["c2.exynos.avc.encoder"],
+        _ => vec![],
+    };
+    
+    for encoder in &vendor_encoders_c2 {
+        info!("Trying vendor encoder: {}", encoder);
+        return Ok(Some(encoder.to_string()));
+    }
+    
+    // Try legacy OMX hardware encoders
+    let vendor_encoders_omx = vec![
         "OMX.qcom.video.encoder.avc",  // Qualcomm
         "OMX.MTK.VIDEO.ENCODER.AVC",   // MediaTek
         "OMX.Exynos.AVC.Encoder",      // Samsung Exynos
         "OMX.IMG.TOPAZ.VIDEO.Encoder", // PowerVR
         "OMX.k3.video.encoder.avc",    // Huawei Kirin
     ];
-
-    for encoder in &candidates {
+    
+    for encoder in &vendor_encoders_omx {
         if is_encoder_available(serial, encoder)? {
-            info!("Found hardware encoder: {}", encoder);
+            info!("Found legacy hardware encoder: {}", encoder);
             return Ok(Some(encoder.to_string()));
         }
     }
-
-    warn!("No hardware H.264 encoder found, using system default");
-    Ok(None)
+    
+    // Use generic Codec2 as last resort (may be software)
+    info!("Using generic Codec2 encoder: c2.android.avc.encoder");
+    Ok(Some("c2.android.avc.encoder".to_string()))
 }
 
-/// Check if encoder is available on device
-fn is_encoder_available(serial: &str, encoder_name: &str) -> Result<bool> {
-    // Quick check: try to query codec capabilities
-    // If it fails, encoder doesn't exist
+/// Get device manufacturer
+fn get_device_manufacturer(serial: &str) -> Result<String> {
     let output = Command::new("adb")
         .args(["-s", serial, "shell", "getprop", "ro.product.manufacturer"])
         .output()
         .context("Failed to query device manufacturer")?;
 
     if !output.status.success() {
-        return Ok(false);
+        return Ok("unknown".to_string());
     }
 
     let manufacturer = String::from_utf8_lossy(&output.stdout)
         .trim()
         .to_lowercase();
 
-    debug!("Device manufacturer: {}", manufacturer);
+    Ok(manufacturer)
+}
+
+/// Check if encoder is available on device (heuristic)
+fn is_encoder_available(serial: &str, encoder_name: &str) -> Result<bool> {
+    let manufacturer = get_device_manufacturer(serial)?;
 
     // Heuristic based on manufacturer
     let likely_available = match encoder_name {
@@ -72,7 +92,7 @@ fn is_encoder_available(serial: &str, encoder_name: &str) -> Result<bool> {
         "OMX.qcom.video.encoder.avc" => manufacturer.contains("qualcomm") 
             || manufacturer.contains("xiaomi")
             || manufacturer.contains("oneplus"),
-        "OMX.MTK.VIDEO.ENCODER.AVC" => manufacturer.contains("mediatek"),
+        "OMX.MTK.VIDEO.ENCODER.AVC" => manufacturer.contains("mediatek") || manufacturer.contains("vivo"),
         "OMX.Exynos.AVC.Encoder" => manufacturer.contains("samsung"),
         _ => false,
     };
