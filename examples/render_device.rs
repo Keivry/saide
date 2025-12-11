@@ -5,14 +5,18 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     saide::{
-        decoder::{DecodedFrame, H264Decoder, RgbaRenderResources, VideoDecoder, new_rgba_render_callback},
-        ScrcpyConnection, ServerParams,
+        ScrcpyConnection,
+        ServerParams,
+        decoder::{
+            DecodedFrame,
+            H264Decoder,
+            RgbaRenderResources,
+            VideoDecoder,
+            new_rgba_render_callback,
+        },
         scrcpy::protocol::video::VideoPacket,
     },
-    std::{
-        sync::Arc,
-        thread,
-    },
+    std::{sync::Arc, thread},
     tracing::{debug, error, info, warn},
 };
 
@@ -122,10 +126,8 @@ impl eframe::App for DeviceRendererApp {
                     (display_width, display_height)
                 };
 
-                let (rect, _response) = ui.allocate_exact_size(
-                    egui::vec2(width, height),
-                    egui::Sense::hover(),
-                );
+                let (rect, _response) =
+                    ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
 
                 let callback = egui_wgpu::Callback::new_paint_callback(
                     rect,
@@ -171,9 +173,8 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
         .enable_all()
         .build()?;
 
-    let mut conn = rt.block_on(async {
-        ScrcpyConnection::connect(&serial, server_jar, params).await
-    })?;
+    let mut conn =
+        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
 
     info!("Connected! Device: {:?}", conn.device_name);
 
@@ -181,69 +182,65 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
     info!("Video resolution: {}x{}", width, height);
 
-    info!("Video resolution: {}x{}", width, height);
-
-    info!("Initializing decoder: {}x{}", width, height);
+    info!("Initializing software decoder: {}x{}", width, height);
     let mut decoder = H264Decoder::new(width, height)?;
-
-    // Read first packet
-    let first_packet = conn.read_video_packet()?;
-    debug!("First packet: config={}, size={}", first_packet.is_config, first_packet.data.len());
-
-    // Decode first packet
-    process_packet(&mut decoder, &first_packet, &frame_tx)?;
+    let mut last_resolution = (width, height);
 
     // Main decode loop
     loop {
-        match conn.read_video_packet() {
-            Ok(packet) => {
-                if let Err(e) = process_packet(&mut decoder, &packet, &frame_tx) {
-                    warn!("Failed to process packet: {}", e);
+        let packet = match conn.read_video_packet() {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Failed to read packet: {}", e);
+                break;
+            }
+        };
+
+        if packet.data.is_empty() {
+            continue;
+        }
+
+        // Check for resolution change in I-frames
+        if packet.is_keyframe {
+            if let Some((width_sps, height_sps)) =
+                saide::decoder::extract_resolution_from_stream(&packet.data)
+            {
+                let new_res = (width_sps, height_sps);
+                if new_res != last_resolution {
+                    info!(
+                        "⚡ Software decoder resolution change: {}x{} -> {}x{}",
+                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                    );
+
+                    match H264Decoder::new(new_res.0, new_res.1) {
+                        Ok(new_decoder) => {
+                            decoder = new_decoder;
+                            last_resolution = new_res;
+                            info!("✅ Software decoder recreated!");
+                        }
+                        Err(e) => {
+                            warn!("❌ Failed to recreate decoder: {}", e);
+                            continue;
+                        }
+                    }
                 }
             }
+        }
+
+        match decoder.decode(&packet.data, packet.pts_us as i64) {
+            Ok(Some(frame)) => {
+                if let Err(e) = frame_tx.send(Arc::new(frame)) {
+                    warn!("Frame channel closed: {}", e);
+                }
+            }
+            Ok(None) => {} // No frame yet
             Err(e) => {
-                error!("Failed to read video packet: {}", e);
-                break;
+                warn!("Software decode error: {}", e);
             }
         }
     }
 
     info!("Decoder worker exiting");
-    Ok(())
-}
-
-fn process_packet(
-    decoder: &mut H264Decoder,
-    packet: &VideoPacket,
-    frame_tx: &Sender<Arc<DecodedFrame>>,
-) -> Result<()> {
-    if packet.data.is_empty() {
-        return Ok(());
-    }
-
-    if packet.is_config {
-        debug!("Processing CONFIG packet ({} bytes)", packet.data.len());
-    }
-
-    // Decode packet (may not produce frame immediately for CONFIG packets)
-    match decoder.decode(&packet.data, packet.pts_us as i64) {
-        Ok(Some(frame)) => {
-            debug!("Decoded frame: {}x{} {} bytes", frame.width, frame.height, frame.data.len());
-            if let Err(e) = frame_tx.send(Arc::new(frame)) {
-                warn!("Frame channel closed: {}", e);
-            }
-        }
-        Ok(None) => {
-            // No frame yet (normal for CONFIG packets)
-            if !packet.is_config {
-                debug!("No frame output for non-CONFIG packet");
-            }
-        }
-        Err(e) => {
-            warn!("Decode error: {}", e);
-        }
-    }
-
     Ok(())
 }
 

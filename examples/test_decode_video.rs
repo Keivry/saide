@@ -3,8 +3,9 @@
 use {
     anyhow::{Context, Result},
     saide::{
+        ScrcpyConnection,
+        ServerParams,
         decoder::{H264Decoder, VideoDecoder},
-        ScrcpyConnection, ServerParams,
     },
     std::{fs::File, io::Write, process::Command},
     tracing::{info, warn},
@@ -12,7 +13,7 @@ use {
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

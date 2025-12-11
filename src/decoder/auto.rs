@@ -34,7 +34,10 @@ impl AutoDecoder {
                 match NvdecDecoder::new(width, height) {
                     Ok(decoder) => Ok(Self::Nvdec(decoder)),
                     Err(e) => {
-                        warn!("Failed to initialize NVDEC: {}, falling back to software", e);
+                        warn!(
+                            "Failed to initialize NVDEC: {}, falling back to software",
+                            e
+                        );
                         Ok(Self::Software(H264Decoder::new(width, height)?))
                     }
                 }
@@ -44,7 +47,10 @@ impl AutoDecoder {
                 match VaapiDecoder::new(width, height) {
                     Ok(decoder) => Ok(Self::Vaapi(decoder)),
                     Err(e) => {
-                        warn!("Failed to initialize VAAPI: {}, falling back to software", e);
+                        warn!(
+                            "Failed to initialize VAAPI: {}, falling back to software",
+                            e
+                        );
                         Ok(Self::Software(H264Decoder::new(width, height)?))
                     }
                 }
@@ -146,7 +152,7 @@ fn detect_drm_gpu() -> Option<GpuType> {
     for entry in fs::read_dir("/sys/class/drm").ok()?.flatten() {
         let path = entry.path();
         let name = entry.file_name();
-        
+
         // Skip non-card devices
         if !name.to_string_lossy().starts_with("card") {
             continue;
@@ -161,9 +167,10 @@ fn detect_drm_gpu() -> Option<GpuType> {
 
         let vendor_path = path.join("device/vendor");
         if let Ok(vendor_str) = fs::read_to_string(&vendor_path) {
-            if let Ok(vendor) = u32::from_str_radix(vendor_str.trim().trim_start_matches("0x"), 16) {
+            if let Ok(vendor) = u32::from_str_radix(vendor_str.trim().trim_start_matches("0x"), 16)
+            {
                 debug!("Found GPU vendor: 0x{:04x} at {:?}", vendor, path);
-                
+
                 match vendor {
                     0x8086 => {
                         debug!("Detected Intel GPU");
@@ -188,13 +195,13 @@ fn get_device_vendor(device_path: &Path) -> Option<u32> {
     let name = device_path.file_name()?.to_string_lossy();
     let num_str = name.strip_prefix("renderD")?;
     let device_num: u32 = num_str.parse().ok()?;
-    
+
     // Map renderDXXX to cardY
     let card_num = device_num - 128; // renderD128 -> card0
-    
+
     let vendor_path = format!("/sys/class/drm/card{}/device/vendor", card_num);
     let vendor_str = fs::read_to_string(&vendor_path).ok()?;
-    
+
     u32::from_str_radix(vendor_str.trim().trim_start_matches("0x"), 16).ok()
 }
 

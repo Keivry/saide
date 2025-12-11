@@ -5,20 +5,23 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     saide::{
-        decoder::{DecodedFrame, Nv12RenderResources, NvdecDecoder, VideoDecoder, new_nv12_render_callback},
-        ScrcpyConnection, ServerParams,
-        scrcpy::protocol::video::VideoPacket,
+        ScrcpyConnection,
+        ServerParams,
+        decoder::{
+            DecodedFrame,
+            Nv12RenderResources,
+            NvdecDecoder,
+            VideoDecoder,
+            new_nv12_render_callback,
+        },
     },
-    std::{
-        sync::Arc,
-        thread,
-    },
+    std::{sync::Arc, thread},
     tracing::{debug, error, info, warn},
 };
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     info!("Starting NVIDIA NVDEC hardware decoder renderer...");
@@ -109,7 +112,7 @@ impl eframe::App for NvdecRendererApp {
             if let Some(frame) = &self.current_frame {
                 let available_size = ui.available_size();
                 let aspect_ratio = frame.width as f32 / frame.height as f32;
-                
+
                 let (w, h) = if available_size.x / available_size.y > aspect_ratio {
                     (available_size.y * aspect_ratio, available_size.y)
                 } else {
@@ -152,7 +155,8 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
          i-frame-interval=1,\
          prepend-sps-pps-to-idr-frames=1,\
          latency=0,\
-         priority=0".to_string()
+         priority=0"
+            .to_string(),
     );
 
     let params = ServerParams {
@@ -165,7 +169,7 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
         control: true,
         send_device_meta: true,
         send_codec_meta: true,
-        video_codec_options: nvdec_codec_options,  // NVDEC-specific options
+        video_codec_options: nvdec_codec_options, // NVDEC-specific options
         ..Default::default()
     };
 
@@ -174,9 +178,8 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
         .enable_all()
         .build()?;
 
-    let mut conn = rt.block_on(async {
-        ScrcpyConnection::connect(&serial, server_jar, params).await
-    })?;
+    let mut conn =
+        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
 
     info!("Connected! Device: {:?}", conn.device_name);
 
@@ -188,6 +191,7 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
     info!("NVDEC decoder initialized!");
 
     let mut frame_count = 0u64;
+    let mut last_resolution = (width, height);
 
     loop {
         let packet = match conn.read_video_packet() {
@@ -202,19 +206,51 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
             continue;
         }
 
+        // Check for resolution change in I-frames (SPS embedded via prepend-sps-pps-to-idr-frames)
+        if packet.is_keyframe {
+            // Extract resolution from SPS (embedded in I-frame due to
+            // prepend-sps-pps-to-idr-frames=1)
+            if let Some((width_sps, height_sps)) =
+                saide::decoder::extract_resolution_from_stream(&packet.data)
+            {
+                let new_res = (width_sps, height_sps);
+                if new_res != last_resolution {
+                    info!(
+                        "⚡ Resolution change detected in SPS: {}x{} -> {}x{}",
+                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                    );
+
+                    match NvdecDecoder::new(new_res.0, new_res.1) {
+                        Ok(new_decoder) => {
+                            decoder = new_decoder;
+                            last_resolution = new_res;
+                            info!("✅ Decoder recreated for new resolution!");
+                        }
+                        Err(e) => {
+                            warn!("❌ Failed to recreate decoder: {}", e);
+                            continue; // Skip this frame
+                        }
+                    }
+                }
+            }
+        }
+
         match decoder.decode(&packet.data, packet.pts_us as i64) {
             Ok(Some(frame)) => {
                 frame_count += 1;
+
                 if frame_count % 60 == 0 {
                     debug!("Decoded {} frames", frame_count);
                 }
-                
+
                 if frame_tx.send(Arc::new(frame)).is_err() {
                     info!("Receiver dropped, stopping decoder");
                     break;
                 }
             }
-            Ok(None) => {}
+            Ok(None) => {
+                // No frame yet
+            }
             Err(e) => {
                 warn!("Decode error: {}", e);
             }

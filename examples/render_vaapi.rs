@@ -5,20 +5,24 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     saide::{
-        decoder::{DecodedFrame, Nv12RenderResources, VaapiDecoder, VideoDecoder, new_nv12_render_callback},
-        ScrcpyConnection, ServerParams,
+        ScrcpyConnection,
+        ServerParams,
+        decoder::{
+            DecodedFrame,
+            Nv12RenderResources,
+            VaapiDecoder,
+            VideoDecoder,
+            new_nv12_render_callback,
+        },
         scrcpy::protocol::video::VideoPacket,
     },
-    std::{
-        sync::Arc,
-        thread,
-    },
+    std::{sync::Arc, thread},
     tracing::{debug, error, info, warn},
 };
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     info!("Starting VAAPI hardware decoder renderer...");
@@ -102,7 +106,10 @@ impl eframe::App for VaapiRendererApp {
                 ui.separator();
                 ui.label(format!("Frames: {}", self.stats.total_frames));
                 if let Some(frame) = &self.current_frame {
-                    ui.label(format!("Resolution: {}x{} {:?}", frame.width, frame.height, frame.format));
+                    ui.label(format!(
+                        "Resolution: {}x{} {:?}",
+                        frame.width, frame.height, frame.format
+                    ));
                 }
             });
         });
@@ -122,10 +129,8 @@ impl eframe::App for VaapiRendererApp {
                     (display_width, display_height)
                 };
 
-                let (rect, _response) = ui.allocate_exact_size(
-                    egui::vec2(width, height),
-                    egui::Sense::hover(),
-                );
+                let (rect, _response) =
+                    ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
 
                 let callback = egui_wgpu::Callback::new_paint_callback(
                     rect,
@@ -157,7 +162,7 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
     let video_encoder = saide::scrcpy::hardware::detect_h264_encoder(&serial)
         .ok()
         .flatten();
-    
+
     if let Some(ref encoder) = video_encoder {
         info!("Using hardware encoder: {}", encoder);
     } else {
@@ -167,7 +172,7 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
     let params = ServerParams {
         video: true,
         video_codec: "h264".to_string(),
-        video_encoder,  // Auto-detected
+        video_encoder, // Auto-detected
         video_bit_rate: 8_000_000,
         max_size: 1920,
         max_fps: 60,
@@ -183,9 +188,8 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
         .enable_all()
         .build()?;
 
-    let mut conn = rt.block_on(async {
-        ScrcpyConnection::connect(&serial, server_jar, params).await
-    })?;
+    let mut conn =
+        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
 
     info!("Connected! Device: {:?}", conn.device_name);
 
@@ -195,66 +199,61 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
 
     info!("Initializing VAAPI decoder: {}x{}", width, height);
     let mut decoder = VaapiDecoder::new(width, height)?;
-
-    // Read first packet
-    let first_packet = conn.read_video_packet()?;
-    debug!("First packet: config={}, size={}", first_packet.is_config, first_packet.data.len());
-
-    // Decode first packet
-    process_packet(&mut decoder, &first_packet, &frame_tx)?;
+    let mut last_resolution = (width, height);
 
     // Main decode loop
     loop {
-        match conn.read_video_packet() {
-            Ok(packet) => {
-                if let Err(e) = process_packet(&mut decoder, &packet, &frame_tx) {
-                    warn!("Failed to process packet: {}", e);
+        let packet = match conn.read_video_packet() {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Failed to read packet: {}", e);
+                break Ok(());
+            }
+        };
+
+        if packet.data.is_empty() {
+            continue;
+        }
+
+        // Check for resolution change in I-frames
+        if packet.is_keyframe {
+            if let Some((width_sps, height_sps)) =
+                saide::decoder::extract_resolution_from_stream(&packet.data)
+            {
+                let new_res = (width_sps, height_sps);
+                if new_res != last_resolution {
+                    info!(
+                        "⚡ VAAPI resolution change: {}x{} -> {}x{}",
+                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                    );
+
+                    match VaapiDecoder::new(new_res.0, new_res.1) {
+                        Ok(new_decoder) => {
+                            decoder = new_decoder;
+                            last_resolution = new_res;
+                            info!("✅ VAAPI decoder recreated!");
+                        }
+                        Err(e) => {
+                            warn!("❌ Failed to recreate VAAPI decoder: {}", e);
+                            continue;
+                        }
+                    }
                 }
             }
+        }
+
+        match decoder.decode(&packet.data, packet.pts_us as i64) {
+            Ok(Some(frame)) => {
+                if let Err(e) = frame_tx.send(Arc::new(frame)) {
+                    warn!("Frame channel closed: {}", e);
+                }
+            }
+            Ok(None) => {} // No frame yet
             Err(e) => {
-                error!("Failed to read video packet: {}", e);
-                break;
+                warn!("VAAPI decode error: {}", e);
             }
         }
     }
-
-    info!("Decoder worker exiting");
-    Ok(())
-}
-
-fn process_packet(
-    decoder: &mut VaapiDecoder,
-    packet: &VideoPacket,
-    frame_tx: &Sender<Arc<DecodedFrame>>,
-) -> Result<()> {
-    if packet.data.is_empty() {
-        return Ok(());
-    }
-
-    if packet.is_config {
-        debug!("Processing CONFIG packet ({} bytes)", packet.data.len());
-    }
-
-    // Decode packet (may not produce frame immediately for CONFIG packets)
-    match decoder.decode(&packet.data, packet.pts_us as i64) {
-        Ok(Some(frame)) => {
-            debug!("Decoded frame: {}x{} {:?} {} bytes", frame.width, frame.height, frame.format, frame.data.len());
-            if let Err(e) = frame_tx.send(Arc::new(frame)) {
-                warn!("Frame channel closed: {}", e);
-            }
-        }
-        Ok(None) => {
-            // No frame yet (normal for CONFIG packets)
-            if !packet.is_config {
-                debug!("No frame output for non-CONFIG packet");
-            }
-        }
-        Err(e) => {
-            warn!("Decode error: {}", e);
-        }
-    }
-
-    Ok(())
 }
 
 fn get_device_serial() -> Result<String> {

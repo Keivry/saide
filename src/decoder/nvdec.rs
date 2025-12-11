@@ -6,7 +6,7 @@ use {
     ffmpeg::{
         codec,
         format::Pixel,
-        software::scaling::{context::Context as ScalerContext, flag::Flags},
+        software::scaling::context::Context as ScalerContext,
         util::frame::video::Video as VideoFrame,
     },
     ffmpeg_next as ffmpeg,
@@ -16,11 +16,14 @@ use {
 
 pub struct NvdecDecoder {
     decoder: ffmpeg::decoder::Video,
+    #[allow(dead_code)]
     scaler: Option<ScalerContext>,
     hw_device_ctx: *mut ffmpeg::sys::AVBufferRef,
     width: u32,
     height: u32,
+    #[allow(dead_code)]
     output_format: Pixel,
+    #[allow(dead_code)]
     last_decoded_dimensions: Option<(u32, u32)>,
 }
 
@@ -36,7 +39,7 @@ impl NvdecDecoder {
             let ret = ffmpeg::sys::av_hwdevice_ctx_create(
                 &mut hw_device_ctx,
                 ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA,
-                ptr::null(),  // Use default device (GPU 0)
+                ptr::null(), // Use default device (GPU 0)
                 ptr::null_mut(),
                 0,
             );
@@ -82,7 +85,10 @@ impl NvdecDecoder {
             .video()
             .context("Failed to open h264_cuvid decoder")?;
 
-        debug!("NVDEC H.264 decoder initialized (will auto-detect {}x{} from stream)", width, height);
+        debug!(
+            "NVDEC H.264 decoder initialized (will auto-detect {}x{} from stream)",
+            width, height
+        );
 
         Ok(Self {
             decoder,
@@ -90,7 +96,7 @@ impl NvdecDecoder {
             hw_device_ctx,
             width,
             height,
-            output_format: Pixel::NV12,  // NVDEC outputs NV12
+            output_format: Pixel::NV12, // NVDEC outputs NV12
             last_decoded_dimensions: None,
         })
     }
@@ -195,6 +201,22 @@ impl VideoDecoder for NvdecDecoder {
 
         self.send_packet(packet_data, pts)?;
         let frames = self.receive_frames()?;
+
+        // Check if decoder dimensions changed after receiving frames
+        if !frames.is_empty() {
+            let decoder_width = self.decoder.width();
+            let decoder_height = self.decoder.height();
+
+            if decoder_width != self.width || decoder_height != self.height {
+                info!(
+                    "Decoder dimensions updated: {}x{} -> {}x{}",
+                    self.width, self.height, decoder_width, decoder_height
+                );
+                self.width = decoder_width;
+                self.height = decoder_height;
+            }
+        }
+
         Ok(frames.into_iter().next())
     }
 
@@ -203,6 +225,14 @@ impl VideoDecoder for NvdecDecoder {
         self.decoder.send_eof().context("Failed to send EOF")?;
         self.receive_frames()
     }
+}
+
+impl NvdecDecoder {
+    /// Get current decoder width (may be updated after processing SPS)
+    pub fn width(&self) -> u32 { self.width }
+
+    /// Get current decoder height (may be updated after processing SPS)
+    pub fn height(&self) -> u32 { self.height }
 }
 
 impl Drop for NvdecDecoder {

@@ -354,7 +354,7 @@ fn accept_connection(listener: &TcpListener, channel: &str) -> Result<TcpStream>
     stream
         .set_nodelay(true)
         .context("Failed to set TCP_NODELAY")?;
-    
+
     debug!("{} connection: TCP_NODELAY enabled", channel);
 
     // NOTE: In adb reverse mode (default), the server does NOT send dummy byte

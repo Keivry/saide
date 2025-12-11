@@ -9,7 +9,7 @@ use {
 };
 
 /// Custom wgpu render callback for YUV frame
-pub(crate) struct YuvRenderCallback {
+pub struct YuvRenderCallback {
     frame: Arc<Yu12Frame>,
 
     // Rotation in degrees (0, 90, 180, 270)

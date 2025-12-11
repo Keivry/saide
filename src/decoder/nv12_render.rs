@@ -186,7 +186,7 @@ impl Nv12RenderResources {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg8Unorm,  // RG for interleaved UV
+                format: wgpu::TextureFormat::Rg8Unorm, // RG for interleaved UV
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -225,15 +225,25 @@ impl Nv12RenderResources {
         let uv_size = y_size / 2;
 
         if frame.data.len() < y_size + uv_size {
-            eprintln!("WARN: Invalid NV12 data size: expected {}, got {}", 
-                y_size + uv_size, frame.data.len());
+            eprintln!(
+                "WARN: Invalid NV12 data size: expected {}, got {}",
+                y_size + uv_size,
+                frame.data.len()
+            );
             return;
         }
 
         // Debug: Print data info on first upload
         if needs_rebuild {
-            debug!("NV12 texture upload: {}x{} (Y: {}x{}, UV: {}x{})",
-                width, height, width, height, width/2, height/2);
+            debug!(
+                "NV12 texture upload: {}x{} (Y: {}x{}, UV: {}x{})",
+                width,
+                height,
+                width,
+                height,
+                width / 2,
+                height / 2
+            );
         }
 
         // Upload Y plane

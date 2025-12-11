@@ -97,14 +97,19 @@ impl Default for ServerParams {
             // intra-refresh-period=60: 周期性刷新，避免整帧 I 帧突发
             // prepend-sps-pps-to-idr-frames=1: 每个 IDR 帧附带 SPS/PPS
             // latency=0: Android 11+ 最低延迟模式
-            // priority=0: 实时编码优先级
+            // 🚀 低延迟优化:
+            // - profile=65536: H.264 Constrained Baseline (无 B 帧)
+            // - i-frame-interval=2: 2 秒一个 I 帧 (GOP=120@60fps, 极低延迟)
+            // - prepend-sps-pps-to-idr-frames=1: 每个 IDR 前加 SPS/PPS (支持动态分辨率)
+            // - latency=0: 最低延迟模式
+            // - priority=0: 实时编码优先级
             video_codec_options: Some(
                 "profile=65536,\
-                 i-frame-interval=1,\
-                 intra-refresh-period=60,\
+                 i-frame-interval=2,\
                  prepend-sps-pps-to-idr-frames=1,\
                  latency=0,\
-                 priority=0".to_string()
+                 priority=0"
+                    .to_string(),
             ),
         }
     }
@@ -163,7 +168,7 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
         args.push(format!("video_encoder={}", encoder));
         info!("Using video encoder: {}", encoder);
     }
-    
+
     // 🚀 LATENCY OPTIMIZATION: Codec options (profile=1 for Baseline, no B-frames)
     if let Some(ref options) = params.video_codec_options {
         args.push(format!("video_codec_options={}", options));
@@ -214,7 +219,7 @@ pub fn start_server(serial: &str, params: &ServerParams) -> Result<std::process:
     let args = build_server_args(params);
 
     info!("Starting server with scid={:08x}", params.scid);
-    info!("Server command: adb -s {} shell {}", serial, args.join(" "));
+    info!("Server command: adb -s {} {}", serial, args.join(" "));
 
     let mut cmd = Command::new("adb");
     cmd.arg("-s").arg(serial);

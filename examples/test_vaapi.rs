@@ -3,8 +3,9 @@
 use {
     anyhow::{Context, Result},
     saide::{
+        ScrcpyConnection,
+        ServerParams,
         decoder::{VaapiDecoder, VideoDecoder},
-        ScrcpyConnection, ServerParams,
     },
     std::process::Command,
     tracing::{info, warn},
@@ -43,9 +44,8 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
 
-    let mut conn = rt.block_on(async {
-        ScrcpyConnection::connect(&serial, server_jar, params).await
-    })?;
+    let mut conn =
+        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
 
     info!("Connected! Device: {:?}", conn.device_name);
 

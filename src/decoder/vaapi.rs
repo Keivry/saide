@@ -4,7 +4,8 @@ use {
     super::{DecodedFrame, VideoDecoder},
     anyhow::{Context as AnyhowContext, Result, bail},
     ffmpeg::{
-        codec, format::Pixel,
+        codec,
+        format::Pixel,
         software::scaling::{context::Context as ScalerContext, flag::Flags},
         util::frame::video::Video as VideoFrame,
     },
@@ -15,11 +16,14 @@ use {
 
 pub struct VaapiDecoder {
     decoder: ffmpeg::decoder::Video,
+    #[allow(dead_code)]
     scaler: Option<ScalerContext>,
     hw_device_ctx: *mut ffmpeg::sys::AVBufferRef,
     width: u32,
     height: u32,
+    #[allow(dead_code)]
     output_format: Pixel,
+    #[allow(dead_code)]
     last_decoded_dimensions: Option<(u32, u32)>,
 }
 
@@ -31,7 +35,7 @@ impl VaapiDecoder {
         // Create VAAPI device context
         let mut hw_device_ctx: *mut ffmpeg::sys::AVBufferRef = ptr::null_mut();
         let device_path = b"/dev/dri/renderD128\0".as_ptr() as *const i8;
-        
+
         unsafe {
             let ret = ffmpeg::sys::av_hwdevice_ctx_create(
                 &mut hw_device_ctx,
@@ -48,8 +52,7 @@ impl VaapiDecoder {
         info!("VAAPI device context created: /dev/dri/renderD128");
 
         // Find H.264 decoder
-        let codec = ffmpeg::decoder::find(codec::Id::H264)
-            .context("H.264 decoder not found")?;
+        let codec = ffmpeg::decoder::find(codec::Id::H264).context("H.264 decoder not found")?;
 
         info!("Found H.264 decoder: {}", codec.name());
 
@@ -69,15 +72,15 @@ impl VaapiDecoder {
             // VAAPI will use these for initialization, then update from SPS/PPS
             (*ctx_ptr).width = width as i32;
             (*ctx_ptr).height = height as i32;
-            
+
             // IMPORTANT: Request NV12 as software pixel format
             // VAAPI will output NV12 after hw transfer
             (*ctx_ptr).sw_pix_fmt = ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NV12;
-            
+
             // 🚀 LOW LATENCY OPTIMIZATIONS
             // 1. Low delay flag - disables frame reordering
             (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
-            
+
             // 2. Single thread - VAAPI decodes in hardware, single thread reduces overhead
             (*ctx_ptr).thread_count = 1;
         }
@@ -100,6 +103,7 @@ impl VaapiDecoder {
         })
     }
 
+    #[allow(dead_code)]
     fn ensure_scaler(&mut self) -> Result<()> {
         let input_format = self.decoder.format();
         let input_width = self.decoder.width();
@@ -118,8 +122,12 @@ impl VaapiDecoder {
 
             debug!(
                 "Reinitializing scaler: {}x{} {:?} -> {}x{} {:?}",
-                input_width, input_height, input_format,
-                self.width, self.height, self.output_format
+                input_width,
+                input_height,
+                input_format,
+                self.width,
+                self.height,
+                self.output_format
             );
 
             let scaler = ScalerContext::get(
@@ -191,7 +199,7 @@ impl VaapiDecoder {
                     let uv_linesize = sw_frame.stride(1) as usize;
                     let width = self.width as usize;
                     let height = self.height as usize;
-                    
+
                     // Log linesize info (only once per resolution change)
                     if self.last_decoded_dimensions != Some((self.width, self.height)) {
                         info!(
@@ -200,13 +208,13 @@ impl VaapiDecoder {
                         );
                         self.last_decoded_dimensions = Some((self.width, self.height));
                     }
-                    
+
                     // Y plane: copy line by line to remove padding
                     let y_size = width * height;
                     let uv_size = width * (height / 2); // NV12: UV interleaved, same width
-                    
+
                     let mut data = Vec::with_capacity(y_size + uv_size);
-                    
+
                     // Copy Y plane (remove linesize padding)
                     let y_data = sw_frame.data(0);
                     for row in 0..height {
@@ -214,7 +222,7 @@ impl VaapiDecoder {
                         let end = start + width;
                         data.extend_from_slice(&y_data[start..end]);
                     }
-                    
+
                     // Copy UV plane (remove linesize padding)
                     let uv_data = sw_frame.data(1);
                     let uv_height = height / 2;
