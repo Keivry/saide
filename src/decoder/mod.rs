@@ -4,6 +4,7 @@ mod h264;
 mod nv12_render;
 mod rgba_render;
 mod vaapi;
+mod nvdec;  // 🚀 NVIDIA NVDEC decoder
 
 use {anyhow::Result, ffmpeg_next::format::Pixel};
 pub use {
@@ -11,6 +12,7 @@ pub use {
     nv12_render::{Nv12RenderResources, new_nv12_render_callback},
     rgba_render::{RgbaRenderResources, new_rgba_render_callback},
     vaapi::VaapiDecoder,
+    nvdec::NvdecDecoder,  // Export NVDEC decoder
 };
 
 /// Decoded video frame
