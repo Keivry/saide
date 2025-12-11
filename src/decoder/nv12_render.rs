@@ -5,6 +5,7 @@ use {
         egui_wgpu::{self, CallbackTrait},
     },
     std::sync::Arc,
+    tracing::debug,
 };
 
 /// Custom wgpu render callback for NV12 frame
