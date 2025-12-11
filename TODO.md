@@ -143,7 +143,15 @@ cargo run --example render_device
   - 优先级：c2.android > OMX.qcom > OMX.MTK > OMX.Exynos
   - 预期延迟改善：15-45ms
 
-### 进行中 🔄
+## 进行中 🔄
+- [x] **H.264 SPS 解析器支持 High Profile** ✅
+  - 完整实现 ITU-T H.264 7.3.2.1.1 规范（支持所有 profiles）
+  - 修复 MTK 编码器 1920x864 → 32x32 解析错误
+- [x] **设备 Codec Options 自动检测与缓存** ✅
+  - 问题：不同设备支持的 video_codec_options 差异巨大
+  - 实现：二分测试法 + JSON 配置缓存（`~/.config/saide/device_profiles.json`）
+  - 工具：`cargo run --example probe_codec [serial]`
+  - 示例：Kirin 980 + Android 10 不支持任何选项，MTK mt6991 支持全部
 - [ ] 测试硬件编码器对延迟的实际影响
 - [ ] 添加延迟测量工具
 

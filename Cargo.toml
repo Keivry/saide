@@ -73,6 +73,8 @@ arc-swap = "1.7.1"
 
 # Video decoding (FFmpeg)
 ffmpeg-next = "7.1"
+serde_json = "1.0.145"
+chrono = { version = "0.4.42", features = ["serde"] }
 
 [profile.dev]
 opt-level = 0
@@ -84,3 +86,4 @@ codegen-units = 1
 lto = true
 strip = true
 panic = "abort"
+chrono = { version = "0.4", features = ["serde"] }

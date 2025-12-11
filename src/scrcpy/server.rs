@@ -91,21 +91,40 @@ impl Default for ServerParams {
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
             video_encoder: None, // Auto-select best encoder
-            // 🚀 低延迟优化（激进配置）
-            // 经测试组合使用时有效，首帧因动态分辨率检测重建解码器，后续完全正常
-            // - i-frame-interval=2: 2秒GOP，减少关键帧延迟
-            // - latency=0: Android 11+ 最低延迟模式
-            // - priority=0: 实时编码优先级
-            // - prepend-sps-pps-to-idr-frames=1: 每个IDR附加SPS/PPS（支持动态分辨率）
-            // - max-bframes=0: 禁用B帧（Android 13+）
-            // - intra-refresh-period=60: 周期性帧内刷新
-            // - bitrate-mode=1: CBR固定码率
+            // 🚀 低延迟优化（默认禁用）
+            // 使用 `ServerParams::for_device()` 自动加载设备最优配置
+            // 或手动设置设备特定配置
             // 详见: docs/VIDEO_CODEC_OPTIONS_COMPATIBILITY.md
-            video_codec_options: Some(
-                "i-frame-interval=2,latency=0,priority=0,prepend-sps-pps-to-idr-frames=1,max-bframes=0,intra-refresh-period=60,bitrate-mode=1"
-                    .to_string(),
-            ),
+            video_codec_options: None,
         }
+    }
+}
+
+impl ServerParams {
+    /// Create params with device-specific codec options
+    ///
+    /// Loads from cache if available, otherwise uses defaults
+    pub fn for_device(serial: &str) -> Result<Self> {
+        use super::codec_probe::ProfileDatabase;
+
+        let db = ProfileDatabase::load()?;
+        let mut params = Self::default();
+
+        if let Some(profile) = db.get(serial) {
+            params.video_codec_options = profile.optimal_config.clone();
+            tracing::info!(
+                "Loaded cached codec options for {}: {:?}",
+                serial,
+                params.video_codec_options
+            );
+        } else {
+            tracing::warn!(
+                "No cached profile for {}, using defaults. Run `probe_codec` to optimize.",
+                serial
+            );
+        }
+
+        Ok(params)
     }
 }
 

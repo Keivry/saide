@@ -12,10 +12,11 @@
 
 低延迟优化中的部分 `video_codec_options` 在**单独测试**时导致 VAAPI 失败，但**组合使用时有效**。
 
-**最终配置（激进优化）**:
+**最终配置（激进优化 + Baseline Profile）**:
 ```rust
 video_codec_options: Some(
-    "i-frame-interval=2,\
+    "profile=66,\
+     i-frame-interval=2,\
      latency=0,\
      priority=0,\
      prepend-sps-pps-to-idr-frames=1,\
@@ -27,6 +28,7 @@ video_codec_options: Some(
 ```
 
 **实际效果**: 
+- ✅ Baseline Profile (66) 简化 SPS 解析，避免 High Profile (100) 复杂字段
 - ✅ 首帧触发动态分辨率检测（SPS解析 32x32 → 重建解码器 → 正常864x1920）
 - ✅ 后续所有帧正常解码，无任何错误
 - 🚀 预期延迟优化：减少 30-50ms（禁用B帧 + 短GOP + 低延迟模式）
@@ -38,13 +40,14 @@ video_codec_options: Some(
 | video_codec_options | 单独测试 | 组合测试 | 说明 |
 |---------------------|----------|----------|------|
 | `None` (默认) | ✅ 完全正常 | - | 无任何错误，VAAPI 解码流畅 |
+| `profile=66` | ✅ **推荐** | ✅ **组合正常** | Baseline Profile，无B帧，SPS最简单 |
 | `profile=1` | ❌ 失败 | 未组合测试 | `Failed setup for format vaapi` |
 | `profile=65536` | ❌ 失败 | 未组合测试 | Android 枚举值，VAAPI 不识别 |
 | `i-frame-interval=2` | ❌ 持续失败 | ✅ **组合正常** | 单独用修改GOP导致失败 |
 | `latency=0` | ❌ 持续失败 | ✅ **组合正常** | 单独用与VAAPI冲突 |
 | `priority=0` | ❌ 持续失败 | ✅ **组合正常** | 单独用导致流格式变化 |
 | `prepend-sps-pps-to-idr-frames=1` | ⚠️ 首帧失败 | ✅ **组合正常** | 附加SPS/PPS支持动态分辨率 |
-| `max-bframes=0` | ⚠️ 首帧失败 | ✅ **组合正常** | 禁用B帧（Android 13+）|
+| `max-bframes=0` | ⚠️ 首帧失败 | ✅ **组合正常** | 禁用B帧（Android 13+，Baseline已隐含）|
 | `intra-refresh-period=60` | ✅ 完全正常 | ✅ **组合正常** | 周期性帧内刷新 |
 | `bitrate-mode=1` | ✅ 完全正常 | ✅ **组合正常** | CBR 固定码率 |
 

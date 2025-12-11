@@ -22,7 +22,7 @@ use {
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::INFO)
         .init();
 
     info!("Starting VAAPI hardware decoder renderer...");

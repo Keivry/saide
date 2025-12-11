@@ -102,8 +102,44 @@ fn parse_sps_resolution(sps: &[u8]) -> Option<(u32, u32)> {
     // Skip seq_parameter_set_id (ue(v))
     reader.read_ue()?;
 
-    // For High profiles, skip chroma format, bit depth, etc.
-    // (Simplified: assume Baseline/Main profile)
+    // For High profiles (profile_idc >= 100), parse chroma_format_idc
+    let profile_idc = sps[1];
+    if [100, 110, 122, 244, 44, 83, 86, 118, 128].contains(&profile_idc) {
+        let chroma_format_idc = reader.read_ue()?;
+
+        if chroma_format_idc == 3 {
+            reader.skip(1)?; // separate_colour_plane_flag
+        }
+
+        reader.read_ue()?; // bit_depth_luma_minus8
+        reader.read_ue()?; // bit_depth_chroma_minus8
+        reader.skip(1)?; // qpprime_y_zero_transform_bypass_flag
+
+        let seq_scaling_matrix_present_flag = reader.read_bit()?;
+        if seq_scaling_matrix_present_flag == 1 {
+            let count = if chroma_format_idc != 3 { 8 } else { 12 };
+            for i in 0..count {
+                let seq_scaling_list_present_flag = reader.read_bit()?;
+                if seq_scaling_list_present_flag == 1 {
+                    // Skip scaling list (simplified)
+                    let size = if i < 6 { 16 } else { 64 };
+                    let mut last_scale = 8;
+                    let mut next_scale = 8;
+                    for _ in 0..size {
+                        if next_scale != 0 {
+                            let delta_scale = reader.read_se()?;
+                            next_scale = (last_scale + delta_scale + 256) % 256;
+                        }
+                        last_scale = if next_scale == 0 {
+                            last_scale
+                        } else {
+                            next_scale
+                        };
+                    }
+                }
+            }
+        }
+    }
 
     // Skip log2_max_frame_num_minus4 (ue(v))
     reader.read_ue()?;
