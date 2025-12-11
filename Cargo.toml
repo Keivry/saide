@@ -29,6 +29,10 @@ name = "render_device"
 path = "examples/render_device.rs"
 
 [[example]]
+name = "render_vaapi"
+path = "examples/render_vaapi.rs"
+
+[[example]]
 name = "test_vaapi"
 path = "examples/test_vaapi.rs"
 

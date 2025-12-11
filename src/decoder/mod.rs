@@ -1,12 +1,14 @@
 //! Video decoder module using FFmpeg
 
 mod h264;
+mod nv12_render;
 mod rgba_render;
 mod vaapi;
 
 use {anyhow::Result, ffmpeg_next::format::Pixel};
 pub use {
     h264::H264Decoder,
+    nv12_render::{Nv12RenderResources, new_nv12_render_callback},
     rgba_render::{RgbaRenderResources, new_rgba_render_callback},
     vaapi::VaapiDecoder,
 };
