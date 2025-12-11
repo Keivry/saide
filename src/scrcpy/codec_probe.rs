@@ -5,7 +5,7 @@
 use {
     anyhow::{Context, Result},
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, fs, path::PathBuf, process::Command, time::Duration},
+    std::{collections::HashMap, fs, path::PathBuf, process::Command},
     tracing::{debug, info},
 };
 

@@ -145,11 +145,11 @@ cargo run --example render_device
 - [x] **H.264 SPS 解析器支持 High Profile** (commit: f02c9d1)
   - 完整实现 ITU-T H.264 7.3.2.1.1 规范（支持所有 profiles）
   - 修复 MTK 编码器 1920x864 → 32x32 解析错误
-- [x] **设备 Codec Options 自动检测与缓存** (commit: f02c9d1)
+- [x] **设备 Codec Options 自动检测与缓存** (commit: d6a3ff5)
   - 问题：不同设备支持的 video_codec_options 差异巨大
-  - 实现：二分测试法 + JSON 配置缓存（`~/.config/saide/device_profiles.json`）
+  - 实现：直接用 ScrcpyConnection 测试，读取视频包验证
   - 工具：`cargo run --example probe_codec [serial]`
-  - 已验证：Kirin 980 (0/8)，MTK mt6991 有待测试
+  - 已验证：MTK mt6991 (8/8 全支持)，Kirin 980 (0/8)
 
 ## 进行中 🔄
 - [ ] 测试硬件编码器对延迟的实际影响
