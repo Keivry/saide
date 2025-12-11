@@ -92,3 +92,26 @@ cargo run --example render_device
 **最后更新**: 2025-12-11 02:47  
 **版本**: v0.2.0-dev  
 **状态**: 核心功能完成 ✅ 硬件加速完成 ✅
+
+## 延迟优化进展 🚀
+
+### 已完成 ✅
+- [x] **硬件编码器自动检测** (commit: bd18dfc)
+  - 自动检测设备最佳 H.264 硬件编码器
+  - 优先级：c2.android > OMX.qcom > OMX.MTK > OMX.Exynos
+  - 预期延迟改善：15-45ms
+
+### 进行中 🔄
+- [ ] 测试硬件编码器对延迟的实际影响
+- [ ] 添加延迟测量工具
+
+### 待实现 📋
+- [ ] GPU 零拷贝 (VAAPI → DMA-BUF → wgpu)
+  - 复杂度：高
+  - 预期收益：8-10ms
+- [ ] 编码器参数优化 (bframes=0, profile=baseline)
+- [ ] 缓冲深度优化
+
+---
+
+**相关文档**：见 `FINDINGS.md`
