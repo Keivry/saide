@@ -1,5 +1,28 @@
 # 延迟优化报告
 
+## 关键发现 🔍
+
+### 编码器选择错误（已修复）
+**问题**：检测逻辑优先选择通用 `c2.android.avc.encoder`，实际上是**软件编码器**  
+**影响**：MediaTek、Qualcomm 等设备未使用硬件编码器  
+**修复** (commit: 3c7ec62)：
+- 查询设备厂商 (`ro.product.manufacturer`)
+- 优先选择厂商硬件编码器：
+  - `vivo` → `c2.mtk.avc.encoder` (MediaTek HW)
+  - `xiaomi` → `c2.qcom.avc.encoder` (Qualcomm HW)
+  - `samsung` → `c2.exynos.avc.encoder` (Exynos HW)
+- 降级到通用 Codec2 仅作为最后备选
+
+**验证方法**：
+```bash
+scrcpy --list-encoder  # 查看设备支持的编码器
+# 输出示例：
+# c2.mtk.avc.encoder             (hw) [vendor]  ← 硬件
+# c2.android.avc.encoder         (sw)           ← 软件
+```
+
+---
+
 ## 问题分析 ✅
 
 ### 当前延迟来源
