@@ -229,6 +229,11 @@ fn process_packet(
             if let Err(e) = frame_tx.send(Arc::new(frame)) {
                 warn!("Frame channel closed: {}", e);
             }
+        }
+        Ok(None) => {
+            // No frame yet (normal for CONFIG packets)
+            if !packet.is_config {
+                debug!("No frame output for non-CONFIG packet");
             }
         }
         Err(e) => {
