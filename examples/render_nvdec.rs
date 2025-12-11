@@ -121,11 +121,12 @@ impl eframe::App for NvdecRendererApp {
                     egui::vec2(w, h),
                 );
 
-                let callback = new_nv12_render_callback(frame.clone());
-                ui.painter().add(egui::PaintCallback {
+                // Use the same pattern as render_vaapi
+                let callback = egui_wgpu::Callback::new_paint_callback(
                     rect,
-                    callback: Arc::new(callback),
-                });
+                    new_nv12_render_callback(frame.clone()),
+                );
+                ui.painter().add(callback);
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.label("Waiting for video stream...");

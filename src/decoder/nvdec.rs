@@ -65,9 +65,9 @@ impl NvdecDecoder {
             // Set format callback to select CUDA
             (*ctx_ptr).get_format = Some(get_cuda_format);
 
-            // Set initial dimensions as hints
-            (*ctx_ptr).width = width as i32;
-            (*ctx_ptr).height = height as i32;
+            // DON'T set width/height here - let CUVID auto-detect from stream
+            // Setting them causes "AVHWFramesContext is already initialized" error
+            // when using ConstrainedBaseline profile with dynamic resolution
 
             // 🚀 LOW LATENCY OPTIMIZATIONS
             // 1. Low delay flag - disables frame reordering
@@ -82,7 +82,7 @@ impl NvdecDecoder {
             .video()
             .context("Failed to open h264_cuvid decoder")?;
 
-        debug!("NVDEC H.264 decoder initialized: {}x{}", width, height);
+        debug!("NVDEC H.264 decoder initialized (will auto-detect {}x{} from stream)", width, height);
 
         Ok(Self {
             decoder,
