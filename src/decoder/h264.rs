@@ -19,6 +19,8 @@ pub struct H264Decoder {
     width: u32,
     height: u32,
     output_format: Pixel,
+    /// Track last decoded frame dimensions to detect resolution changes
+    last_decoded_dimensions: Option<(u32, u32)>,
 }
 
 impl H264Decoder {
@@ -55,36 +57,49 @@ impl H264Decoder {
             width,
             height,
             output_format: Pixel::RGBA,
+            last_decoded_dimensions: None,
         })
     }
 
     /// Initialize scaler when we know the actual input format
     fn ensure_scaler(&mut self) -> Result<()> {
-        if self.scaler.is_some() {
-            return Ok(());
-        }
-
         let input_format = self.decoder.format();
         let input_width = self.decoder.width();
         let input_height = self.decoder.height();
 
-        debug!(
-            "Initializing scaler: {}x{} {:?} -> {}x{} {:?}",
-            input_width, input_height, input_format, self.width, self.height, self.output_format
-        );
+        // Check if resolution changed
+        let current_dimensions = (input_width, input_height);
+        let needs_recreate = if let Some(last_dims) = self.last_decoded_dimensions {
+            last_dims != current_dimensions
+        } else {
+            true
+        };
 
-        let scaler = ScalerContext::get(
-            input_format,
-            input_width,
-            input_height,
-            self.output_format,
-            self.width,
-            self.height,
-            Flags::BILINEAR,
-        )
-        .context("Failed to create scaler")?;
+        if needs_recreate {
+            // Update output dimensions to match input (no scaling)
+            self.width = input_width;
+            self.height = input_height;
 
-        self.scaler = Some(scaler);
+            debug!(
+                "Reinitializing scaler: {}x{} {:?} -> {}x{} {:?}",
+                input_width, input_height, input_format, self.width, self.height, self.output_format
+            );
+
+            let scaler = ScalerContext::get(
+                input_format,
+                input_width,
+                input_height,
+                self.output_format,
+                self.width,
+                self.height,
+                Flags::BILINEAR,
+            )
+            .context("Failed to create scaler")?;
+
+            self.scaler = Some(scaler);
+            self.last_decoded_dimensions = Some(current_dimensions);
+        }
+
         Ok(())
     }
 
