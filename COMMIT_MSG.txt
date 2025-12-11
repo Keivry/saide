@@ -1,32 +1,92 @@
-feat: 移除无效 CONFIG 包处理并统一分辨率变化检测
+feat: probe_codec 添加硬件编码器兼容性验证
 
-## 变更内容
+## 问题根因
 
-### 1. 移除无效 CONFIG 包处理逻辑
-- scrcpy-server 使用 `prepend-sps-pps-to-idr-frames=1`，SPS/PPS 内嵌在关键帧中
-- 删除所有基于 `packet.is_config` 的处理代码
-- 保留协议解析中的 `is_config` 字段（协议定义）
+之前发现的问题：
+- Kirin 980: codec_options 探测通过（6/8）
+- 但 render_vaapi 使用 OMX.k3.video.encoder.avc + options 崩溃
+- 根本原因：**特定编码器 + codec options 组合不兼容**
 
-### 2. 统一分辨率变化检测
-- 所有解码器（NVDEC/VAAPI/软解）统一使用 SPS 解析检测分辨率变化
-- 在关键帧（I-frame）中提取内嵌的 SPS 获取新分辨率
-- 检测到变化后立即重建解码器
+验证：
+- 系统默认编码器 + options ✅ 工作
+- OMX.k3.video.encoder.avc + options ❌ 崩溃
+- 单独使用编码器或选项可能都正常
 
-### 3. 低延迟优化
-- GOP间隔从1秒改为2秒（120帧）：减少I帧频率降低延迟
-- 保持 `prepend-sps-pps-to-idr-frames=1`：确保屏幕旋转时能获取新SPS
-- 明确禁用 B 帧：`profile=65536` (Constrained Baseline)
+## 解决方案
 
-### 4. 代码清理
-- 删除 `render_vaapi.rs` 和 `render_device.rs` 中的 `process_packet` 函数
-- 删除无用的 `config_count` 计数器
-- 删除冗余的分辨率变化检测逻辑
+### 三阶段探测验证
 
-## 测试状态
-- [x] render_device (软解码) - 编译通过
-- [x] render_nvdec (NVIDIA硬解) - 编译通过  
-- [ ] render_vaapi (Intel/AMD硬解) - 待GPU切换测试
+```
+阶段 1: 硬件编码器检测
+  └─> 调用 hardware::detect_h264_encoder()
+      └─> 根据 SoC 匹配最佳编码器
 
-## 待测试
-- 屏幕旋转时分辨率变化是否正确检测并重建解码器
-- NVDEC 在分辨率变化时是否能正常恢复
+阶段 2: 单独选项测试
+  └─> 使用检测到的编码器测试每个 option
+
+阶段 3: 组合验证 ⭐ 关键
+  └─> 验证 encoder + options 组合
+      └─> 失败 → 回退到 None
+```
+
+### 数据结构扩展
+
+**DeviceProfile** 新增字段：
+```rust
+pub struct DeviceProfile {
+    // ... 现有字段
+    pub video_encoder: Option<String>,  // ⭐ NEW
+}
+```
+
+**ServerParams::for_device()** 自动加载：
+```rust
+params.video_encoder = profile.video_encoder;
+params.video_codec_options = profile.optimal_config;
+// 两者都经过组合验证，保证兼容
+```
+
+## 修改清单
+
+### 核心逻辑
+- `codec_probe.rs`:
+  - `DeviceProfile` 添加 `video_encoder` 字段
+  - `probe_device()` 调用 `hardware::detect_h264_encoder()`
+  - `test_codec_options()` 接受 `video_encoder` 参数
+  - 阶段 3 验证时使用相同的编码器
+
+- `server.rs`:
+  - `ServerParams::for_device()` 加载 encoder + options
+
+### 示例程序
+- `render_vaapi.rs`: 移除临时 workaround，使用 profile
+
+### 文档
+- `CODEC_AUTO_DETECTION.md`: 说明三阶段验证
+
+## 测试
+
+```bash
+cargo test --lib --quiet          # 20/20 passed ✅
+cargo build --examples            # 编译成功 ✅
+```
+
+## 使用方法
+
+重新探测设备（带编码器检测）：
+
+```bash
+rm ~/.config/saide/device_profiles.json
+cargo run --example probe_codec
+```
+
+现在会自动：
+1. 检测硬件编码器
+2. 测试编码器 + 选项组合
+3. 保存验证通过的配置
+
+运行示例自动使用兼容配置：
+
+```bash
+cargo run --example render_vaapi  # 现在应该正常工作
+```

@@ -27,19 +27,44 @@ cargo run --example probe_codec 10AF971ZLN004SU
 
 ### 2. 探测过程
 
-工具会逐个测试以下选项（按延迟影响排序）：
+#### 阶段 1：硬件编码器检测 ⭐ NEW
+
+自动检测设备的最佳硬件编码器：
+
+```
+🔍 Probing codec compatibility for device: 8KE5T19731038660
+Device: ELE-AL00 (kirin980), Android 10
+Detected hardware encoder: OMX.k3.video.encoder.avc
+```
+
+#### 阶段 2：单独选项测试
+
+使用检测到的编码器逐个测试选项：
 
 ```
 Testing codec options...
   [1/8] Testing profile=66...           ❌ Not supported
   [2/8] Testing i-frame-interval=2...   ✅ Supported
-  [3/8] Testing latency=0...            ✅ Supported
-  [4/8] Testing max-bframes=0...        ❌ Not supported (Android 13+)
-  [5/8] Testing priority=0...           ✅ Supported
-  [6/8] Testing prepend-sps-pps-to-idr-frames=1... ✅ Supported
-  [7/8] Testing intra-refresh-period=60... ✅ Supported
-  [8/8] Testing bitrate-mode=1...       ✅ Supported
+  ...
 ```
+
+#### 阶段 3：组合配置验证
+
+**关键改进**：验证 **encoder + options 组合** 是否工作
+
+```
+🔄 Validating combined configuration...
+   Testing: video_encoder=OMX.k3.video.encoder.avc, video_codec_options=...
+   ✅ Combined config works!
+```
+
+或者如果组合失败：
+
+```
+   ❌ Combined config failed, falling back to None
+```
+
+这解决了已知问题：某些编码器 + 选项组合导致崩溃。
 
 ### 3. 配置缓存
 
@@ -48,25 +73,28 @@ Testing codec options...
 ```json
 {
   "profiles": {
-    "10AF971ZLN004SU": {
-      "serial": "10AF971ZLN004SU",
-      "model": "V2507A",
-      "platform": "mt6991",
-      "android_version": 36,
+    "8KE5T19731038660": {
+      "serial": "8KE5T19731038660",
+      "model": "ELE-AL00",
+      "platform": "kirin980",
+      "android_version": 10,
+      "video_encoder": "OMX.k3.video.encoder.avc",
       "supported_options": [
         "i-frame-interval",
         "latency",
+        "max-bframes",
         "priority",
-        "prepend-sps-pps-to-idr-frames",
         "intra-refresh-period",
         "bitrate-mode"
       ],
-      "optimal_config": "i-frame-interval=2,latency=0,priority=0,prepend-sps-pps-to-idr-frames=1,intra-refresh-period=60,bitrate-mode=1",
+      "optimal_config": "i-frame-interval=2,latency=0,max-bframes=0,priority=0,intra-refresh-period=60,bitrate-mode=1",
       "tested_at": "2025-12-11T15:00:00Z"
     }
   }
 }
 ```
+
+**注意**：`video_encoder` 和 `optimal_config` 是组合验证后的结果，保证一起使用时不会崩溃。
 
 ---
 
@@ -74,14 +102,21 @@ Testing codec options...
 
 ### 方式 1：自动加载（推荐）
 
+**所有测试示例（`test_decode_video`、`render_device`、`render_vaapi`）已默认使用此方式**：
+
 ```rust
 use saide::{ScrcpyConnection, ServerParams};
 
 // 自动从缓存加载设备配置
-let params = ServerParams::for_device(&serial)?;
+let mut params = ServerParams::for_device(&serial)?;
+params.video = true;
+params.max_size = 1920;
+// ... 其他配置
 
 let conn = ScrcpyConnection::connect(&serial, server_jar, params).await?;
 ```
+
+**首次运行时会显示警告，提示先运行 `cargo run --example probe_codec` 探测设备。**
 
 ### 方式 2：手动指定
 

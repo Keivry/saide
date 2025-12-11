@@ -27,23 +27,27 @@ fn main() -> Result<()> {
     println!("✓ Server JAR: {}", server_jar);
 
     // 配置（send_codec_meta=true 以接收 SPS/PPS）
-    let params = ServerParams {
-        video: true,
-        video_codec: "h264".to_string(),
-        video_bit_rate: 8_000_000,
-        max_size: 1600,
-        max_fps: 60,
-        audio: false,
-        control: true,
-        send_device_meta: true,
-        send_codec_meta: true,
-        ..Default::default()
-    };
+    // 使用 for_device() 自动加载 probe_codec 缓存的优化选项
+    let mut params = ServerParams::for_device(&serial)?;
+    params.video = true;
+    params.video_codec = "h264".to_string();
+    params.video_bit_rate = 8_000_000;
+    params.max_size = 1600;
+    params.max_fps = 60;
+    params.audio = false;
+    params.control = true;
+    params.send_device_meta = true;
+    params.send_codec_meta = true;
 
     println!("\n📋 配置:");
     println!("  编解码器: h264");
     println!("  最大分辨率: {}px", params.max_size);
     println!("  帧率: {}fps", params.max_fps);
+    if let Some(ref opts) = params.video_codec_options {
+        println!("  优化选项: {}", opts);
+    } else {
+        println!("  优化选项: None (使用默认配置)");
+    }
 
     // 连接
     println!("\n🔌 建立连接...");

@@ -112,9 +112,11 @@ impl ServerParams {
 
         if let Some(profile) = db.get(serial) {
             params.video_codec_options = profile.optimal_config.clone();
+            params.video_encoder = profile.video_encoder.clone();
             tracing::info!(
-                "Loaded cached codec options for {}: {:?}",
+                "Loaded cached codec profile for {}: encoder={:?}, options={:?}",
                 serial,
+                params.video_encoder,
                 params.video_codec_options
             );
         } else {

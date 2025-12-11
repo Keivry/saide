@@ -155,18 +155,16 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
         anyhow::bail!("Server JAR not found: {}", server_jar);
     }
 
-    let params = ServerParams {
-        video: true,
-        video_codec: "h264".to_string(),
-        video_bit_rate: 8_000_000,
-        max_size: 1920,
-        max_fps: 60,
-        audio: false,
-        control: true,
-        send_device_meta: true,
-        send_codec_meta: true,
-        ..Default::default()
-    };
+    let mut params = ServerParams::for_device(&serial)?;
+    params.video = true;
+    params.video_codec = "h264".to_string();
+    params.video_bit_rate = 8_000_000;
+    params.max_size = 1920;
+    params.max_fps = 60;
+    params.audio = false;
+    params.control = true;
+    params.send_device_meta = true;
+    params.send_codec_meta = true;
 
     info!("Connecting to device...");
     let rt = tokio::runtime::Builder::new_current_thread()

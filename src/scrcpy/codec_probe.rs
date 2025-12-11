@@ -3,6 +3,7 @@
 //! Probes device capabilities to find optimal low-latency configuration.
 
 use {
+    super::server::ServerParams,
     anyhow::{Context, Result},
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, fs, path::PathBuf, process::Command},
@@ -36,6 +37,9 @@ pub struct DeviceProfile {
     /// Android version
     pub android_version: u32,
 
+    /// Detected hardware encoder (if available)
+    pub video_encoder: Option<String>,
+
     /// Supported codec option keys
     pub supported_options: Vec<String>,
 
@@ -58,6 +62,7 @@ impl DeviceProfile {
             model,
             platform,
             android_version,
+            video_encoder: None, // Will be set during probing
             supported_options: Vec::new(),
             optimal_config: None,
             tested_at: chrono::Utc::now().to_rfc3339(),
@@ -146,6 +151,14 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
         profile.model, profile.platform, profile.android_version
     );
 
+    // Detect hardware encoder
+    profile.video_encoder = super::hardware::detect_h264_encoder(serial)?;
+    if let Some(ref encoder) = profile.video_encoder {
+        info!("Detected hardware encoder: {}", encoder);
+    } else {
+        info!("Using system default encoder");
+    }
+
     // Android version-based filtering
     let candidate_options: Vec<_> = CODEC_OPTIONS
         .iter()
@@ -175,7 +188,12 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
         );
 
         let options = format!("{}={}", key, value);
-        if test_codec_options(serial, server_jar, &options)? {
+        if test_codec_options(
+            serial,
+            server_jar,
+            &options,
+            profile.video_encoder.as_deref(),
+        )? {
             info!("    ✅ Supported");
             profile.supported_options.push(key.to_string());
         } else {
@@ -186,6 +204,25 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
     // Build optimal config
     profile.optimal_config = profile.build_options_string();
 
+    // Validate combined options work together
+    if let Some(ref combined_config) = profile.optimal_config {
+        info!("🔄 Validating combined configuration...");
+        info!("   Testing: {}", combined_config);
+
+        if test_codec_options(
+            serial,
+            server_jar,
+            combined_config,
+            profile.video_encoder.as_deref(),
+        )? {
+            info!("   ✅ Combined config works!");
+        } else {
+            info!("   ❌ Combined config failed, falling back to None");
+            profile.optimal_config = None;
+            profile.supported_options.clear();
+        }
+    }
+
     info!(
         "✅ Probe complete: {}/{} options supported",
         profile.supported_options.len(),
@@ -193,7 +230,7 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
     );
 
     if let Some(ref config) = profile.optimal_config {
-        info!("   Optimal config: {}", config);
+        info!("   Final config: {}", config);
     } else {
         info!("   No options supported, using defaults");
     }
@@ -209,13 +246,19 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
 /// Test if codec options work on device
 ///
 /// Returns true if encoder can be configured successfully
-fn test_codec_options(serial: &str, server_jar: &str, options: &str) -> Result<bool> {
-    use crate::{ScrcpyConnection, ServerParams};
+fn test_codec_options(
+    serial: &str,
+    server_jar: &str,
+    options: &str,
+    video_encoder: Option<&str>,
+) -> Result<bool> {
+    use crate::scrcpy::connection::ScrcpyConnection;
 
     // Create params with test options
     let params = ServerParams {
         video: true,
         video_codec: "h264".to_string(),
+        video_encoder: video_encoder.map(|s| s.to_string()),
         video_bit_rate: 4_000_000,
         max_size: 800,
         max_fps: 30,
@@ -228,7 +271,14 @@ fn test_codec_options(serial: &str, server_jar: &str, options: &str) -> Result<b
         ..Default::default()
     };
 
-    info!("  Testing: video_codec_options={}", options);
+    if let Some(encoder) = video_encoder {
+        info!(
+            "  Testing: video_encoder={}, video_codec_options={}",
+            encoder, options
+        );
+    } else {
+        info!("  Testing: video_codec_options={}", options);
+    }
 
     // Try to connect and read a few packets
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -303,6 +353,7 @@ mod tests {
             model: "Test".to_string(),
             platform: "test".to_string(),
             android_version: 14,
+            video_encoder: Some("c2.test.avc.encoder".to_string()),
             supported_options: vec!["i-frame-interval".to_string(), "latency".to_string()],
             optimal_config: None,
             tested_at: "2025-01-01T00:00:00Z".to_string(),
