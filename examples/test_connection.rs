@@ -2,7 +2,7 @@
 
 use {
     anyhow::{Context, Result},
-    saide::scrcpy::{ScrcpyConnection, ServerParams, VideoPacket},
+    saide::{ScrcpyConnection, ServerParams, VideoPacket},
 };
 
 fn main() -> Result<()> {

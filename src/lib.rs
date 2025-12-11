@@ -1,8 +1,15 @@
+pub mod app;
+pub mod config;
+pub mod controller;
 pub mod decoder;
 pub mod scrcpy;
+pub mod v4l2;
 
-// Re-export commonly used types
 pub use {
     decoder::{DecodedFrame, H264Decoder, VideoDecoder},
-    scrcpy::protocol::{control::ControlMessage, video::VideoPacket},
+    scrcpy::{
+        connection::ScrcpyConnection,
+        protocol::{control::ControlMessage, video::VideoPacket},
+        server::ServerParams,
+    },
 };

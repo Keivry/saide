@@ -24,6 +24,10 @@ path = "examples/test_protocol.rs"
 name = "test_decode_video"
 path = "examples/test_decode_video.rs"
 
+[[example]]
+name = "render_device"
+path = "examples/render_device.rs"
+
 
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }

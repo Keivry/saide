@@ -2,7 +2,10 @@
 //!
 //! 测试控制协议和视频协议的正确性
 
-use saide::scrcpy::{ControlMessage, VideoPacket, protocol::control::AndroidKeyEventAction};
+use {
+    saide::{ControlMessage, VideoPacket},
+    saide::scrcpy::protocol::control::AndroidKeyEventAction,
+};
 
 fn main() -> anyhow::Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -64,7 +67,8 @@ fn test_control_protocol() -> anyhow::Result<()> {
 
     for (name, msg, expected_size) in &test_cases {
         let mut buf = Vec::new();
-        msg.serialize(&mut buf)?;
+        let msg_ref: &ControlMessage = msg;
+        msg_ref.serialize(&mut buf)?;
 
         if buf.len() == *expected_size {
             println!("  ✓ {}: {} 字节", name, buf.len());

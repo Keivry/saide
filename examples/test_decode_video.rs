@@ -4,7 +4,7 @@ use {
     anyhow::{Context, Result},
     saide::{
         decoder::{H264Decoder, VideoDecoder},
-        scrcpy::{ScrcpyConnection, ServerParams},
+        ScrcpyConnection, ServerParams,
     },
     std::{fs::File, io::Write, process::Command},
     tracing::{info, warn},
