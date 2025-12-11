@@ -28,6 +28,10 @@ path = "examples/test_decode_video.rs"
 name = "render_device"
 path = "examples/render_device.rs"
 
+[[example]]
+name = "test_vaapi"
+path = "examples/test_vaapi.rs"
+
 
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }

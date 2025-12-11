@@ -2,11 +2,13 @@
 
 mod h264;
 mod rgba_render;
+mod vaapi;
 
 use {anyhow::Result, ffmpeg_next::format::Pixel};
 pub use {
     h264::H264Decoder,
     rgba_render::{RgbaRenderResources, new_rgba_render_callback},
+    vaapi::VaapiDecoder,
 };
 
 /// Decoded video frame
