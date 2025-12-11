@@ -15,12 +15,27 @@ struct VertexOutput {
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
     
-    // Full-screen quad (two triangles)
-    let x = f32((vertex_index & 1u) << 1u) - 1.0;
-    let y = 1.0 - f32((vertex_index & 2u));
+    // Full-screen quad (2 triangles, 6 vertices)
+    var positions = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0),  // Bottom-left
+        vec2<f32>( 1.0, -1.0),  // Bottom-right
+        vec2<f32>(-1.0,  1.0),  // Top-left
+        vec2<f32>(-1.0,  1.0),  // Top-left
+        vec2<f32>( 1.0, -1.0),  // Bottom-right
+        vec2<f32>( 1.0,  1.0),  // Top-right
+    );
     
-    out.position = vec4<f32>(x, y, 0.0, 1.0);
-    out.tex_coord = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
+    var tex_coords = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 1.0),  // Bottom-left
+        vec2<f32>(1.0, 1.0),  // Bottom-right
+        vec2<f32>(0.0, 0.0),  // Top-left
+        vec2<f32>(0.0, 0.0),  // Top-left
+        vec2<f32>(1.0, 1.0),  // Bottom-right
+        vec2<f32>(1.0, 0.0),  // Top-right
+    );
+    
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    out.tex_coord = tex_coords[vertex_index];
     
     return out;
 }

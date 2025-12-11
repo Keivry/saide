@@ -25,6 +25,9 @@ pub struct ScrcpyConnection {
     /// Device name (from device meta)
     pub device_name: Option<String>,
 
+    /// Video resolution (width, height) from codec meta
+    pub video_resolution: Option<(u32, u32)>,
+
     /// Video stream socket
     pub video_stream: Option<TcpStream>,
 
@@ -141,23 +144,28 @@ impl ScrcpyConnection {
 
         // Step 7: Read codec metadata from video stream (if enabled)
         // Codec meta: 4 bytes codec_id + 4 bytes width + 4 bytes height
-        if params.send_codec_meta
+        let video_resolution = if params.send_codec_meta
             && let Some(ref mut stream) = video_stream
         {
             let mut codec_meta = [0u8; 12];
             if let Err(e) = stream.read_exact(&mut codec_meta) {
                 debug!("Failed to read codec metadata: {}", e);
+                None
             } else {
                 let codec_id = u32::from_be_bytes(codec_meta[0..4].try_into().unwrap());
                 let width = u32::from_be_bytes(codec_meta[4..8].try_into().unwrap());
                 let height = u32::from_be_bytes(codec_meta[8..12].try_into().unwrap());
                 debug!("Codec meta: id=0x{:08x}, {}x{}", codec_id, width, height);
+                Some((width, height))
             }
-        }
+        } else {
+            None
+        };
 
         Ok(Self {
             scid,
             device_name,
+            video_resolution,
             video_stream,
             audio_stream,
             control_stream,

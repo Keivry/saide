@@ -176,15 +176,18 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
 
     info!("Connected! Device: {:?}", conn.device_name);
 
-    // Read first packet to get resolution
+    // Get resolution from codec meta
+    let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
+    info!("Video resolution: {}x{}", width, height);
+
+    info!("Video resolution: {}x{}", width, height);
+
+    info!("Initializing decoder: {}x{}", width, height);
+    let mut decoder = H264Decoder::new(width, height)?;
+
+    // Read first packet
     let first_packet = conn.read_video_packet()?;
     debug!("First packet: config={}, size={}", first_packet.is_config, first_packet.data.len());
-
-    // Assume 1920x1080 for now (should parse from codec meta)
-    let (width, height) = (1920, 1080);
-    info!("Initializing decoder: {}x{}", width, height);
-
-    let mut decoder = H264Decoder::new(width, height)?;
 
     // Decode first packet
     process_packet(&mut decoder, &first_packet, &frame_tx)?;
@@ -221,13 +224,22 @@ fn process_packet(
         debug!("Processing CONFIG packet ({} bytes)", packet.data.len());
     }
 
-    match decoder.decode(&packet.data, packet.pts_us as i64)? {
-        Some(frame) => {
+    // Decode packet (may not produce frame immediately for CONFIG packets)
+    match decoder.decode(&packet.data, packet.pts_us as i64) {
+        Ok(Some(frame)) => {
             debug!("Decoded frame: {}x{} {} bytes", frame.width, frame.height, frame.data.len());
-            frame_tx.send(Arc::new(frame))?;
+            if let Err(e) = frame_tx.send(Arc::new(frame)) {
+                warn!("Frame channel closed: {}", e);
+            }
         }
-        None => {
-            // Need more data
+        Ok(None) => {
+            // No frame yet (normal for CONFIG packets)
+            if !packet.is_config {
+                debug!("No frame output for non-CONFIG packet");
+            }
+        }
+        Err(e) => {
+            warn!("Decode error: {}", e);
         }
     }
 
