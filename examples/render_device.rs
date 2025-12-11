@@ -31,6 +31,7 @@ fn main() -> Result<()> {
             .with_inner_size([1280.0, 720.0])
             .with_title("Saide - Real Device Renderer"),
         renderer: eframe::Renderer::Wgpu,
+        vsync: false, // 🚀 LATENCY: Disable VSync (saves ~16ms)
         ..Default::default()
     };
 

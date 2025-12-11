@@ -349,6 +349,14 @@ fn accept_connection(listener: &TcpListener, channel: &str) -> Result<TcpStream>
 
     debug!("{} connection accepted from {}", channel, addr);
 
+    // 🚀 LOW LATENCY: Enable TCP_NODELAY to disable Nagle's algorithm
+    // This reduces latency by 5-10ms by sending packets immediately
+    stream
+        .set_nodelay(true)
+        .context("Failed to set TCP_NODELAY")?;
+    
+    debug!("{} connection: TCP_NODELAY enabled", channel);
+
     // NOTE: In adb reverse mode (default), the server does NOT send dummy byte
     // Dummy byte is only sent in tunnel_forward mode (when server listens)
     // The first byte is actual data, so we don't read it here

@@ -64,6 +64,11 @@ pub struct ServerParams {
 
     /// Video encoder name (optional, e.g., "c2.android.avc.encoder")
     pub video_encoder: Option<String>,
+
+    /// Video codec options (e.g., "profile=1,level=1" for low latency)
+    /// Format: key[:type]=value[,...]
+    /// Types: int (default), long, float, string
+    pub video_codec_options: Option<String>,
 }
 
 impl Default for ServerParams {
@@ -86,6 +91,10 @@ impl Default for ServerParams {
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
             video_encoder: None, // Auto-select best encoder
+            // 🚀 LOW LATENCY: Use Baseline Profile (no B-frames)
+            // profile=1 = AVCProfileBaseline (MediaCodecInfo.CodecProfileLevel)
+            // level=1 = AVCLevel1 (lowest latency, suitable for screen content)
+            video_codec_options: Some("profile=1,level=1".to_string()),
         }
     }
 }
@@ -142,6 +151,12 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
     if let Some(ref encoder) = params.video_encoder {
         args.push(format!("video_encoder={}", encoder));
         info!("Using video encoder: {}", encoder);
+    }
+    
+    // 🚀 LATENCY OPTIMIZATION: Codec options (profile=1 for Baseline, no B-frames)
+    if let Some(ref options) = params.video_codec_options {
+        args.push(format!("video_codec_options={}", options));
+        info!("Using video codec options: {}", options);
     }
 
     // Audio parameters

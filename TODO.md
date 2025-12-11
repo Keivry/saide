@@ -1,5 +1,47 @@
 # 项目任务清单
 
+## 最新优化 ✅ (2025-12-11)
+
+### scrcpy 级低延迟优化（预期减少 40-95ms）
+
+#### ✅ 已实施优化
+
+1. **Android 编码侧优化**
+   - ✅ Baseline Profile (无 B 帧): `profile=1,level=1`
+   - ✅ 自动硬件编码器检测 (MTK/Qualcomm/Exynos)
+   - 预期减少: 16-33ms
+
+2. **网络传输优化**
+   - ✅ TCP_NODELAY (禁用 Nagle 算法)
+   - 预期减少: 5-10ms
+
+3. **PC 解码侧优化**
+   - ✅ AV_CODEC_FLAG_LOW_DELAY (VAAPI + 软解)
+   - ✅ 单线程解码 (thread_count=1)
+   - 预期减少: 10-20ms
+
+4. **渲染优化**
+   - ✅ 禁用 VSync (`vsync: false`)
+   - ✅ NV12 零拷贝纹理上传
+   - 预期减少: 8-26ms
+
+**总计预期减少**: 39-89ms  
+**目标端到端延迟**: 40-70ms (对标 scrcpy 的 35-70ms)
+
+#### 📋 未实施（复杂度高）
+
+- [ ] GPU 零拷贝 (VAAPI → DMA-BUF → wgpu)
+  - 需要 wgpu unsafe 接口
+  - 预期减少: 8-10ms
+
+#### 📚 参考文档
+
+- scrcpy demuxer.c:188 - `AV_CODEC_FLAG_LOW_DELAY`
+- scrcpy server.c:688 - `TCP_NODELAY`
+- Android MediaCodecInfo.CodecProfileLevel - Baseline Profile
+
+---
+
 ## 已完成 ✅
 
 ### 核心功能

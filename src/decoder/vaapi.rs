@@ -58,13 +58,13 @@ impl VaapiDecoder {
 
         unsafe {
             let ctx_ptr = context.as_mut_ptr();
-            
+
             // Set hardware device context
             (*ctx_ptr).hw_device_ctx = ffmpeg::sys::av_buffer_ref(hw_device_ctx);
-            
+
             // Set format callback to select VAAPI
             (*ctx_ptr).get_format = Some(get_vaapi_format);
-            
+
             // Set dimensions
             (*ctx_ptr).width = width as i32;
             (*ctx_ptr).height = height as i32;
@@ -73,8 +73,12 @@ impl VaapiDecoder {
             // VAAPI will output NV12 after hw transfer
             (*ctx_ptr).sw_pix_fmt = ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NV12;
             
-            // Set thread count for better performance
-            (*ctx_ptr).thread_count = 0; // Auto
+            // 🚀 LOW LATENCY OPTIMIZATIONS (from scrcpy demuxer.c)
+            // 1. Enable low delay flag - disables frame reordering, outputs frames ASAP
+            (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
+            
+            // 2. Single thread - reduces context switching (VAAPI decodes in hardware anyway)
+            (*ctx_ptr).thread_count = 1;
         }
 
         let decoder = context

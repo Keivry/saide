@@ -38,9 +38,16 @@ impl H264Decoder {
 
         // Set dimensions
         unsafe {
-            (*context.as_mut_ptr()).width = width as i32;
-            (*context.as_mut_ptr()).height = height as i32;
-            (*context.as_mut_ptr()).pix_fmt = ffmpeg::format::Pixel::YUV420P.into();
+            let ctx_ptr = context.as_mut_ptr();
+            (*ctx_ptr).width = width as i32;
+            (*ctx_ptr).height = height as i32;
+            (*ctx_ptr).pix_fmt = ffmpeg::format::Pixel::YUV420P.into();
+            
+            // 🚀 LOW LATENCY: Enable low delay flag (same as VAAPI)
+            (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
+            
+            // Single thread for minimal latency
+            (*ctx_ptr).thread_count = 1;
         }
 
         // Open decoder
