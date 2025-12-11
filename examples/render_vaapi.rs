@@ -226,8 +226,11 @@ fn process_packet(
     match decoder.decode(&packet.data, packet.pts_us as i64) {
         Ok(Some(frame)) => {
             debug!("Decoded frame: {}x{} {:?} {} bytes", frame.width, frame.height, frame.format, frame.data.len());
+            eprintln!("INFO: Sending frame to UI: {}x{} {:?}", frame.width, frame.height, frame.format);
             if let Err(e) = frame_tx.send(Arc::new(frame)) {
                 warn!("Frame channel closed: {}", e);
+            } else {
+                eprintln!("INFO: Frame sent successfully");
             }
         }
         Ok(None) => {

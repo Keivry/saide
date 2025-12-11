@@ -35,6 +35,7 @@ impl CallbackTrait for Nv12RenderCallback {
         _encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
+        println!("NV12 prepare() called");
         let resources = callback_resources.get_mut::<Nv12RenderResources>().unwrap();
         resources.upload_frame(device, queue, &self.frame);
         Vec::new()
@@ -224,7 +225,28 @@ impl Nv12RenderResources {
         let uv_size = y_size / 2;
 
         if frame.data.len() < y_size + uv_size {
-            return; // Invalid data
+            eprintln!("WARN: Invalid NV12 data size: expected {}, got {}", 
+                y_size + uv_size, frame.data.len());
+            return;
+        }
+
+        // Debug: Print data info on first upload
+        if needs_rebuild {
+            println!("═══════════════════════════════════════");
+            println!("DEBUG NV12 Upload (First Frame):");
+            println!("  Frame size: {}x{}", width, height);
+            println!("  Y size: {} bytes", y_size);
+            println!("  UV size: {} bytes", uv_size);
+            println!("  Total: {} bytes (expected: {})", frame.data.len(), y_size + uv_size);
+            println!("  Y texture: R8Unorm {}x{}", width, height);
+            println!("  UV texture: Rg8Unorm {}x{}", width/2, height/2);
+            if frame.data.len() >= 8 {
+                println!("  Y sample [0..8]: {:?}", &frame.data[..8]);
+            }
+            if frame.data.len() >= y_size + 8 {
+                println!("  UV sample [{}..{}]: {:?}", y_size, y_size+8, &frame.data[y_size..y_size+8]);
+            }
+            println!("═══════════════════════════════════════");
         }
 
         // Upload Y plane

@@ -58,10 +58,23 @@ impl VaapiDecoder {
 
         unsafe {
             let ctx_ptr = context.as_mut_ptr();
+            
+            // Set hardware device context
             (*ctx_ptr).hw_device_ctx = ffmpeg::sys::av_buffer_ref(hw_device_ctx);
+            
+            // Set format callback to select VAAPI
             (*ctx_ptr).get_format = Some(get_vaapi_format);
+            
+            // Set dimensions
             (*ctx_ptr).width = width as i32;
             (*ctx_ptr).height = height as i32;
+            
+            // IMPORTANT: Request NV12 as software pixel format
+            // VAAPI will output NV12 after hw transfer
+            (*ctx_ptr).sw_pix_fmt = ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NV12;
+            
+            // Set thread count for better performance
+            (*ctx_ptr).thread_count = 0; // Auto
         }
 
         let decoder = context
@@ -77,7 +90,7 @@ impl VaapiDecoder {
             hw_device_ctx,
             width,
             height,
-            output_format: Pixel::NV12, // VAAPI native format
+            output_format: Pixel::NV12,
             last_decoded_dimensions: None,
         })
     }
