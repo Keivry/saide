@@ -152,10 +152,13 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
     // 🚀 NVDEC-specific codec options (avoid intra-refresh to prevent resolution changes)
     let nvdec_codec_options = Some(
         "profile=65536,\
-         i-frame-interval=1,\
-         prepend-sps-pps-to-idr-frames=1,\
+         i-frame-interval=2,\
          latency=0,\
-         priority=0"
+         priority=0,\
+         prepend-sps-pps-to-idr-frames=1,\
+         max-bframes=0,\
+         intra-refresh-period=60,\
+         bitrate-mode=1"
             .to_string(),
     );
 
