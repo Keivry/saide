@@ -146,7 +146,28 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
         anyhow::bail!("Server JAR not found: {}", server_jar);
     }
 
-    let params = ServerParams::default();
+    // 🚀 NVDEC-specific codec options (avoid intra-refresh to prevent resolution changes)
+    let nvdec_codec_options = Some(
+        "profile=65536,\
+         i-frame-interval=1,\
+         prepend-sps-pps-to-idr-frames=1,\
+         latency=0,\
+         priority=0".to_string()
+    );
+
+    let params = ServerParams {
+        video: true,
+        video_codec: "h264".to_string(),
+        video_bit_rate: 8_000_000,
+        max_size: 1600,
+        max_fps: 60,
+        audio: false,
+        control: true,
+        send_device_meta: true,
+        send_codec_meta: true,
+        video_codec_options: nvdec_codec_options,  // NVDEC-specific options
+        ..Default::default()
+    };
 
     info!("Connecting to device...");
     let rt = tokio::runtime::Builder::new_current_thread()
