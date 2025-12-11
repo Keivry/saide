@@ -48,24 +48,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample Y (full resolution)
     let y = textureSample(y_texture, tex_sampler, in.tex_coord).r;
     
-    // Sample UV (half resolution, hardware does bilinear interpolation)
-    // UV texture is already Rg8Unorm where R=U, G=V
+    // Sample UV (half resolution texture, but full resolution coordinates)
+    // The UV texture is already half-sized, so we sample at the same tex_coord
     let uv = textureSample(uv_texture, tex_sampler, in.tex_coord);
-    let u = uv.r;
-    let v = uv.g;
+    let u = uv.r - 0.5;
+    let v = uv.g - 0.5;
     
     // ITU-R BT.601 conversion (limited range [16-235] for Y, [16-240] for UV)
     // This is the standard used by most video content
     
     // Convert from limited range to full range
     let y_full = (y - 0.0625) * 1.164;           // (y - 16/255) * 255/219
-    let u_full = u - 0.5;                        // (u - 128/255)
-    let v_full = v - 0.5;                        // (v - 128/255)
     
     // BT.601 YUV to RGB conversion matrix
-    var r = y_full + 1.596 * v_full;
-    var g = y_full - 0.391 * u_full - 0.813 * v_full;
-    var b = y_full + 2.018 * u_full;
+    var r = y_full + 1.596 * v;
+    var g = y_full - 0.391 * u - 0.813 * v;
+    var b = y_full + 2.018 * u;
     
     // Clamp to [0, 1]
     r = clamp(r, 0.0, 1.0);

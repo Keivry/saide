@@ -181,14 +181,43 @@ impl VaapiDecoder {
                     self.width = sw_frame.width();
                     self.height = sw_frame.height();
 
-                    // NV12 data: Y plane + UV interleaved
-                    // For now, just extract Y plane + U/V planes
-                    let y_size = (self.width * self.height) as usize;
-                    let uv_size = y_size / 2; // NV12: UV is half size but interleaved
+                    // NV12 data extraction with proper linesize handling
+                    let y_linesize = sw_frame.stride(0) as usize;
+                    let uv_linesize = sw_frame.stride(1) as usize;
+                    let width = self.width as usize;
+                    let height = self.height as usize;
+                    
+                    // Log linesize info (only once per resolution change)
+                    if self.last_decoded_dimensions != Some((self.width, self.height)) {
+                        info!(
+                            "NV12 frame layout: {}x{}, Y linesize={} UV linesize={}",
+                            width, height, y_linesize, uv_linesize
+                        );
+                        self.last_decoded_dimensions = Some((self.width, self.height));
+                    }
+                    
+                    // Y plane: copy line by line to remove padding
+                    let y_size = width * height;
+                    let uv_size = width * (height / 2); // NV12: UV interleaved, same width
                     
                     let mut data = Vec::with_capacity(y_size + uv_size);
-                    data.extend_from_slice(&sw_frame.data(0)[..y_size]);
-                    data.extend_from_slice(&sw_frame.data(1)[..uv_size]);
+                    
+                    // Copy Y plane (remove linesize padding)
+                    let y_data = sw_frame.data(0);
+                    for row in 0..height {
+                        let start = row * y_linesize;
+                        let end = start + width;
+                        data.extend_from_slice(&y_data[start..end]);
+                    }
+                    
+                    // Copy UV plane (remove linesize padding)
+                    let uv_data = sw_frame.data(1);
+                    let uv_height = height / 2;
+                    for row in 0..uv_height {
+                        let start = row * uv_linesize;
+                        let end = start + width; // UV is interleaved, so same width in bytes
+                        data.extend_from_slice(&uv_data[start..end]);
+                    }
 
                     let pts = hw_frame.timestamp().unwrap_or(0);
 
