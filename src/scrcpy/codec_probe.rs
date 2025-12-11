@@ -5,26 +5,20 @@
 use {
     anyhow::{Context, Result},
     serde::{Deserialize, Serialize},
-    std::{
-        collections::HashMap,
-        fs,
-        path::PathBuf,
-        process::Command,
-        time::Duration,
-    },
+    std::{collections::HashMap, fs, path::PathBuf, process::Command, time::Duration},
     tracing::{debug, info},
 };
 
 /// Candidate codec options to test (from most to least impactful)
 const CODEC_OPTIONS: &[(&str, &str)] = &[
-    ("profile", "66"),                          // Baseline Profile
-    ("i-frame-interval", "2"),                  // Short GOP (high impact)
-    ("latency", "0"),                           // Android 11+ low latency
-    ("max-bframes", "0"),                       // Disable B-frames (Android 13+)
-    ("priority", "0"),                          // Real-time priority
-    ("prepend-sps-pps-to-idr-frames", "1"),     // Dynamic resolution
-    ("intra-refresh-period", "60"),             // Periodic refresh
-    ("bitrate-mode", "1"),                      // CBR
+    ("profile", "66"),                      // Baseline Profile
+    ("i-frame-interval", "2"),              // Short GOP (high impact)
+    ("latency", "0"),                       // Android 11+ low latency
+    ("max-bframes", "0"),                   // Disable B-frames (Android 13+)
+    ("priority", "0"),                      // Real-time priority
+    ("prepend-sps-pps-to-idr-frames", "1"), // Dynamic resolution
+    ("intra-refresh-period", "60"),         // Periodic refresh
+    ("bitrate-mode", "1"),                  // CBR
 ];
 
 /// Device codec compatibility profile
@@ -132,9 +126,7 @@ impl ProfileDatabase {
     }
 
     /// Get profile for device
-    pub fn get(&self, serial: &str) -> Option<&DeviceProfile> {
-        self.profiles.get(serial)
-    }
+    pub fn get(&self, serial: &str) -> Option<&DeviceProfile> { self.profiles.get(serial) }
 
     /// Insert or update profile
     pub fn insert(&mut self, profile: DeviceProfile) {
@@ -157,18 +149,16 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
     // Android version-based filtering
     let candidate_options: Vec<_> = CODEC_OPTIONS
         .iter()
-        .filter(|(key, _)| {
-            match *key {
-                "latency" if profile.android_version < 11 => {
-                    debug!("Skipping 'latency' (requires Android 11+)");
-                    false
-                }
-                "max-bframes" if profile.android_version < 13 => {
-                    debug!("Skipping 'max-bframes' (requires Android 13+)");
-                    false
-                }
-                _ => true,
+        .filter(|(key, _)| match *key {
+            "latency" if profile.android_version < 11 => {
+                debug!("Skipping 'latency' (requires Android 11+)");
+                false
             }
+            "max-bframes" if profile.android_version < 13 => {
+                debug!("Skipping 'max-bframes' (requires Android 13+)");
+                false
+            }
+            _ => true,
         })
         .collect();
 
@@ -219,50 +209,58 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
 /// Test if codec options work on device
 ///
 /// Returns true if encoder can be configured successfully
-fn test_codec_options(serial: &str, _server_jar: &str, options: &str) -> Result<bool> {
-    // Start scrcpy server with test options
-    let mut cmd = Command::new("adb");
-    cmd.args(["-s", serial, "shell"])
-        .arg(format!("CLASSPATH={}", "/data/local/tmp/scrcpy-server.jar"))
-        .arg("app_process")
-        .arg("/")
-        .arg("com.genymobile.scrcpy.Server")
-        .arg("3.3.3")
-        .arg(format!("scid={:08x}", rand::random::<u32>()))
-        .arg("log_level=error") // Suppress logs
-        .arg("video_bit_rate=4000000")
-        .arg("max_size=800") // Low resolution for fast testing
-        .arg("max_fps=30")
-        .arg(format!("video_codec_options={}", options))
-        .arg("audio=false")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+fn test_codec_options(serial: &str, server_jar: &str, options: &str) -> Result<bool> {
+    use crate::{ScrcpyConnection, ServerParams};
 
-    debug!("Test command: {:?}", cmd);
-
-    let mut child = cmd.spawn().context("Failed to spawn test server")?;
-
-    // Wait up to 2 seconds for encoder initialization
-    std::thread::sleep(Duration::from_millis(2000));
-
-    // Check if still running (success) or crashed (failure)
-    let success = match child.try_wait()? {
-        None => {
-            // Still running = encoder initialized successfully
-            child.kill().ok();
-            true
-        }
-        Some(status) => {
-            // Exited = encoder failed
-            debug!("Server exited with status: {}", status);
-            false
-        }
+    // Create params with test options
+    let params = ServerParams {
+        video: true,
+        video_codec: "h264".to_string(),
+        video_bit_rate: 4_000_000,
+        max_size: 800,
+        max_fps: 30,
+        audio: false,
+        control: false, // Don't need control for testing
+        send_device_meta: false,
+        send_codec_meta: true,
+        send_frame_meta: true,
+        video_codec_options: Some(options.to_string()),
+        ..Default::default()
     };
 
-    // Cleanup
-    child.wait().ok();
+    info!("  Testing: video_codec_options={}", options);
 
-    Ok(success)
+    // Try to connect and read a few packets
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    let result = rt.block_on(async {
+        // Try to establish connection
+        let mut conn = match ScrcpyConnection::connect(serial, server_jar, params).await {
+            Ok(c) => c,
+            Err(e) => {
+                info!("  Connection failed: {}", e);
+                return false;
+            }
+        };
+
+        // Try to read at least one video packet
+        match conn.read_video_packet() {
+            Ok(_packet) => {
+                info!("  ✅ Successfully read video packet");
+                conn.shutdown().ok();
+                true
+            }
+            Err(e) => {
+                info!("  Failed to read packet: {}", e);
+                conn.shutdown().ok();
+                false
+            }
+        }
+    });
+
+    Ok(result)
 }
 
 /// Get device platform
