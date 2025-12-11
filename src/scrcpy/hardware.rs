@@ -5,7 +5,7 @@
 use {
     anyhow::{Context, Result},
     std::process::Command,
-    tracing::{debug, info, warn},
+    tracing::info,
 };
 
 /// Detected hardware encoder information
@@ -18,86 +18,99 @@ pub struct EncoderInfo {
 
 /// Detect best H.264 hardware encoder on device
 ///
-/// Priority (vendor-specific hardware encoder first):
-/// 1. Vendor hardware: c2.mtk, OMX.qcom, OMX.Exynos, etc.
-/// 2. Generic Codec2: c2.android.avc.encoder
-/// 3. Fallback: system default
+/// Priority:
+/// 1. Query SoC platform (ro.board.platform / ro.hardware)
+/// 2. Match vendor-specific hardware encoder
+/// 3. Fallback to generic Codec2
 ///
 pub fn detect_h264_encoder(serial: &str) -> Result<Option<String>> {
     info!("Detecting H.264 encoder on device: {}", serial);
     
-    // Get device manufacturer
-    let manufacturer = get_device_manufacturer(serial)?;
-    debug!("Device manufacturer: {}", manufacturer);
+    // Get SoC platform
+    let platform = get_soc_platform(serial)?;
+    info!("Device SoC platform: {}", platform);
     
-    // Try vendor-specific hardware encoders first (modern naming)
-    let vendor_encoders_c2 = match manufacturer.as_str() {
-        "mediatek" => vec!["c2.mtk.avc.encoder"],
-        "qualcomm" | "xiaomi" | "oneplus" | "oppo" | "vivo" => vec!["c2.qcom.avc.encoder"],
-        "samsung" => vec!["c2.exynos.avc.encoder"],
-        _ => vec![],
-    };
+    // Detect encoder based on SoC
+    let encoder = match_encoder_for_platform(&platform);
     
-    for encoder in &vendor_encoders_c2 {
-        info!("Trying vendor encoder: {}", encoder);
-        return Ok(Some(encoder.to_string()));
+    if let Some(ref enc) = encoder {
+        info!("Selected encoder: {} (for {})", enc, platform);
+    } else {
+        info!("No vendor encoder matched for {}, using system default", platform);
     }
     
-    // Try legacy OMX hardware encoders
-    let vendor_encoders_omx = vec![
-        "OMX.qcom.video.encoder.avc",  // Qualcomm
-        "OMX.MTK.VIDEO.ENCODER.AVC",   // MediaTek
-        "OMX.Exynos.AVC.Encoder",      // Samsung Exynos
-        "OMX.IMG.TOPAZ.VIDEO.Encoder", // PowerVR
-        "OMX.k3.video.encoder.avc",    // Huawei Kirin
-    ];
-    
-    for encoder in &vendor_encoders_omx {
-        if is_encoder_available(serial, encoder)? {
-            info!("Found legacy hardware encoder: {}", encoder);
-            return Ok(Some(encoder.to_string()));
-        }
-    }
-    
-    // Use generic Codec2 as last resort (may be software)
-    info!("Using generic Codec2 encoder: c2.android.avc.encoder");
-    Ok(Some("c2.android.avc.encoder".to_string()))
+    Ok(encoder)
 }
 
-/// Get device manufacturer
-fn get_device_manufacturer(serial: &str) -> Result<String> {
+/// Get SoC platform identifier
+fn get_soc_platform(serial: &str) -> Result<String> {
+    // Try ro.board.platform first (most accurate)
+    let platform = get_prop(serial, "ro.board.platform")?;
+    if !platform.is_empty() && platform != "unknown" {
+        return Ok(platform);
+    }
+    
+    // Fallback to ro.hardware
+    let hardware = get_prop(serial, "ro.hardware")?;
+    if !hardware.is_empty() && hardware != "unknown" {
+        return Ok(hardware);
+    }
+    
+    info!("Unable to detect SoC platform, using system default encoder");
+    Ok("unknown".to_string())
+}
+
+/// Match encoder for specific SoC platform
+fn match_encoder_for_platform(platform: &str) -> Option<String> {
+    let platform_lower = platform.to_lowercase();
+    
+    // MediaTek (mt*, dimensity)
+    if platform_lower.starts_with("mt") || platform_lower.contains("dimensity") {
+        return Some("c2.mtk.avc.encoder".to_string());
+    }
+    
+    // Qualcomm (msm*, sm*, sdm*, lahaina, taro, kalama, etc.)
+    if platform_lower.starts_with("msm") 
+        || platform_lower.starts_with("sm") 
+        || platform_lower.starts_with("sdm")
+        || platform_lower.starts_with("qsm")
+        || platform_lower.contains("lahaina")   // SM8350 (SD888)
+        || platform_lower.contains("taro")      // SM8450 (SD8 Gen1)
+        || platform_lower.contains("kalama")    // SM8550 (SD8 Gen2)
+        || platform_lower.contains("pineapple") // SM8650 (SD8 Gen3)
+    {
+        return Some("c2.qcom.avc.encoder".to_string());
+    }
+    
+    // Samsung Exynos
+    if platform_lower.starts_with("exynos") || platform_lower.starts_with("s5e") {
+        return Some("c2.exynos.avc.encoder".to_string());
+    }
+    
+    // Huawei Kirin
+    if platform_lower.starts_with("kirin") || platform_lower.starts_with("hi") {
+        return Some("OMX.k3.video.encoder.avc".to_string());
+    }
+    
+    None
+}
+
+/// Get Android system property
+fn get_prop(serial: &str, prop_name: &str) -> Result<String> {
     let output = Command::new("adb")
-        .args(["-s", serial, "shell", "getprop", "ro.product.manufacturer"])
+        .args(["-s", serial, "shell", "getprop", prop_name])
         .output()
-        .context("Failed to query device manufacturer")?;
+        .context(format!("Failed to query {}", prop_name))?;
 
     if !output.status.success() {
         return Ok("unknown".to_string());
     }
 
-    let manufacturer = String::from_utf8_lossy(&output.stdout)
+    let value = String::from_utf8_lossy(&output.stdout)
         .trim()
         .to_lowercase();
 
-    Ok(manufacturer)
-}
-
-/// Check if encoder is available on device (heuristic)
-fn is_encoder_available(serial: &str, encoder_name: &str) -> Result<bool> {
-    let manufacturer = get_device_manufacturer(serial)?;
-
-    // Heuristic based on manufacturer
-    let likely_available = match encoder_name {
-        "c2.android.avc.encoder" => true, // Universal Codec2
-        "OMX.qcom.video.encoder.avc" => manufacturer.contains("qualcomm") 
-            || manufacturer.contains("xiaomi")
-            || manufacturer.contains("oneplus"),
-        "OMX.MTK.VIDEO.ENCODER.AVC" => manufacturer.contains("mediatek") || manufacturer.contains("vivo"),
-        "OMX.Exynos.AVC.Encoder" => manufacturer.contains("samsung"),
-        _ => false,
-    };
-
-    Ok(likely_available)
+    Ok(value)
 }
 
 /// List all available video encoders (for debugging)
