@@ -121,7 +121,7 @@ impl eframe::App for NvdecRendererApp {
                     egui::vec2(w, h),
                 );
 
-                let callback = new_nv12_render_callback(frame.clone(), 0);
+                let callback = new_nv12_render_callback(frame.clone());
                 ui.painter().add(egui::PaintCallback {
                     rect,
                     callback: Arc::new(callback),
