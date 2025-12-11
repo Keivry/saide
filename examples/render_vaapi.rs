@@ -152,9 +152,21 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
         anyhow::bail!("Server JAR not found: {}", server_jar);
     }
 
+    // Auto-detect hardware encoder
+    let video_encoder = saide::scrcpy::hardware::detect_h264_encoder(&serial)
+        .ok()
+        .flatten();
+    
+    if let Some(ref encoder) = video_encoder {
+        info!("Using hardware encoder: {}", encoder);
+    } else {
+        info!("Using system default encoder");
+    }
+
     let params = ServerParams {
         video: true,
         video_codec: "h264".to_string(),
+        video_encoder,  // Auto-detected
         video_bit_rate: 8_000_000,
         max_size: 1920,
         max_fps: 60,

@@ -61,6 +61,9 @@ pub struct ServerParams {
 
     /// Log level (verbose, debug, info, warn, error)
     pub log_level: String,
+
+    /// Video encoder name (optional, e.g., "c2.android.avc.encoder")
+    pub video_encoder: Option<String>,
 }
 
 impl Default for ServerParams {
@@ -82,6 +85,7 @@ impl Default for ServerParams {
             send_codec_meta: true, // Match scrcpy default (server ignores false?)
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
+            video_encoder: None, // Auto-select best encoder
         }
     }
 }
@@ -134,6 +138,10 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
     }
     if params.video && params.max_fps > 0 {
         args.push(format!("max_fps={}", params.max_fps));
+    }
+    if let Some(ref encoder) = params.video_encoder {
+        args.push(format!("video_encoder={}", encoder));
+        info!("Using video encoder: {}", encoder);
     }
 
     // Audio parameters
