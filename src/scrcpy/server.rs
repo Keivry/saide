@@ -91,10 +91,11 @@ impl Default for ServerParams {
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
             video_encoder: None, // Auto-select best encoder
-            // NOTE: profile=1 (Baseline) causes VAAPI hwaccel init failure on Intel
-            // Software decoder works fine, but VAAPI driver doesn't support it fully
-            // Use default profile for maximum compatibility
-            video_codec_options: None,
+            // 🚀 LOW LATENCY: 全链路优化参数
+            // i-frame-interval=1: GOP=60帧(1秒@60fps)，减少关键帧等待延迟
+            // intra-refresh-period=60: 周期性I帧刷新，避免整帧I帧的突发延迟
+            // prepend-sps-pps-to-idr-frames=1: 每个IDR帧前加SPS/PPS，快速恢复
+            video_codec_options: Some("i-frame-interval=1,intra-refresh-period=60,prepend-sps-pps-to-idr-frames=1".to_string()),
         }
     }
 }
