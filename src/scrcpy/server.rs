@@ -187,8 +187,8 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
 pub fn start_server(serial: &str, params: &ServerParams) -> Result<std::process::Child> {
     let args = build_server_args(params);
 
-    debug!("Starting server with scid={:08x}", params.scid);
-    debug!("Server command: adb -s {} {}", serial, args.join(" "));
+    info!("Starting server with scid={:08x}", params.scid);
+    info!("Server command: adb -s {} shell {}", serial, args.join(" "));
 
     let mut cmd = Command::new("adb");
     cmd.arg("-s").arg(serial);
