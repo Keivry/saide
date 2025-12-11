@@ -91,11 +91,21 @@ impl Default for ServerParams {
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
             video_encoder: None, // Auto-select best encoder
-            // 🚀 LOW LATENCY: 全链路优化参数
-            // i-frame-interval=1: GOP=60帧(1秒@60fps)，减少关键帧等待延迟
-            // intra-refresh-period=60: 周期性I帧刷新，避免整帧I帧的突发延迟
-            // prepend-sps-pps-to-idr-frames=1: 每个IDR帧前加SPS/PPS，快速恢复
-            video_codec_options: Some("i-frame-interval=1,intra-refresh-period=60,prepend-sps-pps-to-idr-frames=1".to_string()),
+            // 🚀 ULTRA LOW LATENCY: 强制禁用所有缓冲和 B 帧
+            // profile=65536: ConstrainedBaseline (强制禁用 B 帧，VAAPI 兼容)
+            // i-frame-interval=1: GOP=60 帧，最小关键帧间隔
+            // intra-refresh-period=60: 周期性刷新，避免整帧 I 帧突发
+            // prepend-sps-pps-to-idr-frames=1: 每个 IDR 帧附带 SPS/PPS
+            // latency=0: Android 11+ 最低延迟模式
+            // priority=0: 实时编码优先级
+            video_codec_options: Some(
+                "profile=65536,\
+                 i-frame-interval=1,\
+                 intra-refresh-period=60,\
+                 prepend-sps-pps-to-idr-frames=1,\
+                 latency=0,\
+                 priority=0".to_string()
+            ),
         }
     }
 }
