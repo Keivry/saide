@@ -65,7 +65,8 @@ impl VaapiDecoder {
             // Set format callback to select VAAPI
             (*ctx_ptr).get_format = Some(get_vaapi_format);
 
-            // Set dimensions
+            // Set initial dimensions as hints
+            // VAAPI will use these for initialization, then update from SPS/PPS
             (*ctx_ptr).width = width as i32;
             (*ctx_ptr).height = height as i32;
             
@@ -73,11 +74,11 @@ impl VaapiDecoder {
             // VAAPI will output NV12 after hw transfer
             (*ctx_ptr).sw_pix_fmt = ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NV12;
             
-            // 🚀 LOW LATENCY OPTIMIZATIONS (from scrcpy demuxer.c)
-            // 1. Enable low delay flag - disables frame reordering, outputs frames ASAP
+            // 🚀 LOW LATENCY OPTIMIZATIONS
+            // 1. Low delay flag - disables frame reordering
             (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
             
-            // 2. Single thread - reduces context switching (VAAPI decodes in hardware anyway)
+            // 2. Single thread - VAAPI decodes in hardware, single thread reduces overhead
             (*ctx_ptr).thread_count = 1;
         }
 

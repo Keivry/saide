@@ -91,10 +91,10 @@ impl Default for ServerParams {
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
             video_encoder: None, // Auto-select best encoder
-            // 🚀 LOW LATENCY: Use Baseline Profile (no B-frames)
-            // profile=1 = AVCProfileBaseline (MediaCodecInfo.CodecProfileLevel)
-            // level=1 = AVCLevel1 (lowest latency, suitable for screen content)
-            video_codec_options: Some("profile=1,level=1".to_string()),
+            // NOTE: profile=1 (Baseline) causes VAAPI hwaccel init failure on Intel
+            // Software decoder works fine, but VAAPI driver doesn't support it fully
+            // Use default profile for maximum compatibility
+            video_codec_options: None,
         }
     }
 }
