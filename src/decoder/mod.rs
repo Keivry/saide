@@ -4,7 +4,8 @@ mod h264;
 mod nv12_render;
 mod rgba_render;
 mod vaapi;
-mod nvdec;  // 🚀 NVIDIA NVDEC decoder
+mod nvdec;
+mod auto;  // 🚀 Auto GPU detection
 
 use {anyhow::Result, ffmpeg_next::format::Pixel};
 pub use {
@@ -12,7 +13,8 @@ pub use {
     nv12_render::{Nv12RenderResources, new_nv12_render_callback},
     rgba_render::{RgbaRenderResources, new_rgba_render_callback},
     vaapi::VaapiDecoder,
-    nvdec::NvdecDecoder,  // Export NVDEC decoder
+    nvdec::NvdecDecoder,
+    auto::{AutoDecoder, GpuType, detect_gpu},  // Export auto detection
 };
 
 /// Decoded video frame
