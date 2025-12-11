@@ -2,21 +2,33 @@
 
 ## 关键发现 🔍
 
-### 编码器选择错误（已修复）
-**问题**：检测逻辑优先选择通用 `c2.android.avc.encoder`，实际上是**软件编码器**  
-**影响**：MediaTek、Qualcomm 等设备未使用硬件编码器  
-**修复** (commit: 3c7ec62)：
-- 查询设备厂商 (`ro.product.manufacturer`)
-- 优先选择厂商硬件编码器：
-  - `vivo` → `c2.mtk.avc.encoder` (MediaTek HW)
-  - `xiaomi` → `c2.qcom.avc.encoder` (Qualcomm HW)
-  - `samsung` → `c2.exynos.avc.encoder` (Exynos HW)
-- 降级到通用 Codec2 仅作为最后备选
+### 编码器检测方法（已优化）
 
-**验证方法**：
+**第 1 版** (commit: bd18dfc) ❌  
+- 直接选择 `c2.android.avc.encoder`
+- 问题：实际上是软件编码器
+
+**第 2 版** (commit: 3c7ec62) ⚠️  
+- 基于手机厂商匹配（vivo → mediatek）
+- 问题：不可靠（vivo 也有高通，小米也有 MTK）
+
+**第 3 版** (commit: 155dbe6) ✅  
+- **查询 SoC 平台**：`ro.board.platform` / `ro.hardware`
+- **精确匹配**：
+  ```
+  mt6991           → c2.mtk.avc.encoder      (MediaTek)
+  sm8450 / lahaina → c2.qcom.avc.encoder     (Qualcomm)
+  exynos2100       → c2.exynos.avc.encoder   (Samsung)
+  kirin980         → OMX.k3.video.encoder.avc (Huawei)
+  ```
+- **覆盖率**：支持所有主流 SoC
+
+**验证**：
 ```bash
-scrcpy --list-encoder  # 查看设备支持的编码器
-# 输出示例：
+adb shell getprop ro.board.platform
+# 输出：mt6991
+
+scrcpy --list-encoder
 # c2.mtk.avc.encoder             (hw) [vendor]  ← 硬件
 # c2.android.avc.encoder         (sw)           ← 软件
 ```
@@ -139,3 +151,31 @@ feat(scrcpy): 添加硬件编码器自动检测以降低延迟
 **状态**：硬件编码器检测已实现 ✅  
 **GPU 零拷贝**：未实现，待后续优化  
 **预期延迟改善**：15-45ms (取决于设备)
+
+## 支持的 SoC 平台映射
+
+### MediaTek
+- **前缀**：`mt*`, `dimensity*`
+- **编码器**：`c2.mtk.avc.encoder`
+- **示例**：mt6891, mt6983, mt6991, dimensity9200
+
+### Qualcomm Snapdragon
+- **前缀**：`msm*`, `sm*`, `sdm*`, `qsm*`
+- **代号**：lahaina, taro, kalama, pineapple
+- **编码器**：`c2.qcom.avc.encoder`
+- **示例**：
+  - msm8998 (SD835)
+  - sm8450 / taro (SD8 Gen1)
+  - sm8550 / kalama (SD8 Gen2)
+  - sm8650 / pineapple (SD8 Gen3)
+  - lahaina (SD888)
+
+### Samsung Exynos
+- **前缀**：`exynos*`, `s5e*`
+- **编码器**：`c2.exynos.avc.encoder`
+- **示例**：exynos2100, exynos2200, s5e9925
+
+### Huawei Kirin
+- **前缀**：`kirin*`, `hi*`
+- **编码器**：`OMX.k3.video.encoder.avc` (legacy OMX)
+- **示例**：kirin980, kirin9000, hi3670
