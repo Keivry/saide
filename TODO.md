@@ -174,7 +174,9 @@ cargo run --example render_device
   - [x] 添加 Default trait 实现
   - [x] 34/34 单元测试通过
 - [x] **Bug 修复**
-  - [x] 修复 StreamPlayer NaN 布局错误（video_width/height 未初始化时计算宽高比）
+  - [x] 修复 StreamPlayer NV12 渲染维度检查
+  - [x] 修复初始化状态机：等待 video_rect 完全就绪再设为 Ready
+  - [x] 在 draw_indicator 中添加防御性检查
 
 #### 技术细节
 **重构前**：外部 scrcpy 进程 → V4L2 → V4L2Player  
@@ -187,7 +189,9 @@ cargo run --example render_device
 - ✅ 更好的可维护性（减少外部依赖）
 
 **已修复问题**：
-- ✅ 视频渲染 panic：max_rect is not NaN
+- ✅ NaN 布局 panic：video_rect 初始化时序问题
+  - 根因：PlayerEvent::Ready 到达前 current_frame 已有数据，导致 video_width/height 为 0
+  - 方案：状态机等待 player.ready() && valid video_rect
 
 ---
 
