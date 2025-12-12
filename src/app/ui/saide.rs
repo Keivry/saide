@@ -208,8 +208,15 @@ impl SAideApp {
                 }
             }
 
-            // Check if all components are initialized
-            if self.device_monitor_rx.is_some() && self.device_id.is_some() {
+            // Check if all components are initialized AND video stream is ready with valid
+            // dimensions
+            let video_rect = self.player.video_rect();
+            let stream_ready = self.player.ready()
+                && video_rect.width() > 0.0
+                && video_rect.height() > 0.0
+                && !video_rect.min.x.is_nan();
+
+            if self.device_monitor_rx.is_some() && self.device_id.is_some() && stream_ready {
                 self.init_state = InitState::Ready;
                 info!("Initialization completed successfully");
             }
@@ -728,10 +735,13 @@ impl SAideApp {
     fn draw_indicator(&mut self, ctx: &egui::Context) {
         let video_rect = self.player.video_rect();
 
-        egui::Area::new(egui::Id::new("indicator"))
-            .fixed_pos(egui::pos2(0.0, 0.0))
-            .interactable(false)
-            .show(ctx, |ui| self.indicator.draw_indicator(ui, video_rect));
+        // Only draw indicator if video rect is valid (has positive dimensions)
+        if video_rect.width() > 0.0 && video_rect.height() > 0.0 && !video_rect.min.x.is_nan() {
+            egui::Area::new(egui::Id::new("indicator"))
+                .fixed_pos(egui::pos2(0.0, 0.0))
+                .interactable(false)
+                .show(ctx, |ui| self.indicator.draw_indicator(ui, video_rect));
+        }
     }
 
     fn coodinates_transform_params(&self) -> CoordinatesTransformParams {
