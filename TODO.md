@@ -173,6 +173,8 @@ cargo run --example render_device
   - [x] 移除不必要的类型转换
   - [x] 添加 Default trait 实现
   - [x] 34/34 单元测试通过
+- [x] **Bug 修复**
+  - [x] 修复 StreamPlayer NaN 布局错误（video_width/height 未初始化时计算宽高比）
 
 #### 技术细节
 **重构前**：外部 scrcpy 进程 → V4L2 → V4L2Player  
@@ -183,6 +185,9 @@ cargo run --example render_device
 - ✅ 更好的性能（无 V4L2 中间层）
 - ✅ 更统一的实现（所有示例都使用 StreamPlayer）
 - ✅ 更好的可维护性（减少外部依赖）
+
+**已修复问题**：
+- ✅ 视频渲染 panic：max_rect is not NaN
 
 ---
 
