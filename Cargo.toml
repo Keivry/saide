@@ -41,6 +41,10 @@ name = "test_audio"
 path = "examples/test_audio.rs"
 
 [[example]]
+name = "audio_diagnostic"
+path = "examples/audio_diagnostic.rs"
+
+[[example]]
 name = "probe_codec"
 path = "examples/probe_codec.rs"
 
