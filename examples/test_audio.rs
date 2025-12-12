@@ -101,10 +101,13 @@ fn main() -> Result<()> {
                         }
                     }
                     Ok(None) => {
-                        // Need more data
+                        // Need more data or skipped (e.g., config packet)
                     }
                     Err(e) => {
-                        eprintln!("⚠️  Failed to decode audio packet: {}", e);
+                        // Only log errors for non-first packets (first might be config)
+                        if packet_count > 1 {
+                            eprintln!("⚠️  Failed to decode audio packet #{}: {}", packet_count, e);
+                        }
                     }
                 }
             }

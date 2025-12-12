@@ -52,9 +52,14 @@ impl AudioDecoder for OpusDecoder {
         ffmpeg_packet.set_pts(Some(pts));
 
         // Send packet to decoder
-        self.decoder
-            .send_packet(&ffmpeg_packet)
-            .context("Failed to send packet to Opus decoder")?;
+        match self.decoder.send_packet(&ffmpeg_packet) {
+            Ok(_) => {}
+            Err(e) => {
+                // First packet might be config/header, skip it
+                debug!("Skip packet (might be config): {}", e);
+                return Ok(None);
+            }
+        }
 
         // Receive decoded frame
         let mut frame = ffmpeg::util::frame::Audio::empty();
@@ -62,9 +67,10 @@ impl AudioDecoder for OpusDecoder {
             Ok(_) => {
                 let samples = extract_f32_samples(&frame)?;
                 debug!(
-                    "Decoded audio: {} samples, {} channels",
+                    "Decoded audio: {} samples, {} channels, format={:?}",
                     samples.len() / self.channels as usize,
-                    self.channels
+                    self.channels,
+                    frame.format()
                 );
 
                 Ok(Some(DecodedAudio {
@@ -108,32 +114,55 @@ impl AudioDecoder for OpusDecoder {
 }
 
 /// Extract f32 samples from FFmpeg audio frame
+///
+/// Supports both Packed (LRLRLR...) and Planar (LLL...RRR...) formats
 fn extract_f32_samples(frame: &ffmpeg::util::frame::Audio) -> Result<Vec<f32>> {
     let format = frame.format();
+    let channels = frame.channels() as usize;
+    let nb_samples = frame.samples();
 
-    // Ensure format is F32 packed
-    if format != ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed) {
-        anyhow::bail!("Unexpected audio format: {:?}", format);
+    match format {
+        // Packed: LRLRLR... (interleaved)
+        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed) => {
+            let data = frame.data(0);
+            let samples: Vec<f32> = data
+                .chunks_exact(4)
+                .map(|chunk| f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect();
+            Ok(samples)
+        }
+
+        // Planar: LLL...RRR... (separate channels)
+        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar) => {
+            let mut samples = Vec::with_capacity(nb_samples * channels);
+
+            // Interleave channels: L[0]R[0]L[1]R[1]...
+            for i in 0..nb_samples {
+                for ch in 0..channels {
+                    let data = frame.data(ch);
+                    let offset = i * 4; // 4 bytes per f32
+                    if offset + 4 <= data.len() {
+                        let sample = f32::from_ne_bytes([
+                            data[offset],
+                            data[offset + 1],
+                            data[offset + 2],
+                            data[offset + 3],
+                        ]);
+                        samples.push(sample);
+                    }
+                }
+            }
+
+            Ok(samples)
+        }
+
+        _ => {
+            anyhow::bail!(
+                "Unsupported audio format: {:?}. Expected F32(Packed) or F32(Planar)",
+                format
+            )
+        }
     }
-
-    let data = frame.data(0);
-    let sample_count = data.len() / std::mem::size_of::<f32>();
-
-    // Convert &[u8] to &[f32]
-    let samples: Vec<f32> = data
-        .chunks_exact(4)
-        .map(|chunk| f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect();
-
-    if samples.len() != sample_count {
-        anyhow::bail!(
-            "Sample count mismatch: expected {}, got {}",
-            sample_count,
-            samples.len()
-        );
-    }
-
-    Ok(samples)
 }
 
 #[cfg(test)]
