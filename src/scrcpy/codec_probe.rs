@@ -4,7 +4,7 @@
 
 use {
     super::server::ServerParams,
-    crate::{GpuType, detect_gpu},
+    crate::decoder::{GpuType, detect_gpu},
     anyhow::{Context, Result},
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, fs, path::PathBuf, process::Command},

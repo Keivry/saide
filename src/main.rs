@@ -1,14 +1,10 @@
-mod app;
-mod config;
-mod controller;
-mod scrcpy;
-mod v4l2;
-
 use {
     anyhow::anyhow,
-    app::ui::{SAideApp, Toolbar},
-    config::ConfigManager,
     eframe::{egui, egui_wgpu},
+    saide::{
+        app::ui::{SAideApp, Toolbar},
+        config::ConfigManager,
+    },
     tracing::info,
     tracing_subscriber::{EnvFilter, fmt, prelude::*},
 };
@@ -37,8 +33,8 @@ fn main() -> anyhow::Result<()> {
 
     info!("SAide starting...");
 
-    info!("V4L2 device: {}", config.scrcpy.v4l2.device);
     info!("Video backend: {}", config.gpu.backend);
+    info!("Max video size: {}", config.scrcpy.video.max_size);
     info!("Max FPS: {}", config.scrcpy.video.max_fps);
     info!("Logging level: {}", config.logging.level);
 

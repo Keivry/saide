@@ -5,8 +5,6 @@
 use {
     super::VideoStats,
     crate::{
-        ScrcpyConnection,
-        ServerParams,
         decoder::{
             AudioDecoder,
             AudioPlayer,
@@ -15,7 +13,9 @@ use {
             Nv12RenderResources,
             OpusDecoder,
             VideoDecoder,
+            new_nv12_render_callback,
         },
+        scrcpy::{connection::ScrcpyConnection, server::ServerParams},
         sync::AVSync,
     },
     anyhow::{Context, Result},
@@ -99,10 +99,7 @@ impl StreamPlayer {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // Register NV12 render resources
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
-            let resources = Nv12RenderResources::new(
-                &wgpu_state.device,
-                wgpu_state.target_format,
-            );
+            let resources = Nv12RenderResources::new(&wgpu_state.device, wgpu_state.target_format);
             wgpu_state
                 .renderer
                 .write()
@@ -160,7 +157,12 @@ impl StreamPlayer {
         // Check for initialization events
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                PlayerEvent::Ready { frame_rx, stats_rx, width, height } => {
+                PlayerEvent::Ready {
+                    frame_rx,
+                    stats_rx,
+                    width,
+                    height,
+                } => {
                     info!("Stream ready: {}x{}", width, height);
                     self.frame_rx = Some(frame_rx);
                     self.stats_rx = Some(stats_rx);
@@ -225,13 +227,10 @@ impl StreamPlayer {
             self.video_rect = rect;
 
             // Create NV12 render callback
-            use crate::decoder::new_nv12_render_callback;
             let callback = new_nv12_render_callback(frame.clone());
 
-            ui.painter().add(egui_wgpu::Callback::new_paint_callback(
-                rect,
-                callback,
-            ));
+            ui.painter()
+                .add(egui_wgpu::Callback::new_paint_callback(rect, callback));
 
             ui.allocate_rect(rect, egui::Sense::click())
         } else {
@@ -252,29 +251,19 @@ impl StreamPlayer {
     }
 
     /// Get video display rectangle
-    pub fn video_rect(&self) -> egui::Rect {
-        self.video_rect
-    }
+    pub fn video_rect(&self) -> egui::Rect { self.video_rect }
 
     /// Get video dimensions
-    pub fn video_dimensions(&self) -> (u32, u32) {
-        (self.video_width, self.video_height)
-    }
+    pub fn video_dimensions(&self) -> (u32, u32) { (self.video_width, self.video_height) }
 
     /// Get player state
-    pub fn state(&self) -> &PlayerState {
-        &self.state
-    }
+    pub fn state(&self) -> &PlayerState { &self.state }
 
     /// Check if player is ready (streaming)
-    pub fn ready(&self) -> bool {
-        matches!(self.state, PlayerState::Streaming)
-    }
+    pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Streaming) }
 
     /// Get video dimensions
-    pub fn dimensions(&self) -> (u32, u32) {
-        (self.video_width, self.video_height)
-    }
+    pub fn dimensions(&self) -> (u32, u32) { (self.video_width, self.video_height) }
 
     /// Get video statistics
     pub fn video_stats(&self) -> VideoStats {
@@ -299,9 +288,7 @@ impl StreamPlayer {
 }
 
 impl Drop for StreamPlayer {
-    fn drop(&mut self) {
-        self.stop();
-    }
+    fn drop(&mut self) { self.stop(); }
 }
 
 /// Stream worker thread
@@ -332,9 +319,8 @@ fn stream_worker(serial: String, event_tx: Sender<PlayerEvent>) -> Result<()> {
         .enable_all()
         .build()?;
 
-    let mut conn = rt.block_on(async {
-        ScrcpyConnection::connect(&serial, server_jar, params).await
-    })?;
+    let mut conn =
+        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
 
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
     info!("Video resolution: {}x{}", width, height);
@@ -360,7 +346,10 @@ fn stream_worker(serial: String, event_tx: Sender<PlayerEvent>) -> Result<()> {
     let mut audio_decoder = OpusDecoder::new(48000, 2)?;
     let audio_player = AudioPlayer::new(48000, 2)?;
 
-    info!("Decoders initialized: {} + Opus", video_decoder.decoder_type());
+    info!(
+        "Decoders initialized: {} + Opus",
+        video_decoder.decoder_type()
+    );
 
     // Shared state
     let av_sync = Arc::new(Mutex::new(AVSync::new(20)));
@@ -373,10 +362,11 @@ fn stream_worker(serial: String, event_tx: Sender<PlayerEvent>) -> Result<()> {
             loop {
                 let mut header = [0u8; 12];
                 audio_stream.read_exact(&mut header)?;
-                let packet_size = u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
+                let packet_size =
+                    u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
                 let pts = i64::from_be_bytes([
-                    header[0], header[1], header[2], header[3],
-                    header[4], header[5], header[6], header[7],
+                    header[0], header[1], header[2], header[3], header[4], header[5], header[6],
+                    header[7],
                 ]);
 
                 let mut payload = vec![0u8; packet_size];

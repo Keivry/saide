@@ -804,7 +804,10 @@ impl eframe::App for SAideApp {
         }
 
         // Frame rate limiting (only when streaming)
-        if matches!(self.player.state(), super::stream_player::PlayerState::Streaming) {
+        if matches!(
+            self.player.state(),
+            super::stream_player::PlayerState::Streaming
+        ) {
             if let Some(limiter) = self.frame_rate_limiter {
                 if let Some(last) = self.last_paint_instant {
                     let elapsed = last.elapsed();
