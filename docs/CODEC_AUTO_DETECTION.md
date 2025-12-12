@@ -27,7 +27,23 @@ cargo run --example probe_codec 10AF971ZLN004SU
 
 ### 2. 探测过程
 
-#### 阶段 1：硬件编码器检测 ⭐ NEW
+#### 阶段 1：GPU 类型检测 ⭐ NEW (v0.2.0)
+
+自动检测 PC 端 GPU 类型，智能选择 `profile` 值：
+
+```
+Detected GPU type: Nvidia
+Using profile=65536 (NVDEC-specific enum value)
+```
+
+| GPU 类型 | profile 值 | 说明 |
+|---------|-----------|------|
+| NVIDIA  | 65536     | NVDEC 硬件解码器专用值 |
+| Intel   | 66        | Baseline Profile (VAAPI) |
+| AMD     | 66        | Baseline Profile (VAAPI) |
+| Unknown | 66        | 标准 H.264 Baseline Profile |
+
+#### 阶段 2：硬件编码器检测
 
 自动检测设备的最佳硬件编码器：
 
@@ -37,18 +53,18 @@ Device: ELE-AL00 (kirin980), Android 10
 Detected hardware encoder: OMX.k3.video.encoder.avc
 ```
 
-#### 阶段 2：单独选项测试
+#### 阶段 3：单独选项测试
 
-使用检测到的编码器逐个测试选项：
+使用检测到的编码器和 GPU 适配的 profile 逐个测试选项：
 
 ```
-Testing codec options...
-  [1/8] Testing profile=66...           ❌ Not supported
-  [2/8] Testing i-frame-interval=2...   ✅ Supported
+Testing 8 codec options...
+  [1/8] Testing profile=65536...         ✅ Supported (NVDEC)
+  [2/8] Testing i-frame-interval=2...    ✅ Supported
   ...
 ```
 
-#### 阶段 3：组合配置验证
+#### 阶段 4：组合配置验证
 
 **关键改进**：验证 **encoder + options 组合** 是否工作
 

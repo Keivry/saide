@@ -150,6 +150,10 @@ cargo run --example render_device
   - 实现：直接用 ScrcpyConnection 测试，读取视频包验证
   - 工具：`cargo run --example probe_codec [serial]`
   - 已验证：MTK mt6991 (8/8 全支持)，Kirin 980 (0/8)
+- [x] **GPU 自适应 profile 选择** (commit: PENDING)
+  - 自动检测 NVIDIA/Intel/AMD GPU
+  - VAAPI: `profile=66` (Baseline Profile)
+  - NVDEC: `profile=65536` (NVIDIA 特定枚举值)
 
 ## 进行中 🔄
 
@@ -160,7 +164,6 @@ cargo run --example render_device
 - [ ] GPU 零拷贝 (VAAPI → DMA-BUF → wgpu)
   - 复杂度：高
   - 预期收益：8-10ms
-- [ ] 编码器参数优化 (bframes=0, profile=baseline)
 - [ ] 缓冲深度优化
 
 ---
