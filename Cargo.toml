@@ -36,6 +36,14 @@ path = "examples/render_vaapi.rs"
 name = "test_vaapi"
 path = "examples/test_vaapi.rs"
 
+[[example]]
+name = "test_audio"
+path = "examples/test_audio.rs"
+
+[[example]]
+name = "probe_codec"
+path = "examples/probe_codec.rs"
+
 
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }

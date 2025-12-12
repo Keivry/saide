@@ -168,19 +168,23 @@ cargo run --example render_device
 - [x] 创建 `src/scrcpy/protocol/audio.rs` 音频包解析
 - [x] 所有测试通过 (2/2)
 
-#### 阶段 2：Opus 解码 (待开始)
-- [ ] 实现 `OpusDecoder` (FFmpeg libopus)
-  - [ ] 初始化 Opus 解码上下文
-  - [ ] 解码 Opus 包到 PCM (f32)
-  - [ ] 处理采样率转换 (48kHz → 设备采样率)
-- [ ] 单元测试：解码固定 Opus 测试向量
+#### 阶段 2：Opus 解码 ✅ 已完成
+- [x] 实现 `OpusDecoder` (FFmpeg libopus)
+  - [x] 初始化 Opus 解码上下文
+  - [x] 解码 Opus 包到 PCM (f32)
+  - [x] 处理 EAGAIN（需要更多数据）
+- [x] Connection::read_audio_packet() 方法
+- [x] 测试示例：`examples/test_audio.rs`
+  - [x] 音频流读取
+  - [x] Opus 解码
+  - [x] 实时播放
 
-#### 阶段 3：音频播放 (待开始)
-- [ ] 实现 `AudioPlayer` (cpal)
-  - [ ] 初始化音频输出设备
-  - [ ] 创建音频流 (crossbeam ring buffer)
-  - [ ] 处理缓冲区欠载/溢出
-- [ ] 测试示例：播放本地 Opus 文件
+#### 阶段 3：音频播放 (已随阶段 1 完成)
+- [x] 实现 `AudioPlayer` (cpal)
+  - [x] 初始化音频输出设备
+  - [x] 创建音频流 (crossbeam ring buffer)
+  - [x] 处理缓冲区欠载/溢出
+- [x] 测试：播放解码后的 PCM 数据
 
 #### 阶段 4：集成到 Connection (待开始)
 - [ ] 添加 `read_audio_packet()` 方法

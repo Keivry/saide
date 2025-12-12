@@ -227,6 +227,34 @@ impl ScrcpyConnection {
         )
     }
 
+    /// Read and parse an audio packet
+    pub fn read_audio_packet(&mut self) -> Result<super::protocol::audio::AudioPacket> {
+        use super::protocol::audio::AudioPacket;
+
+        if let Some(ref mut stream) = self.audio_stream {
+            // Read 12-byte header first
+            let mut header = [0u8; 12];
+            stream
+                .read_exact(&mut header)
+                .context("Failed to read audio packet header")?;
+
+            // Parse packet size from header
+            let packet_size = u32::from_be_bytes([header[8], header[9], header[10], header[11]]);
+
+            // Read full packet (header + payload)
+            let total_size = 12 + packet_size as usize;
+            let mut data = vec![0u8; total_size];
+            data[..12].copy_from_slice(&header);
+            stream
+                .read_exact(&mut data[12..])
+                .context("Failed to read audio packet payload")?;
+
+            AudioPacket::from_bytes(&data)
+        } else {
+            anyhow::bail!("Audio stream not available")
+        }
+    }
+
     /// Gracefully shutdown connection
     pub fn shutdown(&mut self) -> Result<()> {
         debug!("Shutting down connection");

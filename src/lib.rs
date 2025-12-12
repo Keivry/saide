@@ -6,10 +6,13 @@ pub mod scrcpy;
 pub mod v4l2;
 
 pub use {
-    decoder::{DecodedFrame, H264Decoder, VideoDecoder},
+    decoder::{
+        detect_gpu, AudioDecoder, AudioPlayer, AutoDecoder, DecodedAudio, DecodedFrame,
+        GpuType, H264Decoder, OpusDecoder, VideoDecoder,
+    },
     scrcpy::{
         connection::ScrcpyConnection,
-        protocol::{control::ControlMessage, video::VideoPacket},
+        protocol::{audio::AudioPacket, control::ControlMessage, video::VideoPacket},
         server::ServerParams,
     },
 };
