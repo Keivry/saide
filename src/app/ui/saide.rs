@@ -767,6 +767,9 @@ impl eframe::App for SAideApp {
                 self.init();
             }
             InitState::InProgress => {
+                // Update player to receive events
+                self.player.update();
+                
                 // Check initialization progress
                 self.check_init_stage(ctx);
             }
