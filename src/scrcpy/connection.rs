@@ -58,13 +58,31 @@ impl ScrcpyConnection {
     pub async fn connect(
         serial: &str,
         server_jar_path: &str,
-        params: ServerParams,
+        mut params: ServerParams,
     ) -> Result<Self> {
         let scid = params.scid;
         let socket_name = get_socket_name(scid);
 
         info!("Establishing connection to device: {}", serial);
         info!("SCID: {:08x}, socket: {}", scid, socket_name);
+
+        // Step 0: Check Android version and disable audio if unsupported
+        if params.audio {
+            let android_version = super::server::get_android_version(serial)
+                .context("Failed to get Android version")?;
+
+            // Audio capture requires Android 11 (API 30) or higher
+            if android_version < 30 {
+                tracing::warn!(
+                    "Audio capture requires Android 11+ (API 30+), but device is Android {} (API {}). Disabling audio.",
+                    if android_version >= 29 { "10" } else { "<10" },
+                    android_version
+                );
+                params.audio = false;
+            } else {
+                info!("Audio capture supported (Android API {})", android_version);
+            }
+        }
 
         // Step 1: Push server
         push_server(serial, server_jar_path).context("Failed to push server to device")?;
@@ -251,7 +269,7 @@ impl ScrcpyConnection {
 
             AudioPacket::from_bytes(&data)
         } else {
-            anyhow::bail!("Audio stream not available")
+            anyhow::bail!("Audio stream not available (disabled for Android < 11 or not requested)")
         }
     }
 

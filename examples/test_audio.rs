@@ -54,6 +54,15 @@ fn main() -> Result<()> {
 
     println!("✅ Connection established!");
 
+    // Check if audio is actually available
+    if conn.audio_stream.is_none() {
+        println!("\n⚠️  Audio not available:");
+        println!("   - Device requires Android 11+ (API 30+)");
+        println!("   - Or audio was explicitly disabled");
+        println!("\n💡 Tip: Use a device with Android 11+ to test audio streaming");
+        return Ok(());
+    }
+
     // Initialize Opus decoder and audio player
     println!("\n🎧 Initializing audio...");
     let mut decoder = OpusDecoder::new(48000, 2)?;

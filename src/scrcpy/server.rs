@@ -130,6 +130,19 @@ impl ServerParams {
     }
 }
 
+/// Get Android API level
+pub fn get_android_version(serial: &str) -> Result<u32> {
+    let output = Command::new("adb")
+        .args(["-s", serial, "shell", "getprop", "ro.build.version.sdk"])
+        .output()
+        .context("Failed to query Android version")?;
+
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .context("Failed to parse Android version")
+}
+
 /// Push server JAR to device
 pub fn push_server(serial: &str, server_jar_path: &str) -> Result<()> {
     debug!("Pushing server to device: {}", serial);
