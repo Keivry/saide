@@ -11,7 +11,7 @@ mod vaapi;
 
 use {anyhow::Result, ffmpeg_next::format::Pixel};
 pub use {
-    audio::{AudioDecoder, AudioPlayer, DecodedAudio, OpusDecoder},
+    audio::{AudioDecoder, AudioPlayer, DecodedAudio, OpusDecoder, OpusFfmpegDecoder},
     auto::{detect_gpu, AutoDecoder, GpuType},
     h264::H264Decoder,
     h264_parser::extract_resolution_from_stream,

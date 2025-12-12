@@ -65,8 +65,23 @@ impl RingBuffer {
         }
 
         // Fill remaining with silence if buffer underrun
-        for i in to_read..output.len() {
-            output[i] = 0.0;
+        // Use gradual fade to avoid pops
+        if to_read < output.len() {
+            let fade_samples = (to_read).min(32); // Fade last 32 samples
+            
+            // Fade out the last few samples before silence
+            for i in 0..fade_samples {
+                let idx = to_read.saturating_sub(fade_samples) + i;
+                if idx < to_read {
+                    let fade = 1.0 - (i as f32 / fade_samples as f32);
+                    output[idx] *= fade;
+                }
+            }
+            
+            // Fill rest with silence
+            for i in to_read..output.len() {
+                output[i] = 0.0;
+            }
         }
 
         to_read

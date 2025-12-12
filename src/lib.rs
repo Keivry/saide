@@ -8,7 +8,7 @@ pub mod v4l2;
 pub use {
     decoder::{
         detect_gpu, AudioDecoder, AudioPlayer, AutoDecoder, DecodedAudio, DecodedFrame,
-        GpuType, H264Decoder, OpusDecoder, VideoDecoder,
+        GpuType, H264Decoder, OpusDecoder, OpusFfmpegDecoder, VideoDecoder,
     },
     scrcpy::{
         connection::ScrcpyConnection,

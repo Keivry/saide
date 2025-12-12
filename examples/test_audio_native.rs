@@ -1,9 +1,9 @@
-//! Test audio streaming from real device
+//! Test audio streaming using native libopus decoder
 
 use {
     anyhow::{Context, Result},
     saide::{
-        decoder::{AudioDecoder, AudioPlayer, OpusDecoder},
+        decoder::{AudioDecoder, AudioPlayer, OpusNativeDecoder},
         ScrcpyConnection, ServerParams,
     },
     std::time::Duration,
@@ -15,20 +15,17 @@ fn main() -> Result<()> {
         .init();
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("🎵 Scrcpy Audio Streaming Test");
+    println!("🎵 Native libopus Audio Test");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    let serial = get_device_serial()?;
+    let serial = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "10AF971ZLN004SU".to_string());
     println!("📱 Device: {}", serial);
 
     let server_jar = "3rd-party/scrcpy-server-v3.3.3";
-    if !std::path::Path::new(server_jar).exists() {
-        anyhow::bail!("Server JAR not found: {}", server_jar);
-    }
-
-    // Enable audio streaming
     let params = ServerParams {
-        video: false, // Disable video for audio-only test
+        video: false,
         audio: true,
         audio_codec: "opus".to_string(),
         control: false,
@@ -39,11 +36,6 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    println!("\n📋 Configuration:");
-    println!("  SCID: {:08x}", params.scid);
-    println!("  Audio codec: {}", params.audio_codec);
-    println!("  Video: disabled");
-
     println!("\n🔌 Establishing connection...");
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -52,23 +44,19 @@ fn main() -> Result<()> {
     let mut conn =
         rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
 
-    println!("✅ Connection established!");
-
-    // Check if audio is actually available
     if conn.audio_stream.is_none() {
-        println!("\n⚠️  Audio not available:");
-        println!("   - Device requires Android 11+ (API 30+)");
-        println!("   - Or audio was explicitly disabled");
-        println!("\n💡 Tip: Use a device with Android 11+ to test audio streaming");
+        println!("⚠️  Audio not available");
         return Ok(());
     }
 
-    // Initialize Opus decoder and audio player
-    println!("\n🎧 Initializing audio...");
-    let mut decoder = OpusDecoder::new(48000, 2)?;
+    println!("✅ Connection established!");
+
+    // Initialize native Opus decoder and audio player
+    println!("\n🎧 Initializing native libopus decoder...");
+    let mut decoder = OpusNativeDecoder::new(48000, 2)?;
     let player = AudioPlayer::new(48000, 2)?;
 
-    println!("✅ Audio initialized: 48kHz stereo (libopus)");
+    println!("✅ Audio initialized: 48kHz stereo (native libopus)");
 
     // Stream audio for 10 seconds
     println!("\n🎵 Streaming audio (10 seconds)...");
@@ -101,12 +89,11 @@ fn main() -> Result<()> {
                         }
                     }
                     Ok(None) => {
-                        // Need more data or skipped (e.g., config packet)
+                        // Skipped packet (config/padding)
                     }
                     Err(e) => {
-                        // Only log errors for non-first packets (first might be config)
                         if packet_count > 1 {
-                            eprintln!("⚠️  Failed to decode audio packet #{}: {}", packet_count, e);
+                            eprintln!("⚠️  Failed to decode packet #{}: {}", packet_count, e);
                         }
                     }
                 }
@@ -134,27 +121,4 @@ fn main() -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     Ok(())
-}
-
-fn get_device_serial() -> Result<String> {
-    if let Some(serial) = std::env::args().nth(1) {
-        return Ok(serial);
-    }
-
-    let output = std::process::Command::new("adb")
-        .args(["devices"])
-        .output()
-        .context("Failed to run 'adb devices'")?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    for line in output_str.lines().skip(1) {
-        if let Some(serial) = line.split_whitespace().next() {
-            if !serial.is_empty() {
-                return Ok(serial.to_string());
-            }
-        }
-    }
-
-    anyhow::bail!("No Android device found")
 }

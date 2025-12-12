@@ -45,6 +45,14 @@ name = "audio_diagnostic"
 path = "examples/audio_diagnostic.rs"
 
 [[example]]
+name = "test_planar_interleave"
+path = "examples/test_planar_interleave.rs"
+
+[[example]]
+name = "test_audio_native"
+path = "examples/test_audio_native.rs"
+
+[[example]]
 name = "probe_codec"
 path = "examples/probe_codec.rs"
 
@@ -90,6 +98,9 @@ chrono = { version = "0.4.42", features = ["serde"] }
 
 # Audio playback
 cpal = "0.16"
+
+# Opus codec (direct libopus binding)
+opus = "0.3"
 
 [profile.dev]
 opt-level = 0
