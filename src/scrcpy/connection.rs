@@ -120,7 +120,7 @@ impl ScrcpyConnection {
             None
         };
 
-        let audio_stream = if params.audio {
+        let mut audio_stream = if params.audio {
             Some(
                 accept_connection(&listener, "audio")
                     .context("Failed to accept audio connection")?,
@@ -167,18 +167,44 @@ impl ScrcpyConnection {
         {
             let mut codec_meta = [0u8; 12];
             if let Err(e) = stream.read_exact(&mut codec_meta) {
-                debug!("Failed to read codec metadata: {}", e);
+                debug!("Failed to read video codec metadata: {}", e);
                 None
             } else {
                 let codec_id = u32::from_be_bytes(codec_meta[0..4].try_into().unwrap());
                 let width = u32::from_be_bytes(codec_meta[4..8].try_into().unwrap());
                 let height = u32::from_be_bytes(codec_meta[8..12].try_into().unwrap());
-                debug!("Codec meta: id=0x{:08x}, {}x{}", codec_id, width, height);
+                debug!(
+                    "Video codec meta: id=0x{:08x}, {}x{}",
+                    codec_id, width, height
+                );
                 Some((width, height))
             }
         } else {
             None
         };
+
+        // Step 8: Read codec metadata from audio stream (if enabled)
+        // Audio codec meta: 4 bytes codec_id only (no width/height for audio)
+        if params.send_codec_meta
+            && let Some(ref mut stream) = audio_stream
+        {
+            let mut codec_id_bytes = [0u8; 4];
+            if let Err(e) = stream.read_exact(&mut codec_id_bytes) {
+                debug!("Failed to read audio codec metadata: {}", e);
+            } else {
+                let codec_id = u32::from_be_bytes(codec_id_bytes);
+                debug!("Audio codec meta: id=0x{:08x}", codec_id);
+
+                // Check for special codec_id values (as per demuxer.c):
+                // 0 = stream explicitly disabled by device
+                // 1 = stream configuration error
+                if codec_id == 0 {
+                    info!("Audio stream explicitly disabled by device");
+                } else if codec_id == 1 {
+                    info!("Audio stream configuration error on device");
+                }
+            }
+        }
 
         Ok(Self {
             scid,

@@ -5,7 +5,7 @@
 //! - Audio: Independent buffering (100-200ms)
 
 use {
-    anyhow::Result,
+    anyhow::{Context, Result},
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     saide::{
@@ -24,12 +24,8 @@ use {
         sync::AVSync,
         utils::get_device_serial,
     },
-    std::{
-        sync::{Arc, Mutex},
-        thread,
-        time::Duration,
-    },
-    tracing::{debug, error, info, warn},
+    std::{io::Read, sync::Arc, thread},
+    tracing::{debug, error, info},
 };
 
 fn main() -> Result<()> {
@@ -61,15 +57,14 @@ fn main() -> Result<()> {
 
 struct AVSyncApp {
     frame_rx: Receiver<Arc<DecodedFrame>>,
+    stats_rx: Receiver<AVStats>,
     current_frame: Option<Arc<DecodedFrame>>,
     stats: AVStats,
     #[allow(dead_code)]
-    video_thread: Option<thread::JoinHandle<()>>,
-    #[allow(dead_code)]
-    audio_thread: Option<thread::JoinHandle<()>>,
+    av_thread: Option<thread::JoinHandle<()>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct AVStats {
     video_frames: u64,
     audio_frames: u64,
@@ -81,6 +76,7 @@ struct AVStats {
 impl AVSyncApp {
     fn new(cc: &eframe::CreationContext, serial: String) -> Self {
         let (frame_tx, frame_rx) = bounded(3);
+        let (stats_tx, stats_rx) = bounded(100);
 
         // Register NV12 render resources
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
@@ -93,33 +89,19 @@ impl AVSyncApp {
                 render_state.target_format,
             ));
 
-        // Shared AV sync state
-        let av_sync = Arc::new(Mutex::new(AVSync::new(20))); // 20ms threshold
-
-        // Spawn video decoder thread
-        let serial_video = serial.clone();
-        let av_sync_video = av_sync.clone();
-        let video_thread = Some(thread::spawn(move || {
-            if let Err(e) = video_worker(serial_video, frame_tx, av_sync_video) {
-                error!("Video thread error: {}", e);
-            }
-        }));
-
-        // Spawn audio player thread
-        let serial_audio = serial.clone();
-        let av_sync_audio = av_sync.clone();
-        let audio_thread = Some(thread::spawn(move || {
-            if let Err(e) = audio_worker(serial_audio, av_sync_audio) {
-                error!("Audio thread error: {}", e);
+        // Spawn single AV worker thread (one connection for both streams)
+        let av_thread = Some(thread::spawn(move || {
+            if let Err(e) = av_worker(serial, frame_tx, stats_tx) {
+                error!("AV worker thread error: {}", e);
             }
         }));
 
         Self {
             frame_rx,
+            stats_rx,
             current_frame: None,
             stats: AVStats::default(),
-            video_thread,
-            audio_thread,
+            av_thread,
         }
     }
 }
@@ -128,9 +110,12 @@ impl eframe::App for AVSyncApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Poll for new frames (non-blocking)
         while let Ok(frame) = self.frame_rx.try_recv() {
-            self.stats.last_video_pts = frame.pts;
             self.current_frame = Some(frame);
-            self.stats.video_frames += 1;
+        }
+
+        // Update stats
+        while let Ok(stats) = self.stats_rx.try_recv() {
+            self.stats = stats;
         }
 
         // Top panel with stats
@@ -195,31 +180,34 @@ impl eframe::App for AVSyncApp {
     }
 }
 
-fn video_worker(
+fn av_worker(
     serial: String,
     frame_tx: Sender<Arc<DecodedFrame>>,
-    av_sync: Arc<Mutex<AVSync>>,
+    stats_tx: Sender<AVStats>,
 ) -> Result<()> {
-    info!("Video worker starting (AutoDecoder + PTS sync)...");
+    info!("AV worker starting (single connection, dual threads)...");
 
     let server_jar = "3rd-party/scrcpy-server-v3.3.3";
     if !std::path::Path::new(server_jar).exists() {
         anyhow::bail!("Server JAR not found: {}", server_jar);
     }
 
-    // Use cached profile
+    // Single connection with both video and audio
     let mut params = ServerParams::for_device(&serial)?;
     params.video = true;
     params.video_codec = "h264".to_string();
     params.video_bit_rate = 8_000_000;
     params.max_size = 1920;
     params.max_fps = 60;
-    params.audio = false;
-    params.control = false;
+    params.audio = true;
+    params.audio_codec = "opus".to_string();
+    params.control = true; // 启用控制通道，确保完整连接序列
     params.send_device_meta = true;
     params.send_codec_meta = true;
     params.send_frame_meta = true;
 
+    info!("params.control = {}", params.control); // DEBUG
+
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -227,131 +215,128 @@ fn video_worker(
     let mut conn =
         rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
 
-    if conn.video_stream.is_none() {
-        anyhow::bail!("Video stream not available");
-    }
-
-    // Get resolution from codec meta
+    // Get resolution before extracting streams
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
     info!("Video resolution: {}x{}", width, height);
 
-    let mut decoder = AutoDecoder::new(width, height)?;
-    let mut frame_count = 0u64;
-    let mut dropped_count = 0u64;
+    // Extract streams from connection
+    let mut video_stream = conn
+        .video_stream
+        .take()
+        .context("Video stream not available")?;
+    let mut audio_stream = conn
+        .audio_stream
+        .take()
+        .context("Audio stream not available")?;
 
-    info!("Video decoder initialized ({})", decoder.decoder_type());
+    info!("Streams extracted: video + audio ready");
 
-    loop {
-        let video_packet = conn.read_video_packet()?;
-        let pts = video_packet.pts_us as i64;
+    // Shared sync state
+    let av_sync = Arc::new(std::sync::Mutex::new(AVSync::new(20)));
+    let stats = Arc::new(std::sync::Mutex::new(AVStats::default()));
 
-        if let Some(frame) = decoder.decode(&video_packet.data, pts)? {
-            frame_count += 1;
+    // Spawn audio thread
+    let av_sync_audio = av_sync.clone();
+    let stats_audio = stats.clone();
+    let audio_thread = thread::spawn(move || {
+        info!("Audio thread spawned, entering read loop...");
+        match (|| -> Result<()> {
+            let mut audio_decoder = OpusDecoder::new(48000, 2)?;
+            let audio_player = AudioPlayer::new(48000, 2)?;
+            info!("Audio thread started (Opus)");
 
-            // Initialize AV clock with first frame
-            {
-                let mut sync = av_sync.lock().unwrap();
-                sync.init_clock(frame.pts);
-            }
+            loop {
+                // Read audio packet (blocking)
+                debug!("Audio thread: attempting to read header...");
+                let mut header = [0u8; 12];
+                audio_stream.read_exact(&mut header)?;
+                debug!("Audio thread: header read successful");
 
-            // PTS-based timing
-            let sync = av_sync.lock().unwrap();
+                let packet_size =
+                    u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
+                let pts = i64::from_be_bytes([
+                    header[0], header[1], header[2], header[3], header[4], header[5], header[6],
+                    header[7],
+                ]);
 
-            // Check if frame is too late (drop it)
-            if sync.should_drop_video(frame.pts) {
-                dropped_count += 1;
-                debug!("Dropped late frame #{} (PTS: {})", frame_count, frame.pts);
-                continue;
-            }
+                let mut payload = vec![0u8; packet_size];
+                audio_stream.read_exact(&mut payload)?;
 
-            // Calculate when to render
-            if let Some(wait_duration) = sync.time_until_pts(frame.pts) {
-                // Frame is early, wait until deadline
-                if wait_duration > Duration::from_millis(100) {
-                    // Sanity check: don't wait too long
-                    warn!(
-                        "Excessive wait time: {:?}, rendering immediately",
-                        wait_duration
-                    );
-                } else {
-                    drop(sync); // Release lock before sleep
-                    thread::sleep(wait_duration);
+                // Update stats
+                {
+                    let mut s = stats_audio.lock().unwrap();
+                    s.audio_frames += 1;
+                    s.last_audio_pts = pts;
+
+                    if s.audio_frames.is_multiple_of(100) {
+                        debug!("Audio: {} packets processed", s.audio_frames);
+                    }
+                }
+
+                // Decode and play
+                match audio_decoder.decode(&payload, pts) {
+                    Ok(Some(decoded)) => {
+                        if let Err(e) = audio_player.play(&decoded) {
+                            debug!("Audio playback error: {}", e);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => debug!("Audio decode error: {}", e),
                 }
             }
-            // else: frame is on-time or slightly late, render immediately
-
-            // Send to UI (non-blocking)
-            let arc_frame = Arc::new(frame);
-            if frame_tx.try_send(arc_frame).is_err() {
-                debug!("Frame buffer full, dropping frame");
-                dropped_count += 1;
-            }
-
-            if frame_count.is_multiple_of(100) {
-                info!(
-                    "Video: {} frames rendered, {} dropped",
-                    frame_count, dropped_count
-                );
-            }
+        })() {
+            Ok(_) => {}
+            Err(e) => error!("Audio thread error: {}", e),
         }
-    }
-}
+    });
 
-fn audio_worker(serial: String, av_sync: Arc<Mutex<AVSync>>) -> Result<()> {
-    info!("Audio worker starting (Opus + adaptive buffering)...");
+    // Video decode loop (main thread)
+    let mut video_decoder = AutoDecoder::new(width, height)?;
+    info!(
+        "Video decoder initialized: {}",
+        video_decoder.decoder_type()
+    );
+    info!("Starting video decode loop...");
 
-    let server_jar = "3rd-party/scrcpy-server-v3.3.3";
-    let params = ServerParams {
-        video: false,
-        audio: true,
-        audio_codec: "opus".to_string(),
-        control: false,
-        send_device_meta: false,
-        send_codec_meta: false,
-        send_frame_meta: true,
-        log_level: "info".to_string(),
-        ..Default::default()
-    };
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-
-    let mut conn =
-        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
-
-    if conn.audio_stream.is_none() {
-        warn!("Audio not available (Android 11+ required)");
-        return Ok(());
-    }
-
-    let mut decoder = OpusDecoder::new(48000, 2)?;
-    let player = AudioPlayer::new(48000, 2)?;
-
-    info!("Audio decoder initialized (Opus)");
-
-    let mut packet_count = 0u64;
+    // Keep audio thread alive
+    let _audio_thread_handle = audio_thread;
 
     loop {
-        let audio_packet = conn.read_audio_packet()?;
-        let pts = audio_packet.pts;
-        packet_count += 1;
+        // Read video packet (blocking)
+        use saide::scrcpy::protocol::video::VideoPacket;
+        let video_packet = VideoPacket::read_from(&mut video_stream)?;
+        let pts = video_packet.pts_us as i64;
 
-        if let Some(decoded) = decoder.decode(&audio_packet.payload, pts)? {
-            // Initialize AV clock with first audio frame (if video hasn't)
+        if let Ok(Some(frame)) = video_decoder.decode(&video_packet.data, pts) {
+            // Update stats
+            let mut current_stats = {
+                let mut s = stats.lock().unwrap();
+                s.video_frames += 1;
+                s.last_video_pts = frame.pts;
+                *s
+            };
+
+            // Check sync
             {
-                let mut sync = av_sync.lock().unwrap();
-                sync.init_clock(decoded.pts);
+                let sync = av_sync.lock().unwrap();
+                if sync.should_drop_video(frame.pts) {
+                    current_stats.dropped_frames += 1;
+                    continue;
+                }
             }
 
-            // Play immediately (audio buffer handles timing)
-            player.play(&decoded)?;
+            // Send frame to UI
+            if frame_tx.try_send(Arc::new(frame)).is_err() {
+                current_stats.dropped_frames += 1;
+            }
 
-            if packet_count.is_multiple_of(100) {
-                debug!(
-                    "Audio: {} packets, buffer: {:.1}%",
-                    packet_count,
-                    player.buffer_level() * 100.0
+            // Send stats update
+            let _ = stats_tx.try_send(current_stats);
+
+            if current_stats.video_frames.is_multiple_of(100) {
+                info!(
+                    "Video: {} frames, {} dropped",
+                    current_stats.video_frames, current_stats.dropped_frames
                 );
             }
         }

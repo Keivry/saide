@@ -123,6 +123,8 @@ impl NvdecDecoder {
                 Ok(_) => {
                     // Transfer from GPU to CPU (CUDA -> System memory)
                     let mut sw_frame = VideoFrame::empty();
+                    let hw_pts = hw_frame.timestamp(); // Capture PTS before transfer
+
                     unsafe {
                         let ret = ffmpeg::sys::av_hwframe_transfer_data(
                             sw_frame.as_mut_ptr(),
@@ -178,7 +180,7 @@ impl NvdecDecoder {
                         width,
                         height,
                         format: Pixel::NV12,
-                        pts: sw_frame.timestamp().unwrap_or(0),
+                        pts: hw_pts.unwrap_or(0), // Use PTS from hw_frame
                     });
                 }
                 Err(ffmpeg::Error::Eof) => break,

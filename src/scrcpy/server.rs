@@ -41,6 +41,12 @@ pub struct ServerParams {
     /// Audio codec (opus, aac, flac, raw)
     pub audio_codec: String,
 
+    /// Audio source (output, playback, mic, etc.)
+    /// - output: REMOTE_SUBMIX (system audio routing, may miss media)
+    /// - playback: AudioPlaybackCapture (Android 10+, captures all playback)
+    /// - mic: Microphone input
+    pub audio_source: String,
+
     /// Enable control channel
     pub control: bool,
 
@@ -83,6 +89,7 @@ impl Default for ServerParams {
             max_fps: 60,
             audio: false,
             audio_codec: "opus".to_string(),
+            audio_source: "output".to_string(), // REMOTE_SUBMIX (系统输出)
             control: true,
             tunnel_forward: false,
             send_dummy_byte: true,
@@ -206,8 +213,16 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
     // Audio parameters
     if !params.audio {
         args.push("audio=false".to_string());
-    } else if params.audio_codec != "opus" {
-        args.push(format!("audio_codec={}", params.audio_codec));
+    } else {
+        // Audio is enabled
+        if params.audio_codec != "opus" {
+            args.push(format!("audio_codec={}", params.audio_codec));
+        }
+        if params.audio_source != "output" {
+            // Only set if not default
+            args.push(format!("audio_source={}", params.audio_source));
+        }
+        args.push("audio=true".to_string());
     }
 
     // Control
