@@ -396,28 +396,32 @@ fn stream_worker(serial: String, event_tx: Sender<PlayerEvent>) -> Result<()> {
         let pts = video_packet.pts_us as i64;
 
         if let Ok(Some(frame)) = video_decoder.decode(&video_packet.data, pts) {
-            let mut current_stats = {
+            let current_stats = {
                 let mut s = stats.lock().unwrap();
                 s.video_frames += 1;
                 s.last_video_pts = frame.pts;
                 *s
             };
 
-            // Check sync
-            {
+            // Check sync and update stats
+            let should_drop = {
                 let sync = av_sync.lock().unwrap();
-                if sync.should_drop_video(frame.pts) {
-                    current_stats.dropped_frames += 1;
-                    continue;
-                }
+                sync.should_drop_video(frame.pts)
+            };
+
+            if should_drop {
+                let mut s = stats.lock().unwrap();
+                s.dropped_frames += 1;
+                continue;
             }
 
             // Send frame
             if frame_tx.try_send(Arc::new(frame)).is_err() {
-                current_stats.dropped_frames += 1;
+                let mut s = stats.lock().unwrap();
+                s.dropped_frames += 1;
             }
 
-            // Send stats
+            // Send stats snapshot
             let _ = stats_tx.try_send(current_stats);
         }
     }

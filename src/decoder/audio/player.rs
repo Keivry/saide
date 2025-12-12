@@ -61,8 +61,8 @@ impl RingBuffer {
     fn read(&mut self, output: &mut [f32]) -> usize {
         let to_read = output.len().min(self.size);
 
-        for i in 0..to_read {
-            output[i] = self.buffer[self.read_pos];
+        for item in output.iter_mut().take(to_read) {
+            *item = self.buffer[self.read_pos];
             self.read_pos = (self.read_pos + 1) % self.capacity;
             self.size -= 1;
         }
@@ -82,8 +82,8 @@ impl RingBuffer {
             }
 
             // Fill rest with silence
-            for i in to_read..output.len() {
-                output[i] = 0.0;
+            for item in output.iter_mut().skip(to_read) {
+                *item = 0.0;
             }
         }
 

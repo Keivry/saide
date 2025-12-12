@@ -1,3 +1,7 @@
+#![allow(dead_code)] // V4l2Player deprecated - using StreamPlayer
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+
 use {
     super::VideoStats,
     crate::{
@@ -122,65 +126,8 @@ impl V4l2Player {
     }
 
     pub fn initialize(&mut self) {
-        // Clean up any existing capture
-        self.drop_capture();
-
-        let v4l2_device = self.config.scrcpy.v4l2.device.clone();
-        let init_timeout = Duration::from_secs(u64::from(self.config.general.init_timeout));
-        let init_tx = self.init_tx.clone();
-
-        // V4L2 capture initialization
-        thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Channel for frame transfer
-
-            let mut capture = match V4l2Capture::new(&v4l2_device, init_timeout) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to initialize V4L2 capture");
-                    init_tx.send(InitEvent::Failed(format!(
-                        "V4L2 capture initialization error: {}",
-                        e
-                    )))?;
-                    return Err(e);
-                }
-            };
-            debug!("V4L2 capture initialized");
-
-            // Get capture dimensions and orientation
-            let (width, height) = capture.dimensions();
-            debug!("V4L2 capture dimensions: {}x{}", width, height,);
-
-            // Start capture thread
-            // Use a zero-capacity channel to always get the latest frame
-            let (frame_tx, frame_rx) = bounded::<Arc<Yu12Frame>>(0);
-            let handle = thread::spawn(move || {
-                loop {
-                    match capture.capture_frame() {
-                        Ok(frame) => {
-                            if frame_tx.send(Arc::new(frame)).is_err() {
-                                // Receiver has been dropped, exit thread
-                                debug!("Frame receiver dropped, stopping capture thread");
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Capture error: {}", e);
-                            break;
-                        }
-                    }
-                }
-
-                capture.stop_streaming().ok();
-                debug!("V4L2 capture thread exiting");
-            });
-            debug!("V4L2 capture thread started");
-
-            init_tx.send(InitEvent::FrameReceiver(frame_rx))?;
-            init_tx.send(InitEvent::Dimensions(width, height))?;
-            init_tx.send(InitEvent::Capture(handle))?;
-
-            Ok(())
-        });
+        // DEPRECATED: V4L2Player no longer used - replaced by StreamPlayer
+        // This method kept for compatibility but does nothing
     }
 
     // Check if player is ready

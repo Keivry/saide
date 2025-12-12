@@ -39,6 +39,12 @@ lazy_static! {
 
 pub struct Toolbar {}
 
+impl Default for Toolbar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Toolbar {
     pub fn new() -> Self { Self {} }
 

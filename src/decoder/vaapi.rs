@@ -34,7 +34,7 @@ impl VaapiDecoder {
 
         // Create VAAPI device context
         let mut hw_device_ctx: *mut ffmpeg::sys::AVBufferRef = ptr::null_mut();
-        let device_path = b"/dev/dri/renderD128\0".as_ptr() as *const i8;
+        let device_path = c"/dev/dri/renderD128".as_ptr();
 
         unsafe {
             let ret = ffmpeg::sys::av_hwdevice_ctx_create(
@@ -195,8 +195,8 @@ impl VaapiDecoder {
                     self.height = sw_frame.height();
 
                     // NV12 data extraction with proper linesize handling
-                    let y_linesize = sw_frame.stride(0) as usize;
-                    let uv_linesize = sw_frame.stride(1) as usize;
+                    let y_linesize = sw_frame.stride(0);
+                    let uv_linesize = sw_frame.stride(1);
                     let width = self.width as usize;
                     let height = self.height as usize;
 

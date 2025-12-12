@@ -157,6 +157,35 @@ cargo run --example render_device
 
 ## 进行中 🔄
 
+### 代码重构 (2025-12-12)
+
+#### 已完成 ✅
+- [x] **移除外部 scrcpy 进程依赖**
+  - [x] 废弃 `controller/scrcpy.rs`（外部进程管理）
+  - [x] 废弃 `app/ui/player.rs`（V4L2Player）
+  - [x] 移除初始化流程中的 Scrcpy 启动逻辑
+  - [x] 统一使用内部 `StreamPlayer` 实现
+  - [x] 代码减少 314 行
+- [x] **代码质量提升**
+  - [x] 修复所有 Clippy 警告
+  - [x] 修复 Doctest 格式错误
+  - [x] 优化循环使用迭代器
+  - [x] 移除不必要的类型转换
+  - [x] 添加 Default trait 实现
+  - [x] 34/34 单元测试通过
+
+#### 技术细节
+**重构前**：外部 scrcpy 进程 → V4L2 → V4L2Player  
+**重构后**：内部 scrcpy 协议 → StreamPlayer（VAAPI/NVDEC）
+
+**收益**：
+- ✅ 更简洁的架构（-314 行代码）
+- ✅ 更好的性能（无 V4L2 中间层）
+- ✅ 更统一的实现（所有示例都使用 StreamPlayer）
+- ✅ 更好的可维护性（减少外部依赖）
+
+---
+
 ### 音视频同步实现 ✅ (2025-12-12)
 
 #### 已完成

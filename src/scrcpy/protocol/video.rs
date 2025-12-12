@@ -15,7 +15,7 @@ pub const PACKET_FLAG_KEY_FRAME: u64 = 1 << 62; // Keyframe (IDR)
 /// Video packet structure
 ///
 /// Binary format:
-/// ```
+/// ```text
 /// [0-7]   u64 BE  pts_and_flags
 /// [8-11]  u32 BE  packet_size
 /// [12..]  [u8]    payload (H.264/H.265 NAL units)

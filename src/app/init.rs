@@ -1,18 +1,14 @@
 use {
     crate::{
         config::ConfigManager,
-        controller::{adb::AdbShell, keyboard::KeyboardMapper, mouse::MouseMapper, scrcpy::Scrcpy},
+        controller::{adb::AdbShell, keyboard::KeyboardMapper, mouse::MouseMapper},
     },
-    anyhow::anyhow,
     crossbeam_channel::{Receiver, Sender, bounded},
     std::{
-        ffi::OsStr,
         process::Command,
-        sync::Arc,
         thread,
         time::{Duration, Instant},
     },
-    sysinfo::{ProcessesToUpdate, System},
     tracing::{debug, error},
 };
 
@@ -26,11 +22,13 @@ pub enum DeviceMonitorEvent {
     ImStateChanged(bool),
 }
 
-pub const INIT_RESULT_CHANNEL_CAPACITY: usize = 6;
+pub const INIT_RESULT_CHANNEL_CAPACITY: usize = 5;
 
 /// Initialization event
+#[allow(dead_code)] // Keep for compatibility during transition
 pub enum InitEvent {
-    Scrcpy(Scrcpy),
+    #[deprecated(note = "External scrcpy no longer used")]
+    Scrcpy(()),
     KeyboardMapper(Option<KeyboardMapper>),
     MouseMapper(Option<MouseMapper>),
     DeviceMonitor(Receiver<DeviceMonitorEvent>),
@@ -41,42 +39,9 @@ pub enum InitEvent {
 
 /// Background initialization function
 pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent>) {
-    // Scrcpy initialization
-    let config = config_manager.config();
-    let scrcpy_tx = tx.clone();
-    thread::spawn(move || -> Result<(), anyhow::Error> {
-        // Ensure no existing scrcpy process is running
-        let mut sys = System::new_all();
-        sys.refresh_processes(ProcessesToUpdate::All, true);
+    // Note: External scrcpy initialization removed - using internal StreamPlayer
 
-        if sys.processes().values().any(|process| {
-            process.exe().and_then(|path| path.file_name()) == Some(OsStr::new("scrcpy"))
-        }) {
-            scrcpy_tx.send(InitEvent::Error(anyhow!(
-                "Existing scrcpy process detected , please terminate it first",
-            )))?;
-
-            // Early return on error
-            return Ok(());
-        }
-
-        // Initialize scrcpy manager
-        let mut scrcpy = Scrcpy::new(Arc::clone(&config.scrcpy));
-
-        if let Err(e) = scrcpy
-            .spawn()?
-            .wait_for_ready(Duration::from_secs(config.general.init_timeout as u64))
-        {
-            scrcpy.terminate().ok();
-            scrcpy_tx.send(InitEvent::Error(anyhow!("Failed to start scrcpy: {}", e)))?;
-        }
-        debug!("Scrcpy process started and ready");
-
-        scrcpy_tx.send(InitEvent::Scrcpy(scrcpy))?;
-        Ok(())
-    });
-
-    // Delay to allow scrcpy to start ADB server
+    // Delay to allow ADB server to be ready
     let start = Instant::now();
     while start.elapsed() < Duration::from_millis(500) {
         // check if adb is responsive

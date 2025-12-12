@@ -152,8 +152,8 @@ impl NvdecDecoder {
                     // Extract NV12 data
                     let y_plane = sw_frame.data(0);
                     let uv_plane = sw_frame.data(1);
-                    let y_linesize = sw_frame.stride(0) as usize;
-                    let uv_linesize = sw_frame.stride(1) as usize;
+                    let y_linesize = sw_frame.stride(0);
+                    let uv_linesize = sw_frame.stride(1);
 
                     info!(
                         "NV12 frame layout: {}x{}, Y linesize={} UV linesize={}",

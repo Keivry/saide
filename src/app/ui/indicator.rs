@@ -102,6 +102,7 @@ impl Indicator {
         self
     }
 
+    #[allow(dead_code)] // May be used in V4L2Player (deprecated)
     pub fn update_capture_orientation(&mut self, orientation: u32) -> &mut Self {
         self.capture_orientation = orientation;
         self

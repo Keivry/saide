@@ -176,9 +176,10 @@ impl SAideApp {
     }
 
     /// Check initialization progress and update state
-    fn check_init_stage(&mut self, ctx: &egui::Context) {
+    fn check_init_stage(&mut self, _ctx: &egui::Context) {
         if let Some(rx) = &self.init_rx {
             while let Ok(result) = rx.try_recv() {
+                #[allow(deprecated)] // Handle legacy InitEvent::Scrcpy during transition
                 match result {
                     InitEvent::Scrcpy(_) => {
                         // Scrcpy no longer needed (using internal implementation)
