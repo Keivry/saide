@@ -206,6 +206,15 @@ impl StreamPlayer {
         let available_rect = ui.available_rect_before_wrap();
 
         if let Some(ref frame) = self.current_frame {
+            // Check if dimensions are valid
+            if self.video_width == 0 || self.video_height == 0 {
+                return ui
+                    .centered_and_justified(|ui| {
+                        ui.label(egui::RichText::new("Loading...").size(20.0))
+                    })
+                    .response;
+            }
+
             let aspect_ratio = self.video_width as f32 / self.video_height as f32;
             let available_aspect = available_rect.width() / available_rect.height();
 
