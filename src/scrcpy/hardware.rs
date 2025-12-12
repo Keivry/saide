@@ -92,7 +92,7 @@ fn match_encoder_for_platform(platform: &str) -> Option<String> {
 
     // Huawei Kirin
     if platform_lower.starts_with("kirin") || platform_lower.starts_with("hi") {
-        return Some("OMX.k3.video.encoder.avc".to_string());
+        return Some("OMX.hisi.video.encoder.avc".to_string());
     }
 
     None
