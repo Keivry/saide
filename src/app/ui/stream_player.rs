@@ -266,6 +266,16 @@ impl StreamPlayer {
         &self.state
     }
 
+    /// Check if player is ready (streaming)
+    pub fn ready(&self) -> bool {
+        matches!(self.state, PlayerState::Streaming)
+    }
+
+    /// Get video dimensions
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.video_width, self.video_height)
+    }
+
     /// Get video statistics
     pub fn video_stats(&self) -> VideoStats {
         VideoStats {
@@ -274,6 +284,17 @@ impl StreamPlayer {
             dropped_frames: self.stats.dropped_frames as u32,
             latency_ms: 0.0, // TODO: implement latency measurement
         }
+    }
+
+    /// Rotation is handled by device orientation, not player
+    /// This is a compatibility method for migration
+    pub fn rotation(&self) -> u32 {
+        0 // Always 0, rotation handled externally
+    }
+
+    /// Set rotation (no-op for compatibility)
+    pub fn set_rotation(&mut self, _rotation: u32) {
+        // No-op: rotation handled by device orientation
     }
 }
 

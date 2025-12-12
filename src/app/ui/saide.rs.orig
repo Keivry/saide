@@ -180,9 +180,8 @@ impl SAideApp {
         if let Some(rx) = &self.init_rx {
             while let Ok(result) = rx.try_recv() {
                 match result {
-                    InitEvent::Scrcpy(_) => {
-                        // Scrcpy no longer needed (using internal implementation)
-                        debug!("Ignoring legacy Scrcpy init event");
+                    InitEvent::Scrcpy(scrcpy) => {
+                        self.scrcpy = Some(scrcpy);
                     }
                     InitEvent::KeyboardMapper(keyboard_mapper) => {
                         self.keyboard_mapper = keyboard_mapper;
@@ -194,9 +193,7 @@ impl SAideApp {
                         self.device_monitor_rx = Some(_device_monitor_rx);
                     }
                     InitEvent::DeviceId(device_id) => {
-                        self.device_id = Some(device_id.clone());
-                        // Start streaming when device ID is available
-                        self.player.start(device_id);
+                        self.device_id = Some(device_id);
                     }
                     InitEvent::PhysicalSize(size) => self.device_physical_size = size,
                     InitEvent::Error(e) => {
@@ -208,9 +205,16 @@ impl SAideApp {
             }
 
             // Check if all components are initialized
-            if self.device_monitor_rx.is_some() && self.device_id.is_some() {
+            if self.scrcpy.is_some() && self.device_monitor_rx.is_some() && self.player.ready() {
                 self.init_state = InitState::Ready;
                 info!("Initialization completed successfully");
+
+                // Resize window to match video dimensions
+                self.resize(ctx);
+
+                // Pass video dimensions to indicator
+                self.indicator
+                    .update_video_resolution(self.player.dimensions());
             }
         }
     }
@@ -739,7 +743,6 @@ impl SAideApp {
             video_rotation: 0, // Rotation handled by device orientation
             device_physical_size: self.device_physical_size,
             device_orientation: self.device_orientation,
-            capture_orientation: 0, // No V4L2, always 0
         }
     }
 }

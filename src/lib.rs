@@ -16,15 +16,18 @@ pub use {
         DecodedFrame,
         GpuType,
         H264Decoder,
+        Nv12RenderResources,
         OpusDecoder,
         OpusFfmpegDecoder,
         VideoDecoder,
         detect_gpu,
+        new_nv12_render_callback,
     },
     scrcpy::{
         connection::ScrcpyConnection,
         protocol::{audio::AudioPacket, control::ControlMessage, video::VideoPacket},
         server::ServerParams,
     },
+    sync::AVSync,
     utils::get_device_serial,
 };
