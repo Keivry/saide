@@ -4,6 +4,7 @@ pub mod controller;
 pub mod decoder;
 pub mod scrcpy;
 pub mod sync;
+pub mod utils;
 pub mod v4l2;
 
 pub use {
@@ -25,4 +26,5 @@ pub use {
         protocol::{audio::AudioPacket, control::ControlMessage, video::VideoPacket},
         server::ServerParams,
     },
+    utils::get_device_serial,
 };

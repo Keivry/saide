@@ -1,8 +1,8 @@
 //! Scrcpy 真实设备连接测试（最终版本）
 
 use {
-    anyhow::{Context, Result},
-    saide::{ScrcpyConnection, ServerParams, VideoPacket},
+    anyhow::Result,
+    saide::{ScrcpyConnection, ServerParams, VideoPacket, utils::get_device_serial},
 };
 
 fn main() -> Result<()> {
@@ -66,29 +66,6 @@ fn main() -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     Ok(())
-}
-
-fn get_device_serial() -> Result<String> {
-    if let Some(serial) = std::env::args().nth(1) {
-        return Ok(serial);
-    }
-
-    let output = std::process::Command::new("adb")
-        .args(["devices"])
-        .output()
-        .context("执行 'adb devices' 失败")?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    for line in output_str.lines().skip(1) {
-        if let Some(serial) = line.split_whitespace().next() {
-            if !serial.is_empty() {
-                return Ok(serial.to_string());
-            }
-        }
-    }
-
-    anyhow::bail!("未找到 Android 设备")
 }
 
 fn test_video_packets(conn: &mut ScrcpyConnection) -> Result<()> {

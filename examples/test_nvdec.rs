@@ -1,14 +1,14 @@
 //! Test NVIDIA NVDEC hardware decoder
 
 use {
-    anyhow::{Context, Result},
+    anyhow::Result,
     saide::{
         ScrcpyConnection,
         ServerParams,
         decoder::{NvdecDecoder, VideoDecoder},
+        utils::get_device_serial,
     },
-    std::process::Command,
-    tracing::{info, warn},
+    tracing::{debug, info},
 };
 
 fn main() -> Result<()> {
@@ -18,10 +18,7 @@ fn main() -> Result<()> {
 
     info!("Testing NVIDIA NVDEC hardware decoder...");
 
-    let serial = std::env::args()
-        .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("Usage: test_nvdec <device_serial>"))?;
-
+    let serial = get_device_serial()?;
     info!("Device: {}", serial);
 
     let server_jar = "3rd-party/scrcpy-server-v3.3.3";
@@ -54,7 +51,7 @@ fn main() -> Result<()> {
         };
         if let Ok(Some(f)) = decoder.decode(&pkt.data, pkt.pts_us as i64) {
             count += 1;
-            info!("[{}/10] {}x{} {:?}", count, f.width, f.height, f.format);
+            debug!("[{}/10] {}x{} {:?}", count, f.width, f.height, f.format);
         }
     }
 

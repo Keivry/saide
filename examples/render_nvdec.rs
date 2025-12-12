@@ -14,6 +14,7 @@ use {
             VideoDecoder,
             new_nv12_render_callback,
         },
+        utils::get_device_serial,
     },
     std::{sync::Arc, thread},
     tracing::{debug, error, info, warn},
@@ -242,7 +243,7 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
             Ok(Some(frame)) => {
                 frame_count += 1;
 
-                if frame_count % 60 == 0 {
+                if frame_count.is_multiple_of(60) {
                     debug!("Decoded {} frames", frame_count);
                 }
 
@@ -263,27 +264,4 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
     info!("Decoder worker stopped. Total frames: {}", frame_count);
     conn.shutdown()?;
     Ok(())
-}
-
-fn get_device_serial() -> Result<String> {
-    if let Some(serial) = std::env::args().nth(1) {
-        return Ok(serial);
-    }
-
-    let output = std::process::Command::new("adb")
-        .args(["devices"])
-        .output()
-        .context("Failed to run 'adb devices'")?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    for line in output_str.lines().skip(1) {
-        if let Some(serial) = line.split_whitespace().next() {
-            if !serial.is_empty() {
-                return Ok(serial.to_string());
-            }
-        }
-    }
-
-    anyhow::bail!("No Android device found. Usage: render_nvdec <device_serial>")
 }

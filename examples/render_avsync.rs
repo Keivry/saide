@@ -1,11 +1,11 @@
-//! AV-synced device renderer with VAAPI + audio playback
+//! AV-synced device renderer with AutoDecoder + audio playback
 //!
 //! Demonstrates scrcpy-style PTS synchronization:
 //! - Video: PTS-driven rendering (minimal latency)
 //! - Audio: Independent buffering (100-200ms)
 
 use {
-    anyhow::{Context, Result},
+    anyhow::Result,
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     saide::{
@@ -14,14 +14,15 @@ use {
         decoder::{
             AudioDecoder,
             AudioPlayer,
+            AutoDecoder,
             DecodedFrame,
             Nv12RenderResources,
             OpusDecoder,
-            VaapiDecoder,
             VideoDecoder,
             new_nv12_render_callback,
         },
         sync::AVSync,
+        utils::get_device_serial,
     },
     std::{
         sync::{Arc, Mutex},
@@ -33,14 +34,12 @@ use {
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    info!("Starting AV-synced renderer (VAAPI + Audio)...");
+    info!("Starting AV-synced renderer (AutoDecoder + Audio)...");
 
-    let serial = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "10AF971ZLN004SU".to_string());
+    let serial = get_device_serial()?;
     info!("Device: {}", serial);
 
     let native_options = eframe::NativeOptions {
@@ -201,7 +200,7 @@ fn video_worker(
     frame_tx: Sender<Arc<DecodedFrame>>,
     av_sync: Arc<Mutex<AVSync>>,
 ) -> Result<()> {
-    info!("Video worker starting (VAAPI + PTS sync)...");
+    info!("Video worker starting (AutoDecoder + PTS sync)...");
 
     let server_jar = "3rd-party/scrcpy-server-v3.3.3";
     if !std::path::Path::new(server_jar).exists() {
@@ -236,11 +235,11 @@ fn video_worker(
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
     info!("Video resolution: {}x{}", width, height);
 
-    let mut decoder = VaapiDecoder::new(width, height)?;
+    let mut decoder = AutoDecoder::new(width, height)?;
     let mut frame_count = 0u64;
     let mut dropped_count = 0u64;
 
-    info!("Video decoder initialized (VAAPI)");
+    info!("Video decoder initialized ({})", decoder.decoder_type());
 
     loop {
         let video_packet = conn.read_video_packet()?;
@@ -288,7 +287,7 @@ fn video_worker(
                 dropped_count += 1;
             }
 
-            if frame_count % 100 == 0 {
+            if frame_count.is_multiple_of(100) {
                 info!(
                     "Video: {} frames rendered, {} dropped",
                     frame_count, dropped_count
@@ -348,7 +347,7 @@ fn audio_worker(serial: String, av_sync: Arc<Mutex<AVSync>>) -> Result<()> {
             // Play immediately (audio buffer handles timing)
             player.play(&decoded)?;
 
-            if packet_count % 100 == 0 {
+            if packet_count.is_multiple_of(100) {
                 debug!(
                     "Audio: {} packets, buffer: {:.1}%",
                     packet_count,
@@ -357,28 +356,4 @@ fn audio_worker(serial: String, av_sync: Arc<Mutex<AVSync>>) -> Result<()> {
             }
         }
     }
-}
-
-fn get_device_serial() -> Result<String> {
-    use std::process::Command;
-
-    let output = Command::new("adb")
-        .args(["devices", "-l"])
-        .output()
-        .context("Failed to execute 'adb devices'")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-
-    if lines.len() < 2 {
-        anyhow::bail!("No devices found");
-    }
-
-    let device_line = lines[1];
-    let serial = device_line
-        .split_whitespace()
-        .next()
-        .context("Failed to parse device serial")?;
-
-    Ok(serial.to_string())
 }

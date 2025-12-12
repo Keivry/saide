@@ -1,7 +1,7 @@
 //! Real device rendering with VAAPI hardware decoder and NV12
 
 use {
-    anyhow::{Context, Result},
+    anyhow::Result,
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     saide::{
@@ -14,15 +14,15 @@ use {
             VideoDecoder,
             new_nv12_render_callback,
         },
-        scrcpy::protocol::video::VideoPacket,
+        utils::get_device_serial,
     },
     std::{sync::Arc, thread},
-    tracing::{debug, error, info, warn},
+    tracing::{error, info, warn},
 };
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     info!("Starting VAAPI hardware decoder renderer...");
@@ -210,27 +210,26 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
         }
 
         // Check for resolution change in I-frames
-        if packet.is_keyframe {
-            if let Some((width_sps, height_sps)) =
+        if packet.is_keyframe
+            && let Some((width_sps, height_sps)) =
                 saide::decoder::extract_resolution_from_stream(&packet.data)
-            {
-                let new_res = (width_sps, height_sps);
-                if new_res != last_resolution {
-                    info!(
-                        "⚡ VAAPI resolution change: {}x{} -> {}x{}",
-                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
-                    );
+        {
+            let new_res = (width_sps, height_sps);
+            if new_res != last_resolution {
+                info!(
+                    "⚡ VAAPI resolution change: {}x{} -> {}x{}",
+                    last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                );
 
-                    match VaapiDecoder::new(new_res.0, new_res.1) {
-                        Ok(new_decoder) => {
-                            decoder = new_decoder;
-                            last_resolution = new_res;
-                            info!("✅ VAAPI decoder recreated!");
-                        }
-                        Err(e) => {
-                            warn!("❌ Failed to recreate VAAPI decoder: {}", e);
-                            continue;
-                        }
+                match VaapiDecoder::new(new_res.0, new_res.1) {
+                    Ok(new_decoder) => {
+                        decoder = new_decoder;
+                        last_resolution = new_res;
+                        info!("✅ VAAPI decoder recreated!");
+                    }
+                    Err(e) => {
+                        warn!("❌ Failed to recreate VAAPI decoder: {}", e);
+                        continue;
                     }
                 }
             }
@@ -248,27 +247,4 @@ fn decoder_worker(serial: String, frame_tx: Sender<Arc<DecodedFrame>>) -> Result
             }
         }
     }
-}
-
-fn get_device_serial() -> Result<String> {
-    if let Some(serial) = std::env::args().nth(1) {
-        return Ok(serial);
-    }
-
-    let output = std::process::Command::new("adb")
-        .args(["devices"])
-        .output()
-        .context("Failed to run 'adb devices'")?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    for line in output_str.lines().skip(1) {
-        if let Some(serial) = line.split_whitespace().next() {
-            if !serial.is_empty() {
-                return Ok(serial.to_string());
-            }
-        }
-    }
-
-    anyhow::bail!("No Android device found")
 }

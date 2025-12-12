@@ -4,14 +4,12 @@
 
 use {
     super::server::ServerParams,
+    crate::{GpuType, detect_gpu},
     anyhow::{Context, Result},
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, fs, path::PathBuf, process::Command},
     tracing::{debug, info},
 };
-
-// Import from decoder module public API
-use crate::decoder::{GpuType, detect_gpu};
 
 /// Candidate codec options to test (from most to least impactful)
 ///

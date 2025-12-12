@@ -1,14 +1,14 @@
 //! Test VAAPI hardware decoder
 
 use {
-    anyhow::{Context, Result},
+    anyhow::Result,
     saide::{
         ScrcpyConnection,
         ServerParams,
         decoder::{VaapiDecoder, VideoDecoder},
+        utils::get_device_serial,
     },
-    std::process::Command,
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 fn main() -> Result<()> {
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
 
     info!("Decoding {} frames...", target_frames);
 
-    for i in 0..100 {
+    for _ in 0..100 {
         if decoded_count >= target_frames {
             break;
         }
@@ -85,7 +85,7 @@ fn main() -> Result<()> {
         match decoder.decode(&packet.data, packet.pts_us as i64) {
             Ok(Some(frame)) => {
                 decoded_count += 1;
-                info!(
+                debug!(
                     "[{}/{}] Decoded frame: {}x{} {:?} {} bytes",
                     decoded_count,
                     target_frames,
@@ -117,27 +117,4 @@ fn main() -> Result<()> {
     info!("Test completed successfully!");
 
     Ok(())
-}
-
-fn get_device_serial() -> Result<String> {
-    if let Some(serial) = std::env::args().nth(1) {
-        return Ok(serial);
-    }
-
-    let output = Command::new("adb")
-        .args(["devices"])
-        .output()
-        .context("Failed to run 'adb devices'")?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    for line in output_str.lines().skip(1) {
-        if let Some(serial) = line.split_whitespace().next() {
-            if !serial.is_empty() {
-                return Ok(serial.to_string());
-            }
-        }
-    }
-
-    anyhow::bail!("No Android device found")
 }

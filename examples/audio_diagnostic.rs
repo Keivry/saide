@@ -1,11 +1,12 @@
 //! Audio quality diagnostic tool
 
 use {
-    anyhow::{Context, Result},
+    anyhow::Result,
     saide::{
         ScrcpyConnection,
         ServerParams,
         decoder::{AudioDecoder, AudioPlayer, OpusDecoder},
+        utils::get_device_serial,
     },
     std::time::Duration,
 };
@@ -15,10 +16,7 @@ fn main() -> Result<()> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let serial = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "10AF971ZLN004SU".to_string());
-
+    let serial = get_device_serial()?;
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("🔍 Audio Quality Diagnostic");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -124,7 +122,9 @@ fn main() -> Result<()> {
 
                 // Sample buffer status every second
                 let elapsed = start_time.elapsed().as_secs_f32();
-                if (elapsed * 10.0) as u32 % 10 == 0 && stats.last_report_sec != elapsed as u32 {
+                if ((elapsed * 10.0) as u32).is_multiple_of(10)
+                    && stats.last_report_sec != elapsed as u32
+                {
                     stats.last_report_sec = elapsed as u32;
                     println!(
                         "[{:.0}s] Buffer: {:.1}%, Packets: {}, Decoded: {}",

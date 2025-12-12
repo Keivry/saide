@@ -1,14 +1,15 @@
 //! 测试从真实设备解码视频流
 
 use {
-    anyhow::{Context, Result},
+    anyhow::Result,
     saide::{
         ScrcpyConnection,
         ServerParams,
         decoder::{H264Decoder, VideoDecoder},
+        utils::get_device_serial,
     },
-    std::{fs::File, io::Write, process::Command},
-    tracing::{info, warn},
+    std::{fs::File, io::Write},
+    tracing::{debug, info, warn},
 };
 
 fn main() -> Result<()> {
@@ -133,7 +134,7 @@ fn main() -> Result<()> {
         // CONFIG 包也要发送给解码器！
         if packet.is_config {
             config_count += 1;
-            info!("发送 SPS/PPS 到解码器");
+            debug!("发送 SPS/PPS 到解码器");
             // 不要 continue，继续解码
         }
 
@@ -157,8 +158,8 @@ fn main() -> Result<()> {
 
                 // 保存第一帧
                 if decoded_count == 1 {
-                    match save_frame_as_ppm(&frame, "frame_001.ppm") {
-                        Ok(_) => println!("    💾 已保存到 frame_001.ppm"),
+                    match save_frame_as_ppm(&frame, "/tmp/frame_001.ppm") {
+                        Ok(_) => println!("    💾 已保存到 /tmp/frame_001.ppm"),
                         Err(e) => warn!("保存失败: {}", e),
                     }
                 }
@@ -197,26 +198,6 @@ fn main() -> Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     Ok(())
-}
-
-fn get_device_serial() -> Result<String> {
-    let output = Command::new("adb")
-        .args(["devices", "-l"])
-        .output()
-        .context("Failed to run 'adb devices'")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines().skip(1) {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 && parts[1] == "device" {
-            return Ok(parts[0].to_string());
-        }
-    }
-
-    anyhow::bail!("No device found")
 }
 
 fn save_frame_as_ppm(frame: &saide::decoder::DecodedFrame, filename: &str) -> Result<()> {

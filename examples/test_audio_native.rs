@@ -1,18 +1,18 @@
 //! Test audio streaming using native libopus decoder
 
 use {
-    anyhow::{Context, Result},
+    anyhow::Result,
     saide::{
         ScrcpyConnection,
         ServerParams,
-        decoder::{AudioDecoder, AudioPlayer, OpusNativeDecoder},
+        decoder::{AudioDecoder, AudioPlayer, OpusDecoder},
     },
     std::time::Duration,
 };
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -54,7 +54,7 @@ fn main() -> Result<()> {
 
     // Initialize native Opus decoder and audio player
     println!("\n🎧 Initializing native libopus decoder...");
-    let mut decoder = OpusNativeDecoder::new(48000, 2)?;
+    let mut decoder = OpusDecoder::new(48000, 2)?;
     let player = AudioPlayer::new(48000, 2)?;
 
     println!("✅ Audio initialized: 48kHz stereo (native libopus)");
