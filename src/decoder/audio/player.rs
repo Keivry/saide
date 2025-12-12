@@ -4,12 +4,15 @@ use {
     super::DecodedAudio,
     anyhow::{Context, Result},
     cpal::{
+        SampleRate,
+        Stream,
+        StreamConfig,
         traits::{DeviceTrait, HostTrait, StreamTrait},
-        SampleRate, Stream, StreamConfig,
     },
     std::sync::{
+        Arc,
+        Mutex,
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
     },
     tracing::{debug, info, warn},
 };
@@ -68,7 +71,7 @@ impl RingBuffer {
         // Use gradual fade to avoid pops
         if to_read < output.len() {
             let fade_samples = (to_read).min(32); // Fade last 32 samples
-            
+
             // Fade out the last few samples before silence
             for i in 0..fade_samples {
                 let idx = to_read.saturating_sub(fade_samples) + i;
@@ -77,7 +80,7 @@ impl RingBuffer {
                     output[idx] *= fade;
                 }
             }
-            
+
             // Fill rest with silence
             for i in to_read..output.len() {
                 output[i] = 0.0;
@@ -140,8 +143,7 @@ impl AudioPlayer {
 
         // Create ring buffer for audio samples
         let buffer_samples = (sample_rate as usize * BUFFER_MS / 1000) * channels as usize;
-        let prebuffer_samples =
-            (sample_rate as usize * PREBUFFER_MS / 1000) * channels as usize;
+        let prebuffer_samples = (sample_rate as usize * PREBUFFER_MS / 1000) * channels as usize;
         let ring_buffer = Arc::new(Mutex::new(RingBuffer::new(buffer_samples)));
 
         let running = Arc::new(AtomicBool::new(true));
@@ -220,9 +222,7 @@ impl AudioPlayer {
     }
 
     /// Get buffer fill level (0.0 to 1.0)
-    pub fn buffer_level(&self) -> f32 {
-        self.ring_buffer.lock().unwrap().fill_level()
-    }
+    pub fn buffer_level(&self) -> f32 { self.ring_buffer.lock().unwrap().fill_level() }
 
     /// Stop playback
     pub fn stop(&self) { self.running.store(false, Ordering::Relaxed); }

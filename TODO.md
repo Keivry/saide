@@ -157,7 +157,42 @@ cargo run --example render_device
 
 ## 进行中 🔄
 
-### 音频支持实现 (当前任务)
+### 音视频同步实现 ✅ (2025-12-12)
+
+#### 已完成
+- [x] **AV 同步时钟模块** (`src/sync/clock.rs`)
+  - [x] AVClock: PTS → 系统时间映射
+  - [x] AVSync: 同步状态管理
+  - [x] PTS 定时渲染逻辑
+  - [x] 帧丢弃策略（超过阈值）
+  - [x] 7/7 单元测试通过
+- [x] **AV 同步示例** (`examples/render_avsync.rs`)
+  - [x] 视频线程：PTS 定时渲染（VAAPI + NV12）
+  - [x] 音频线程：独立缓冲播放（Opus + cpal）
+  - [x] egui 主线程：被动接收最新帧
+  - [x] 同步状态 UI 显示（V-PTS / A-PTS / Diff）
+
+#### 技术细节
+**同步策略（scrcpy-style）：**
+```
+视频：PTS → Instant 映射 → thread::sleep() → 定时发送到 egui
+音频：独立 cpal 线程 + 100-200ms 缓冲（自适应抖动）
+同步：共享 AVClock，20ms 阈值，超时丢帧
+```
+
+**性能预期：**
+- 音视频延迟差：< 20ms（阈值内同步）
+- 视频渲染延迟：0ms（PTS 直接映射，无额外缓冲）
+- 音频延迟：100-200ms（网络抖动缓冲）
+
+#### 使用方法
+```bash
+cargo run --example render_avsync [device_serial]
+```
+
+---
+
+### 音频支持实现 (已完成)
 
 #### 阶段 1：基础架构 ✅ 已完成
 - [x] 添加 `cpal` 音频播放依赖

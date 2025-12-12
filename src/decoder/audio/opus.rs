@@ -24,8 +24,8 @@ impl OpusDecoder {
         ffmpeg::init().context("Failed to initialize FFmpeg")?;
 
         // Find Opus decoder
-        let codec = ffmpeg::decoder::find(ffmpeg::codec::Id::OPUS)
-            .context("Opus decoder not found")?;
+        let codec =
+            ffmpeg::decoder::find(ffmpeg::codec::Id::OPUS).context("Opus decoder not found")?;
 
         // Create decoder context with proper initialization
         let mut context = ffmpeg::codec::context::Context::new_with_codec(codec);
@@ -34,10 +34,8 @@ impl OpusDecoder {
             let ctx_ptr = context.as_mut_ptr();
             (*ctx_ptr).sample_rate = sample_rate as i32;
             (*ctx_ptr).ch_layout.nb_channels = channels as i32;
-            (*ctx_ptr).sample_fmt = ffmpeg::format::Sample::F32(
-                ffmpeg::format::sample::Type::Planar,
-            )
-            .into();
+            (*ctx_ptr).sample_fmt =
+                ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar).into();
         }
 
         let decoder = context.decoder().audio()?;
@@ -90,7 +88,9 @@ impl AudioDecoder for OpusDecoder {
                     pts,
                 }))
             }
-            Err(ffmpeg::Error::Other { errno: ffmpeg::error::EAGAIN }) => {
+            Err(ffmpeg::Error::Other {
+                errno: ffmpeg::error::EAGAIN,
+            }) => {
                 // Need more data
                 Ok(None)
             }

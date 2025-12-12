@@ -3,8 +3,9 @@
 use {
     anyhow::{Context, Result},
     saide::{
+        ScrcpyConnection,
+        ServerParams,
         decoder::{AudioDecoder, AudioPlayer, OpusDecoder},
-        ScrcpyConnection, ServerParams,
     },
     std::time::Duration,
 };
@@ -153,7 +154,10 @@ fn main() -> Result<()> {
     println!();
     println!("Total bytes:       {} KB", stats.total_bytes / 1024);
     println!("Total samples:     {}", stats.total_samples);
-    println!("Avg packet size:   {} bytes", stats.total_bytes / stats.packets_received);
+    println!(
+        "Avg packet size:   {} bytes",
+        stats.total_bytes / stats.packets_received
+    );
     println!(
         "Avg samples/frame: {}",
         stats.total_samples / stats.frames_decoded

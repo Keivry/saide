@@ -3,8 +3,9 @@
 use {
     anyhow::{Context, Result},
     saide::{
+        ScrcpyConnection,
+        ServerParams,
         decoder::{AudioDecoder, AudioPlayer, OpusNativeDecoder},
-        ScrcpyConnection, ServerParams,
     },
     std::time::Duration,
 };

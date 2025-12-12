@@ -7,12 +7,10 @@ mod player;
 #[allow(dead_code)]
 mod opus;
 
-pub use {opus_native::OpusNativeDecoder as OpusDecoder, player::AudioPlayer};
-
+use anyhow::Result;
 // Export both for flexibility
 pub use opus::OpusDecoder as OpusFfmpegDecoder;
-
-use anyhow::Result;
+pub use {opus_native::OpusNativeDecoder as OpusDecoder, player::AudioPlayer};
 
 /// Decoded audio frame
 #[derive(Debug, Clone)]

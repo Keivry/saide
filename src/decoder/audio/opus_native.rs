@@ -31,8 +31,8 @@ impl OpusNativeDecoder {
             _ => anyhow::bail!("Opus only supports 1 or 2 channels"),
         };
 
-        let decoder = Decoder::new(sample_rate, opus_channels)
-            .context("Failed to create Opus decoder")?;
+        let decoder =
+            Decoder::new(sample_rate, opus_channels).context("Failed to create Opus decoder")?;
 
         info!(
             "Initialized native Opus decoder: {}Hz, {} channels",
