@@ -177,6 +177,7 @@ cargo run --example render_device
   - [x] 修复 StreamPlayer NV12 渲染维度检查
   - [x] 修复初始化状态机：等待 video_rect 完全就绪再设为 Ready
   - [x] 在 draw_indicator 中添加防御性检查
+  - [x] 修复状态机死锁：InProgress 阶段调用 player.update()
 
 #### 技术细节
 **重构前**：外部 scrcpy 进程 → V4L2 → V4L2Player  
@@ -192,6 +193,9 @@ cargo run --example render_device
 - ✅ NaN 布局 panic：video_rect 初始化时序问题
   - 根因：PlayerEvent::Ready 到达前 current_frame 已有数据，导致 video_width/height 为 0
   - 方案：状态机等待 player.ready() && valid video_rect
+- ✅ 状态机死锁：player.update() 只在 Ready 状态调用
+  - 根因：Ready 需要 player.ready()，但 ready() 需要 update() 接收事件
+  - 方案：InProgress 阶段也调用 player.update()
 
 ---
 
