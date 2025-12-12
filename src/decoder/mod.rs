@@ -1,21 +1,23 @@
 //! Video decoder module using FFmpeg
 
+pub mod audio;
 mod auto;
 mod h264;
 mod h264_parser;
 mod nv12_render;
 mod nvdec;
 mod rgba_render;
-mod vaapi; // 🚀 Auto GPU detection
+mod vaapi;
 
 use {anyhow::Result, ffmpeg_next::format::Pixel};
 pub use {
-    auto::{AutoDecoder, GpuType, detect_gpu}, // Export auto detection
+    audio::{AudioDecoder, AudioPlayer, DecodedAudio, OpusDecoder},
+    auto::{detect_gpu, AutoDecoder, GpuType},
     h264::H264Decoder,
     h264_parser::extract_resolution_from_stream,
-    nv12_render::{Nv12RenderResources, new_nv12_render_callback},
+    nv12_render::{new_nv12_render_callback, Nv12RenderResources},
     nvdec::NvdecDecoder,
-    rgba_render::{RgbaRenderResources, new_rgba_render_callback},
+    rgba_render::{new_rgba_render_callback, RgbaRenderResources},
     vaapi::VaapiDecoder,
 };
 

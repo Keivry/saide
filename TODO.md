@@ -157,6 +157,54 @@ cargo run --example render_device
 
 ## 进行中 🔄
 
+### 音频支持实现 (当前任务)
+
+#### 阶段 1：基础架构 ✅ 已完成
+- [x] 添加 `cpal` 音频播放依赖
+- [x] 创建 `src/decoder/audio/` 模块结构
+  - [x] `mod.rs` - 音频解码器 trait
+  - [x] `opus.rs` - Opus 解码器 (FFmpeg)
+  - [x] `player.rs` - 音频播放器 (cpal)
+- [x] 创建 `src/scrcpy/protocol/audio.rs` 音频包解析
+- [x] 所有测试通过 (2/2)
+
+#### 阶段 2：Opus 解码 (待开始)
+- [ ] 实现 `OpusDecoder` (FFmpeg libopus)
+  - [ ] 初始化 Opus 解码上下文
+  - [ ] 解码 Opus 包到 PCM (f32)
+  - [ ] 处理采样率转换 (48kHz → 设备采样率)
+- [ ] 单元测试：解码固定 Opus 测试向量
+
+#### 阶段 3：音频播放 (待开始)
+- [ ] 实现 `AudioPlayer` (cpal)
+  - [ ] 初始化音频输出设备
+  - [ ] 创建音频流 (crossbeam ring buffer)
+  - [ ] 处理缓冲区欠载/溢出
+- [ ] 测试示例：播放本地 Opus 文件
+
+#### 阶段 4：集成到 Connection (待开始)
+- [ ] 添加 `read_audio_packet()` 方法
+- [ ] 创建 `examples/test_audio.rs`
+- [ ] 处理音频同步 (PTS 对齐)
+
+#### 阶段 5：UI 集成 (待开始)
+- [ ] 在主 UI 添加音频控制
+  - [ ] 音量滑块
+  - [ ] 静音按钮
+  - [ ] 音频延迟显示
+- [ ] 配置文件音频选项
+
+#### 技术细节参考
+- **音频格式**: Opus (默认), AAC, FLAC, RAW
+- **采样率**: 48kHz (Android 输出标准)
+- **声道**: 立体声 (2 channels)
+- **缓冲**: 50-200ms (可配置)
+- **同步**: PTS 基准与视频对齐
+
+---
+
+### 遗留任务
+
 - [ ] 添加延迟测量工具
 - [ ] 测试硬件编码器对延迟的实际影响
 
