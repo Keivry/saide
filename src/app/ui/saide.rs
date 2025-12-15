@@ -809,6 +809,13 @@ impl eframe::App for SAideApp {
                             h
                         );
                         
+                        debug!(
+                            "Window size check: current={}x{}, last={}x{}, video={}x{}",
+                            current_window_size.0, current_window_size.1,
+                            self.last_window_size.0, self.last_window_size.1,
+                            w, h
+                        );
+                        
                         // Only resize if window size doesn't match video dimensions
                         if !self.window_initialized || 
                            current_window_size != self.last_window_size
@@ -816,8 +823,9 @@ impl eframe::App for SAideApp {
                             let window_w = w as f32 + Toolbar::width();
                             let window_h = h as f32;
                             
-                            info!("Adjusting window to {}x{} (video {}x{})", 
-                                  window_w, window_h, w, h);
+                            info!("Adjusting window to {}x{} (video {}x{}, last window {}x{})", 
+                                  window_w, window_h, w, h,
+                                  self.last_window_size.0, self.last_window_size.1);
 
                             // Remove aspect ratio lock first
                             ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(None));

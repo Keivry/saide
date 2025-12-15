@@ -298,11 +298,17 @@ impl StreamPlayer {
 
     /// Get effective video dimensions (considering rotation)
     pub fn dimensions(&self) -> (u32, u32) {
-        if self.video_rotation.is_multiple_of(2) {
+        let result = if self.video_rotation.is_multiple_of(2) {
             (self.video_width, self.video_height)
         } else {
             (self.video_height, self.video_width)
-        }
+        };
+        debug!(
+            "dimensions() called: raw={}x{} rot={} → result={}x{}",
+            self.video_width, self.video_height, self.video_rotation,
+            result.0, result.1
+        );
+        result
     }
 
     /// Get video statistics
