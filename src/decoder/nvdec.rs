@@ -25,6 +25,8 @@ pub struct NvdecDecoder {
     output_format: Pixel,
     #[allow(dead_code)]
     last_decoded_dimensions: Option<(u32, u32)>,
+    /// Counter for consecutive empty frame returns (indicates decode failure)
+    consecutive_empty_frames: u32,
 }
 
 impl NvdecDecoder {
@@ -98,6 +100,7 @@ impl NvdecDecoder {
             height,
             output_format: Pixel::NV12, // NVDEC outputs NV12
             last_decoded_dimensions: None,
+            consecutive_empty_frames: 0,
         })
     }
 
@@ -204,19 +207,33 @@ impl VideoDecoder for NvdecDecoder {
         self.send_packet(packet_data, pts)?;
         let frames = self.receive_frames()?;
 
-        // Check if decoder dimensions changed after receiving frames
-        if !frames.is_empty() {
-            let decoder_width = self.decoder.width();
-            let decoder_height = self.decoder.height();
-
-            if decoder_width != self.width || decoder_height != self.height {
-                info!(
-                    "Decoder dimensions updated: {}x{} -> {}x{}",
-                    self.width, self.height, decoder_width, decoder_height
-                );
-                self.width = decoder_width;
-                self.height = decoder_height;
+        // Check for consecutive empty frames (indicates decode failure)
+        if frames.is_empty() {
+            self.consecutive_empty_frames += 1;
+            
+            // After 3 consecutive empty frames, assume resolution changed
+            if self.consecutive_empty_frames >= 3 {
+                bail!("NVDEC decoder stuck: {} consecutive empty frames (likely resolution change)", 
+                      self.consecutive_empty_frames);
             }
+            
+            return Ok(None);
+        }
+
+        // Reset counter on successful decode
+        self.consecutive_empty_frames = 0;
+
+        // Check if decoder dimensions changed after receiving frames
+        let decoder_width = self.decoder.width();
+        let decoder_height = self.decoder.height();
+
+        if decoder_width != self.width || decoder_height != self.height {
+            info!(
+                "Decoder dimensions updated: {}x{} -> {}x{}",
+                self.width, self.height, decoder_width, decoder_height
+            );
+            self.width = decoder_width;
+            self.height = decoder_height;
         }
 
         Ok(frames.into_iter().next())
