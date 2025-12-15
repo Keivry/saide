@@ -62,6 +62,62 @@
 - [x] 标准 BT.601 YUV→RGB 转换
 - [x] 双纹理 NV12 渲染（Y: R8, UV: Rg8）
 
+## 待实现 📋
+
+### 架构重构：分离 ScrcpyConnection 管理 (高优先级)
+
+**问题**：
+- 当前 `ScrcpyConnection` 在 `stream_worker` 线程中创建
+- `control_stream` 被困在线程内，无法从 `SAideApp` 访问
+- 鼠标/键盘事件无法通过 control_stream 发送到设备
+
+**影响**：
+- ❌ 鼠标点击无法传递到设备
+- ❌ 键盘输入无法传递到设备
+- ❌ 所有控制功能（旋转设备、返回键等）无法使用
+
+**重构方案**（推荐方案 A）：
+
+1. **提升 ScrcpyConnection 到 SAideApp 层**
+   ```rust
+   SAideApp {
+       connection: Option<ScrcpyConnection>,  // 管理连接
+       player: StreamPlayer,                   // 只负责渲染
+       control_stream: Option<TcpStream>,     // 控制通道
+   }
+   ```
+
+2. **修改 StreamPlayer 接口**
+   ```rust
+   // 从接受 serial 改为接受已建立的流
+   pub fn start(
+       video_stream: TcpStream,
+       audio_stream: Option<TcpStream>,
+       video_resolution: (u32, u32),
+   )
+   ```
+
+3. **在 init 中建立连接**
+   ```rust
+   let conn = ScrcpyConnection::connect(...).await?;
+   let video_stream = conn.video_stream.take()?;
+   let audio_stream = conn.audio_stream.take();
+   
+   self.player.start(video_stream, audio_stream, ...);
+   self.control_stream = conn.control_stream;
+   ```
+
+4. **实现控制消息发送**
+   ```rust
+   fn send_control(&mut self, msg: &[u8]) -> Result<()> {
+       self.control_stream.as_mut()?.write_all(msg)?;
+   }
+   ```
+
+**参考文档**：`/tmp/architecture_refactor.md` (详细设计)
+
+---
+
 ## 待优化 📋
 
 ### 性能与监控
