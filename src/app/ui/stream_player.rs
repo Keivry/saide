@@ -81,7 +81,7 @@ pub struct StreamPlayer {
     state: PlayerState,
 
     /// Stream worker thread
-    _stream_thread: Option<thread::JoinHandle<()>>,
+    stream_thread: Option<thread::JoinHandle<()>>,
 
     /// Video display rectangle
     video_rect: egui::Rect,
@@ -123,7 +123,7 @@ impl StreamPlayer {
             current_frame: None,
             stats: StreamStats::default(),
             state: PlayerState::Idle,
-            _stream_thread: None,
+            stream_thread: None,
             video_rect: egui::Rect::NOTHING,
             video_width: 0,
             video_height: 0,
@@ -143,7 +143,7 @@ impl StreamPlayer {
 
         let event_tx = self.event_tx.clone();
 
-        self._stream_thread = Some(thread::spawn(move || {
+        self.stream_thread = Some(thread::spawn(move || {
             if let Err(e) = stream_worker(serial, config, event_tx.clone()) {
                 error!("Stream worker error: {}", e);
                 let _ = event_tx.send(PlayerEvent::Failed(format!("{}", e)));
@@ -155,10 +155,18 @@ impl StreamPlayer {
     pub fn stop(&mut self) {
         info!("Stopping stream");
         self.state = PlayerState::Idle;
+        
+        // Drop channels first to signal thread to exit
         self.frame_rx = None;
         self.stats_rx = None;
         self.current_frame = None;
-        // Thread will terminate when channels are dropped
+        
+        // Wait for thread to finish (with timeout)
+        if let Some(thread) = self.stream_thread.take() {
+            trace!("Waiting for stream thread to finish...");
+            let _ = thread.join();
+            trace!("Stream thread finished");
+        }
     }
 
     /// Update player state (call every frame)
@@ -454,88 +462,106 @@ fn stream_worker(
 
     // Video decode loop (main thread)
     debug!("Starting video decode loop...");
-    loop {
-        use crate::scrcpy::protocol::video::VideoPacket;
-        let video_packet = VideoPacket::read_from(&mut video_stream)?;
-        let pts = video_packet.pts_us as i64;
+    let decode_result = (|| -> Result<()> {
+        loop {
+            use crate::scrcpy::protocol::video::VideoPacket;
+            let video_packet = VideoPacket::read_from(&mut video_stream)?;
+            let pts = video_packet.pts_us as i64;
 
-        // Check for resolution change in keyframes (SPS embedded)
-        if video_packet.is_keyframe {
-            use crate::decoder::extract_resolution_from_stream;
+            // Check for resolution change in keyframes (SPS embedded)
+            if video_packet.is_keyframe {
+                use crate::decoder::extract_resolution_from_stream;
 
-            if let Some((width_sps, height_sps)) =
-                extract_resolution_from_stream(&video_packet.data)
-            {
-                let new_res = (width_sps, height_sps);
-                if new_res != last_resolution {
-                    info!(
-                        "Resolution change detected: {}x{} -> {}x{}",
-                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
-                    );
+                if let Some((width_sps, height_sps)) =
+                    extract_resolution_from_stream(&video_packet.data)
+                {
+                    let new_res = (width_sps, height_sps);
+                    if new_res != last_resolution {
+                        info!(
+                            "Resolution change detected: {}x{} -> {}x{}",
+                            last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                        );
 
-                    // Recreate decoder with new resolution
-                    match AutoDecoder::new(new_res.0, new_res.1) {
-                        Ok(new_decoder) => {
-                            video_decoder = new_decoder;
-                            last_resolution = new_res;
-                            info!(
-                                "Decoder recreated: {}",
-                                video_decoder.decoder_type()
-                            );
+                        // Recreate decoder with new resolution
+                        match AutoDecoder::new(new_res.0, new_res.1) {
+                            Ok(new_decoder) => {
+                                video_decoder = new_decoder;
+                                last_resolution = new_res;
+                                info!(
+                                    "Decoder recreated: {}",
+                                    video_decoder.decoder_type()
+                                );
 
-                            // Notify UI about resolution change
-                            let _ = event_tx.send(PlayerEvent::ResolutionChanged {
-                                width: new_res.0,
-                                height: new_res.1,
-                            });
-                        }
-                        Err(e) => {
-                            error!("Failed to recreate decoder: {}", e);
-                            continue;
+                                // Notify UI about resolution change
+                                let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                                    width: new_res.0,
+                                    height: new_res.1,
+                                });
+                            }
+                            Err(e) => {
+                                error!("Failed to recreate decoder: {}", e);
+                                continue;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Decode frame
-        let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
-            Ok(frame) => frame,
-            Err(e) => {
-                // During shutdown, CUDA context may be invalid - don't spam logs
-                trace!("Decode error (likely during shutdown): {}", e);
-                continue;
-            }
-        };
-
-        if let Some(frame) = frame_opt {
-            let current_stats = {
-                let mut s = stats.lock().unwrap();
-                s.video_frames += 1;
-                s.last_video_pts = frame.pts;
-                *s
+            // Decode frame
+            let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
+                Ok(frame) => frame,
+                Err(e) => {
+                    // During shutdown, CUDA context may be invalid - don't spam logs
+                    trace!("Decode error (likely during shutdown): {}", e);
+                    continue;
+                }
             };
 
-            // Check sync and update stats
-            let should_drop = {
-                let sync = av_sync.lock().unwrap();
-                sync.should_drop_video(frame.pts)
-            };
+            if let Some(frame) = frame_opt {
+                let current_stats = {
+                    let mut s = stats.lock().unwrap();
+                    s.video_frames += 1;
+                    s.last_video_pts = frame.pts;
+                    *s
+                };
 
-            if should_drop {
-                let mut s = stats.lock().unwrap();
-                s.dropped_frames += 1;
-                continue;
+                // Check sync and update stats
+                let should_drop = {
+                    let sync = av_sync.lock().unwrap();
+                    sync.should_drop_video(frame.pts)
+                };
+
+                if should_drop {
+                    let mut s = stats.lock().unwrap();
+                    s.dropped_frames += 1;
+                    continue;
+                }
+
+                // Send frame - if channel is closed, receiver dropped, exit gracefully
+                if frame_tx.try_send(Arc::new(frame)).is_err() {
+                    if frame_tx.is_full() {
+                        let mut s = stats.lock().unwrap();
+                        s.dropped_frames += 1;
+                    } else {
+                        // Channel disconnected, exit gracefully
+                        debug!("Frame channel disconnected, stopping decode loop");
+                        return Ok(());
+                    }
+                }
+
+                // Send stats snapshot
+                let _ = stats_tx.try_send(current_stats);
             }
-
-            // Send frame
-            if frame_tx.try_send(Arc::new(frame)).is_err() {
-                let mut s = stats.lock().unwrap();
-                s.dropped_frames += 1;
-            }
-
-            // Send stats snapshot
-            let _ = stats_tx.try_send(current_stats);
         }
+    })();
+
+    // Explicitly drop decoder before exiting to release CUDA context cleanly
+    drop(video_decoder);
+    
+    match decode_result {
+        Ok(_) => debug!("Video decode loop terminated gracefully"),
+        Err(e) => debug!("Video decode loop error: {}", e),
     }
+    
+    Ok(())
 }

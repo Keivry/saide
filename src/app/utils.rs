@@ -2,7 +2,7 @@
 use {
     crate::config::mapping::{AdbAction, Key, KeyMapping},
     eframe::egui::Pos2,
-    tracing::{debug, trace},
+    tracing::trace,
 };
 
 pub struct CoordinatesTransformParams {
@@ -20,7 +20,7 @@ pub struct CoordinatesTransformParams {
 /// 2. Inverse apply user rotation -> video original coords
 /// 3. Scale to device size -> ADB logical coords
 ///
-/// Note: 
+/// Note:
 /// - scrcpy video orientation follows device rotation (not fixed!)
 /// - When device rotates, video resolution changes to match
 /// - So video coords = device current coords (just need scaling)
@@ -29,7 +29,13 @@ pub fn screen_to_device_coords(
     pos: &egui::Pos2,
     trans_params: &CoordinatesTransformParams,
 ) -> Option<(u32, u32)> {
-    let (video_rect, video_rotation, device_physical_size, device_orientation, _capture_orientation) = (
+    let (
+        video_rect,
+        video_rotation,
+        device_physical_size,
+        device_orientation,
+        _capture_orientation,
+    ) = (
         &trans_params.video_rect,
         trans_params.video_rotation,
         trans_params.device_physical_size,
@@ -97,7 +103,7 @@ pub fn screen_to_device_coords(
     // - Device orientation 1 (landscape): video is 1200x540
     // So video coords are already in device's current orientation
     // We only need to scale from video size to device size
-    
+
     // Calculate device logical size at current orientation
     let (device_w, device_h) = if device_orientation & 1 == 0 {
         (device_physical_size.0 as f32, device_physical_size.1 as f32)
@@ -110,16 +116,13 @@ pub fn screen_to_device_coords(
     let scale_y = device_h / video_h;
     let (device_x, device_y) = (video_x * scale_x, video_y * scale_y);
 
-    debug!(
+    trace!(
         "Device logical size: {}x{}",
         device_w as u32, device_h as u32
     );
-    debug!(
+    trace!(
         "Device coords: ({:.1}, {:.1}) -> ({}, {})",
-        device_x,
-        device_y,
-        device_x as u32,
-        device_y as u32
+        device_x, device_y, device_x as u32, device_y as u32
     );
 
     Some((device_x as u32, device_y as u32))
