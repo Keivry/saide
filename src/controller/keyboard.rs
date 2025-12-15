@@ -183,7 +183,10 @@ impl KeyboardMapper {
         }
 
         if let Some(&keycode) = EGUI_TO_ANDROID_KEY.get(key) {
-            trace!("Handling standard key event: {:?} -> keycode {}", key, keycode);
+            trace!(
+                "Handling standard key event: {:?} -> keycode {}",
+                key, keycode
+            );
             self.sender.send_key_press(keycode as u32, 0)?;
             return Ok(true);
         }
@@ -194,7 +197,10 @@ impl KeyboardMapper {
     /// Handle shifted key event, returns true if handled
     pub fn handle_shifted_key_event(&self, key: &Key) -> Result<bool> {
         if let Some(&keycode) = EGUI_TO_ANDROID_SHIFT_KEY.get(key) {
-            trace!("Handling shifted key event: {:?} -> keycode {}", key, keycode);
+            trace!(
+                "Handling shifted key event: {:?} -> keycode {}",
+                key, keycode
+            );
             // SHIFT metastate = 1 (AMETA_SHIFT_ON)
             self.sender.send_key_press(keycode as u32, 1)?;
             return Ok(true);
@@ -222,7 +228,7 @@ impl KeyboardMapper {
     pub fn handle_keycombo_event(&self, modifiers: Modifiers, key: &Key) -> Result<bool> {
         if let Some(&keycode) = EGUI_TO_ANDROID_KEY.get(key) {
             trace!("Handling key combo event: {:?} + {:?}", modifiers, key);
-            
+
             // Convert modifiers to Android metastate
             // AMETA_SHIFT_ON = 1, AMETA_ALT_ON = 2, AMETA_CTRL_ON = 4096, AMETA_META_ON = 65536
             let mut metastate = 0u32;
@@ -235,7 +241,7 @@ impl KeyboardMapper {
             if modifiers.ctrl || modifiers.command {
                 metastate |= 4096;
             }
-            
+
             self.sender.send_key_press(keycode as u32, metastate)?;
             return Ok(true);
         }
@@ -243,14 +249,17 @@ impl KeyboardMapper {
     }
 
     /// Handle custom keyboard event using legacy ADB actions
-    /// 
+    ///
     /// Note: This still uses the legacy AdbAction format from config.toml
     /// TODO: Convert custom mappings to use ControlMessage directly
     pub fn handle_custom_keymapping_event(&self, key: &Key) -> Result<bool> {
         if let Some(profile) = self.active_profile.load().as_ref()
             && let Some(action) = profile.get_mapping(key)
         {
-            trace!("Handling custom key mapping event: {:?} -> {:?}", key, action);
+            trace!(
+                "Handling custom key mapping event: {:?} -> {:?}",
+                key, action
+            );
             self.send_adb_action(&action)?;
             return Ok(true);
         }

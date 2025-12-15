@@ -7,11 +7,7 @@ use {
     crate::scrcpy::protocol::control::ControlMessage,
     anyhow::{Context, Result},
     parking_lot::Mutex,
-    std::{
-        io::Write,
-        net::TcpStream,
-        sync::Arc,
-    },
+    std::{io::Write, net::TcpStream, sync::Arc},
     tracing::trace,
 };
 
@@ -43,9 +39,7 @@ impl ControlSender {
     }
 
     /// Get current screen dimensions
-    pub fn get_screen_size(&self) -> (u16, u16) {
-        *self.screen_size.lock()
-    }
+    pub fn get_screen_size(&self) -> (u16, u16) { *self.screen_size.lock() }
 
     /// Send a control message (internal helper)
     fn send_message(&self, msg: &ControlMessage) -> Result<()> {
@@ -133,18 +127,20 @@ impl ControlSender {
     }
 
     /// Send custom control message (advanced usage)
-    pub fn send_custom(&self, msg: &ControlMessage) -> Result<()> {
-        self.send_message(msg)
-    }
+    pub fn send_custom(&self, msg: &ControlMessage) -> Result<()> { self.send_message(msg) }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::io::Read;
-    use std::net::{TcpListener, TcpStream};
-    use std::thread;
-    use std::time::Duration;
+    use {
+        super::*,
+        std::{
+            io::Read,
+            net::{TcpListener, TcpStream},
+            thread,
+            time::Duration,
+        },
+    };
 
     fn setup_mock_server() -> (TcpStream, thread::JoinHandle<Vec<u8>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

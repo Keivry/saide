@@ -324,12 +324,7 @@ pub fn screen_to_video_coords(
         // Display: H×W, Original: W×H
         // Forward: (x, y) => (H - y, x)
         // Inverse: (x', y') => (y', W - x')
-        1 => (
-            rel_y,
-            display_width - rel_x,
-            display_height,
-            display_width,
-        ),
+        1 => (rel_y, display_width - rel_x, display_height, display_width),
 
         // 180 degrees rotation
         // Display: W×H, Original: W×H
@@ -346,22 +341,14 @@ pub fn screen_to_video_coords(
         // Display: H×W, Original: W×H
         // Forward: (x, y) => (y, W - x)
         // Inverse: (x', y') => (H - y', x')
-        3 => (
-            display_height - rel_y,
-            rel_x,
-            display_height,
-            display_width,
-        ),
+        3 => (display_height - rel_y, rel_x, display_height, display_width),
 
         _ => return None,
     };
 
     trace!(
         "Video original coords: ({:.1}, {:.1}) in {}x{}",
-        video_x,
-        video_y,
-        video_w as u32,
-        video_h as u32
+        video_x, video_y, video_w as u32, video_h as u32
     );
 
     // Return: (x, y, screenWidth, screenHeight)
