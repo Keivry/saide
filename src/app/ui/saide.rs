@@ -250,12 +250,6 @@ impl SAideApp {
             h as f32,
         )));
 
-        // Lock aspect ratio
-        let aspect = (w as f32 + Toolbar::width()) / h as f32;
-        ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(Some(egui::vec2(
-            aspect, 1.0,
-        ))));
-
         // Update indicator resolution
         self.indicator.update_video_resolution((w, h));
 
