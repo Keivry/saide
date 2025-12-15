@@ -503,7 +503,7 @@ impl SAideApp {
             return;
         }
 
-        debug!("Processing mouse button event: {:?} at {:?}", button, pos);
+        trace!("Processing mouse button event: {:?} at {:?}", button, pos);
 
         let Some((device_x, device_y)) =
             screen_to_device_coords(pos, &self.coodinates_transform_params())

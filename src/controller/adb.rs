@@ -291,7 +291,7 @@ impl AdbShell {
         stdin.flush().context("Failed to flush input command")?;
         drop(state);
 
-        debug!("Sent ADB input command: {}", cmd_str.trim());
+        trace!("Sent ADB input command: {}", cmd_str.trim());
         Ok(())
     }
 

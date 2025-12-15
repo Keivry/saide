@@ -2,7 +2,7 @@
 use {
     crate::config::mapping::{AdbAction, Key, KeyMapping},
     eframe::egui::Pos2,
-    tracing::debug,
+    tracing::{debug, trace},
 };
 
 pub struct CoordinatesTransformParams {
@@ -44,10 +44,10 @@ pub fn screen_to_device_coords(
     let video_width = video_rect.width();
     let video_height = video_rect.height();
 
-    debug!("== Coordinate Transform ==");
-    debug!("Screen pos: ({:.1}, {:.1})", pos.x, pos.y);
-    debug!("Video rect: {:?}", video_rect);
-    debug!("Relative pos in video: ({:.1}, {:.1})", rel_x, rel_y);
+    trace!("== Coordinate Transform ==");
+    trace!("Screen pos: ({:.1}, {:.1})", pos.x, pos.y);
+    trace!("Video rect: {:?}", video_rect);
+    trace!("Relative pos in video: ({:.1}, {:.1})", rel_x, rel_y);
 
     // Step 2: Inverse apply user rotation to get video original coordinates
     // This transforms from rotated display back to scrcpy's fixed output orientation
@@ -82,13 +82,13 @@ pub fn screen_to_device_coords(
         _ => return None,
     };
 
-    debug!(
+    trace!(
         "Video original coords: ({:.1}, {:.1}) in {}x{}",
         video_x, video_y, video_w, video_h
     );
-    debug!("Video rotation: {} (user manual)", video_rotation);
-    debug!("Device orientation: {}", device_orientation);
-    debug!("Device physical size: {:?}", device_physical_size);
+    trace!("Video rotation: {} (user manual)", video_rotation);
+    trace!("Device orientation: {}", device_orientation);
+    trace!("Device physical size: {:?}", device_physical_size);
 
     // Step 3: Scale to device size
     //

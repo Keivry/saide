@@ -6,7 +6,7 @@ use {
     anyhow::Result,
     parking_lot::Mutex,
     std::time::Instant,
-    tracing::debug,
+    tracing::{debug, error, trace},
 };
 
 /// Movement threshold to distinguish drag from click (in pixels)
@@ -157,7 +157,7 @@ impl MouseMapper {
 
         // Send TouchDown event immediately
         self.adb_shell.send_input(&AdbAction::TouchDown { x, y })?;
-        debug!("Left button pressed at ({}, {}), sent TouchDown", x, y);
+        trace!("Left button pressed at ({}, {}), sent TouchDown", x, y);
         Ok(())
     }
 

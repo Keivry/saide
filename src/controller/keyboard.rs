@@ -8,7 +8,7 @@ use {
     egui::Key,
     parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc},
-    tracing::{debug, error, info},
+    tracing::{error, info, trace},
 };
 
 lazy_static::lazy_static! {
@@ -189,7 +189,7 @@ impl KeyboardMapper {
         }
 
         if let Some(keycode) = EGUI_TO_ANDROID_KEY.get(key) {
-            debug!("Handling standard key event: {:?}", key);
+            trace!("Handling standard key event: {:?}", key);
             self.adb_shell
                 .send_input(&AdbAction::Key { keycode: *keycode })?;
             return Ok(true);
@@ -201,7 +201,7 @@ impl KeyboardMapper {
     /// Handle shifted key event, returns true if handled
     pub fn handle_shifted_key_event(&self, key: &Key) -> Result<bool> {
         if let Some(keycode) = EGUI_TO_ANDROID_SHIFT_KEY.get(key) {
-            debug!("Handling shifted key event: {:?}", key);
+            trace!("Handling shifted key event: {:?}", key);
             self.adb_shell.send_input(&AdbAction::KeyCombo {
                 modifiers: Modifiers::SHIFT,
                 keycode: *keycode,
@@ -222,7 +222,7 @@ impl KeyboardMapper {
             .iter()
             .fold(text.to_owned(), |acc, (k, v)| acc.replace(k, v));
 
-        debug!("Handling text input event: {}", text);
+        trace!("Handling text input event: {}", text);
         self.adb_shell.send_input(&AdbAction::Text { text })?;
         Ok(true)
     }
@@ -230,7 +230,7 @@ impl KeyboardMapper {
     /// Handle key combo event, returns true if handled
     pub fn handle_keycombo_event(&self, modifiers: Modifiers, key: &Key) -> Result<bool> {
         if let Some(keycode) = EGUI_TO_ANDROID_KEY.get(key) {
-            debug!("Handling key combo event: {:?} + {:?}", modifiers, key);
+            trace!("Handling key combo event: {:?} + {:?}", modifiers, key);
             self.adb_shell.send_input(&AdbAction::KeyCombo {
                 modifiers,
                 keycode: *keycode,
@@ -245,7 +245,7 @@ impl KeyboardMapper {
         if let Some(profile) = self.active_profile.load().as_ref()
             && let Some(action) = profile.get_mapping(key)
         {
-            debug!("Handling custom key mapping event: {:?}", key);
+            trace!("Handling custom key mapping event: {:?}", key);
             self.adb_shell.send_input(&action)?;
             return Ok(true);
         }
