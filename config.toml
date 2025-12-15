@@ -8,14 +8,14 @@ indicator_position = "bottom-left"
 [scrcpy.video]
 bit_rate = "24M"
 max_fps = 60
-max_size = 1920
+max_size = 1280
 codec = "h264"
 # encoder = "c2.mtk.avc.encoder"  # Optional: device-specific encoder
 
 [scrcpy.audio]
 enabled = true
 codec = "opus"
-source = "playback"  # playback (all audio) | output (system output) | mic
+source = "playback" # playback (all audio) | output (system output) | mic
 
 [scrcpy.options]
 turn_screen_off = true
@@ -23,7 +23,7 @@ stay_awake = true
 
 [gpu]
 vsync = false
-backend = "VULKAN"  # VULKAN | DX12 | METAL | GL
+backend = "VULKAN" # VULKAN | DX12 | METAL | GL
 
 [mappings]
 toggle = "F10"

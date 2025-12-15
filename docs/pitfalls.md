@@ -81,3 +81,124 @@ if params.send_codec_meta && let Some(ref mut stream) = audio_stream {
 - 参考：`3rd-party/scrcpy/app/src/demuxer.c` line 145-158 (`run_demuxer`)
 - 协议定义：`demuxer.c` line 81-100（包头格式注释）
 
+
+---
+
+## 配置管理（新增）
+
+### 6. config.toml 配置未生效（硬编码参数）(2025-12-15)
+
+**问题现象**：
+- 修改 `config.toml` 中的 `max_size = 720`
+- 但 scrcpy 实际传参仍是 `max_size=1920`
+- 所有 scrcpy 参数（bit_rate, codec 等）都未生效
+
+**根本原因**：
+- `StreamPlayer::start()` 内部调用 `stream_worker()` 创建连接参数
+- `stream_worker()` 中硬编码了所有参数
+- 配置根本没有传递到实际连接逻辑
+
+**解决方案**：
+1. 修改 `StreamPlayer::start()` 签名，接受 `ScrcpyConfig`
+2. 在 `stream_worker()` 中解析配置（支持 "24M" 格式）
+3. 为 `ScrcpyConfig` 及其子结构添加 `Clone` trait
+
+**教训**：
+- 配置驱动的系统必须端到端验证配置传递
+- 警惕硬编码，特别是在多层函数调用中
+
+---
+
+## UI 渲染（新增）
+
+### 7. 初始化时视频不显示，需鼠标移动触发 (2025-12-15)
+
+**问题现象**：程序启动后画面黑屏，鼠标移动后突然显示
+
+**根本原因**：
+- `InitState::InProgress` 未调用 `ctx.request_repaint()`
+- egui 默认只在交互事件时重绘
+
+**解决方案**：
+```rust
+InitState::InProgress => {
+    self.player.update();
+    self.check_init_stage(ctx);
+    ctx.request_repaint();  // 主动请求重绘
+}
+```
+
+**教训**：异步初始化场景必须主动请求重绘
+
+---
+
+## 状态管理（新增）
+
+### 8. 旋转按钮点击无反应（no-op 方法）(2025-12-15)
+
+**问题现象**：点击旋转按钮，状态更新但视频不旋转
+
+**根本原因**：`StreamPlayer::set_rotation()` 为空操作（遗留代码）
+
+**解决方案**：
+1. 添加 `video_rotation: u32` 字段
+2. 实现真正的 setter：`self.video_rotation = rotation % 4;`
+3. 后续需在渲染时应用旋转变换
+
+**教训**：警惕 no-op 方法和"兼容性"代码
+
+---
+
+## Rust 类型系统（新增）
+
+### 9. 类型嵌套层数错误（Arc<Arc<T>>）(2025-12-15)
+
+**问题**：`Arc::new(config.scrcpy.clone())` 导致双层 Arc
+
+**解决**：直接 clone：`(*config.scrcpy).clone()`
+
+**教训**：理解返回值类型，避免无意义的包裹
+
+---
+
+### 10. 缺少 Clone trait (2025-12-15)
+
+**问题**：配置结构未派生 `Clone`，无法跨线程传递
+
+**解决**：为所有配置结构添加 `#[derive(Clone)]`
+
+**教训**：配置数据结构通常需要 Clone
+
+---
+
+## 平台特定问题
+
+### 11. Wayland ResizeIncrements 警告 (2025-12-15)
+
+**现象**：在 Wayland 环境运行时出现警告
+```
+WARN winit::platform_impl::linux::wayland::window: 
+  `set_resize_increments` is not implemented for Wayland
+```
+
+**原因**：
+- `ResizeIncrements` 是 X11 特有功能，用于锁定窗口大小调整步进
+- Wayland 协议不支持这个功能（设计哲学不同）
+- winit 库在 Wayland 上调用时返回未实现警告
+
+**影响**：
+- ✅ 不影响窗口初始化和旋转功能
+- ✅ 窗口仍可手动调整大小
+- ❌ 无法在拖拽时强制锁定宽高比
+
+**解决**：
+无需修复，这是平台限制。用户在 Wayland 环境下手动调整窗口时可能破坏宽高比，但旋转和自动调整仍然正常工作。
+
+**如需屏蔽警告**：
+```bash
+RUST_LOG=error cargo run  # 只显示 error 级别日志
+```
+
+---
+
+**最后更新**: 2025-12-15

@@ -197,6 +197,27 @@ cargo run --example render_device
   - 根因：Ready 需要 player.ready()，但 ready() 需要 update() 接收事件
   - 方案：InProgress 阶段也调用 player.update()
 
+**Bug 修复 (2025-12-15)**：
+- ✅ 修复 max_size 未遵循 config.toml 设定（硬编码 1920）
+  - 方案：将 ScrcpyConfig 传递给 StreamPlayer::start()
+  - 同时修复 bit_rate、max_fps、codec、audio 配置未生效
+- ✅ 修复启动后视频画面不显示
+  - 根因：InProgress 状态未请求重绘，需鼠标事件触发
+  - 方案：InProgress 状态添加 ctx.request_repaint()
+- ✅ 实现视频旋转功能（完整实现）
+  - NV12 和 RGBA shader 均支持旋转
+  - 通过 uniform buffer 传递旋转角度（0-3）
+  - 纹理坐标旋转变换（0°/90°/180°/270°）
+  - 旋转后窗口尺寸正确调整（例：1280x720 → 720x1280）
+  - dimensions() 方法根据旋转返回交换后的宽高
+  - 修复 device_orientation 语义混淆问题
+- ✅ 实现窗口可调整大小并锁定视频比例
+  - 使用 ViewportCommand::ResizeIncrements 锁定比例
+  - 旋转时窗口自动调整以匹配新的宽高比
+  - 首帧到达时自动调整到视频实际尺寸
+  - 引入 window_initialized 标志位避免重复调整
+  - 删除冗余的 resize() 方法，统一窗口调整逻辑
+
 ---
 
 ### 音视频同步实现 ✅ (2025-12-12)
