@@ -28,7 +28,7 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    tracing::{debug, error, info},
+    tracing::{debug, error, info, warn},
 };
 
 const FRAME_BUFFER_SIZE: usize = 3;
@@ -436,7 +436,42 @@ fn stream_worker(
         let video_packet = VideoPacket::read_from(&mut video_stream)?;
         let pts = video_packet.pts_us as i64;
 
-        if let Ok(Some(frame)) = video_decoder.decode(&video_packet.data, pts) {
+        // Decode with error recovery for resolution changes
+        let decode_result = video_decoder.decode(&video_packet.data, pts);
+
+        let frame_opt = match decode_result {
+            Ok(frame) => frame,
+            Err(e) => {
+                let error_msg = e.to_string();
+                // Detect NVDEC resolution change errors
+                if error_msg.contains("AVHWFramesContext")
+                    || error_msg.contains("CUDA_ERROR_INVALID_HANDLE")
+                {
+                    warn!("NVDEC resolution change detected, recreating decoder");
+                    warn!("Error: {}", error_msg);
+
+                    // Recreate decoder with current dimensions from connection
+                    // Note: new dimensions will be detected from the video stream
+                    video_decoder = AutoDecoder::new(width, height)?;
+                    info!("Decoder recreated");
+
+                    // Retry decoding this packet
+                    match video_decoder.decode(&video_packet.data, pts) {
+                        Ok(frame) => frame,
+                        Err(e) => {
+                            error!("Failed to decode after recreation: {}", e);
+                            continue;
+                        }
+                    }
+                } else {
+                    // Other decode errors
+                    debug!("Decode error: {}", e);
+                    continue;
+                }
+            }
+        };
+
+        if let Some(frame) = frame_opt {
             let current_stats = {
                 let mut s = stats.lock().unwrap();
                 s.video_frames += 1;
