@@ -134,7 +134,7 @@ impl eframe::App for VaapiRendererApp {
 
                 let callback = egui_wgpu::Callback::new_paint_callback(
                     rect,
-                    new_nv12_render_callback(frame.clone()),
+                    new_nv12_render_callback(frame.clone(), 0),
                 );
 
                 ui.painter().add(callback);

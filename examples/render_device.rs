@@ -131,7 +131,7 @@ impl eframe::App for DeviceRendererApp {
 
                 let callback = egui_wgpu::Callback::new_paint_callback(
                     rect,
-                    new_rgba_render_callback(frame.clone()),
+                    new_rgba_render_callback(frame.clone(), 0),
                 );
 
                 ui.painter().add(callback);
