@@ -816,17 +816,24 @@ impl eframe::App for SAideApp {
                 // Check if dimensions changed (device rotation)
                 if new_dimensions != old_dimensions && new_dimensions.0 > 0 {
                     let (w, h) = new_dimensions;
+                    let window_w = w as f32 + Toolbar::width();
+                    let window_h = h as f32;
+                    
                     info!("Video dimensions changed: {:?} -> {:?}", old_dimensions, new_dimensions);
-                    info!("Resizing window to {}x{} + toolbar", w, h);
+                    info!("Resizing window to {}x{} (video {}x{} + toolbar)", 
+                          window_w, window_h, w, h);
+
+                    // Remove aspect ratio lock first (in case it prevents resizing)
+                    ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(None));
 
                     // Resize window to match new video dimensions
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                        w as f32 + Toolbar::width(),
-                        h as f32,
+                        window_w,
+                        window_h,
                     )));
 
-                    // Update aspect ratio lock
-                    let aspect = (w as f32 + Toolbar::width()) / h as f32;
+                    // Re-apply aspect ratio lock with new ratio
+                    let aspect = window_w / window_h;
                     ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(Some(
                         egui::vec2(aspect, 1.0),
                     )));
