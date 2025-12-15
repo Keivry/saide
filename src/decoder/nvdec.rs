@@ -33,6 +33,11 @@ impl NvdecDecoder {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         // Initialize FFmpeg
         ffmpeg::init().context("Failed to initialize FFmpeg")?;
+        
+        // Set FFmpeg log level to error only (suppress warnings)
+        unsafe {
+            ffmpeg::sys::av_log_set_level(ffmpeg::sys::AV_LOG_ERROR);
+        }
 
         // Create CUDA device context
         let mut hw_device_ctx: *mut ffmpeg::sys::AVBufferRef = ptr::null_mut();

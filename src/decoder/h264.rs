@@ -27,6 +27,11 @@ impl H264Decoder {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         // Initialize FFmpeg (idempotent)
         ffmpeg::init().context("Failed to initialize FFmpeg")?;
+        
+        // Set FFmpeg log level to error only (suppress warnings)
+        unsafe {
+            ffmpeg::sys::av_log_set_level(ffmpeg::sys::AV_LOG_ERROR);
+        }
 
         // Find H.264 decoder
         let codec = ffmpeg::decoder::find(codec::Id::H264).context("H.264 decoder not found")?;

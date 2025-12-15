@@ -22,6 +22,11 @@ impl OpusDecoder {
     /// * `channels` - Number of channels (1=mono, 2=stereo)
     pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
         ffmpeg::init().context("Failed to initialize FFmpeg")?;
+        
+        // Set FFmpeg log level to error only (suppress warnings)
+        unsafe {
+            ffmpeg::sys::av_log_set_level(ffmpeg::sys::AV_LOG_ERROR);
+        }
 
         // Find Opus decoder
         let codec =
