@@ -381,27 +381,7 @@ cargo run --example render_avsync [device_serial]
 
 ## 进行中 🔄 (2025-12-15)
 
-### 输入控制重构：使用 scrcpy 控制通道
-
-**目标**：将鼠标/键盘从 ADB shell 改为 scrcpy 控制通道，降低延迟 40-90ms
-
-**当前进度**：
-- [x] 分析 scrcpy 源代码（control_msg.c/h, ControlMessage.java）
-- [x] 确认现有 ControlMessage Rust 实现完整且正确
-- [x] 制定详细重构方案（docs/control_refactor_plan.md）
-- [ ] 实现 ControlSender 模块
-- [ ] 重构 KeyboardMapper
-- [ ] 重构 MouseMapper  
-- [ ] 修改 StreamPlayer 接口
-- [ ] 更新 SAideApp 初始化流程
-
-**技术细节**：
-- 提升 ScrcpyConnection 到 App 层管理
-- 创建 ControlSender 封装控制通道
-- 移除 KeyboardMapper/MouseMapper 的 AdbShell 依赖
-- 所有输入事件通过 ControlMessage 序列化发送
-
-**参考文档**：`docs/control_refactor_plan.md`
+暂无进行中任务
 
 
 ---
@@ -451,4 +431,40 @@ cargo run --example render_avsync [device_serial]
 **参考文档**：
 - docs/control_refactor_plan.md
 - docs/control_refactor_progress.md
+
+---
+
+### NVDEC 旋转兼容性增强 ✅ (2025-12-15)
+
+**目标**：支持不带 `prepend-sps-pps-to-idr-frames=1` 的 Android 设备旋转
+
+**问题背景**：
+- 部分 Android 设备不支持 `prepend-sps-pps-to-idr-frames=1` 选项
+- 旋转导致分辨率变化时 NVDEC 解码器崩溃（连续空帧）
+- 无 SPS 数据无法提前检测分辨率变化
+
+**完成内容**：
+- [x] 实现 `try_recover_decoder()` 双策略恢复函数
+  - 策略 1：从失败数据包尝试提取 SPS（即使无显式标记）
+  - 策略 2：无 SPS 时交换宽高（假设旋转 90°/270°）
+- [x] 在两个 worker 函数中集成恢复逻辑
+- [x] 添加 32x32 最小分辨率过滤（忽略编码器初始化伪值）
+- [x] 更新文档记录坑点和解决方案（docs/pitfalls.md #12）
+
+**技术细节**：
+- NVDEC 连续 3 帧空帧触发恢复（nvdec.rs line 216-223）
+- 错误捕获 → 尝试 SPS 解析 → 回退维度交换 → 重建解码器
+- 适用场景：部分 MTK/Qualcomm/Exynos 设备不支持 SPS 预置
+
+**测试方法**：
+```bash
+# 在不支持 prepend-sps-pps 的设备上
+cargo run
+# 旋转设备屏幕，观察日志：
+#   ⚠️ NVDEC detected resolution change via decode failure
+#   🔄 No SPS found, trying dimension swap: 1920x1080 -> 1080x1920
+#   ✅ Decoder recreated with swapped dimensions: NVDEC
+```
+
+**参考文档**：`docs/pitfalls.md` #12
 

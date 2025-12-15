@@ -2,7 +2,9 @@ use {
     crate::{
         config::ConfigManager,
         controller::{
-            adb::AdbShell, control_sender::ControlSender, keyboard::KeyboardMapper,
+            adb::AdbShell,
+            control_sender::ControlSender,
+            keyboard::KeyboardMapper,
             mouse::MouseMapper,
         },
         scrcpy::connection::ScrcpyConnection,
@@ -180,6 +182,23 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
             params.send_codec_meta = true;
             params.send_frame_meta = true;
 
+            // 🔒 NVDEC Optimization: Lock capture orientation to prevent resolution changes
+            // Benefits:
+            // - Avoid decoder rebuild overhead (~200ms + black screen)
+            // - No need for prepend-sps-pps-to-idr-frames=1 (compatibility)
+            // - More stable, works on all devices
+            if ServerParams::should_lock_orientation_for_nvdec() {
+                // Lock to current device orientation (absolute)
+                // @0 = lock to 0° (portrait), follows device's natural orientation
+                params.capture_orientation = Some("@0".to_string());
+                info!(
+                    "🔒 Locked capture orientation for NVDEC (prevents resolution changes)"
+                );
+                info!(
+                    "Video orientation fixed, decoder never needs rebuilding"
+                );
+            }
+
             ScrcpyConnection::connect(&serial, server_jar_path, params)
                 .await
                 .map_err(|e| {
@@ -210,7 +229,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         let control_stream_clone = control_stream
             .try_clone()
             .context("Failed to clone control stream")?;
-        
+
         let control_sender = ControlSender::new(
             control_stream_clone,
             video_resolution.0 as u16,
@@ -237,10 +256,8 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
 
         // Now create keyboard mapper (if enabled)
         if conn_config.general.keyboard_enabled {
-            let keyboard_mapper = KeyboardMapper::new(
-                conn_config.mappings.clone(),
-                control_sender.clone(),
-            )?;
+            let keyboard_mapper =
+                KeyboardMapper::new(conn_config.mappings.clone(), control_sender.clone())?;
             debug!("Keyboard mapper initialized with ControlSender");
             conn_tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
         }

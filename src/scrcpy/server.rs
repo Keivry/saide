@@ -75,6 +75,11 @@ pub struct ServerParams {
     /// Format: key[:type]=value[,...]
     /// Types: int (default), long, float, string
     pub video_codec_options: Option<String>,
+
+    /// Lock capture orientation (0-3 for natural/90/180/270, or @0-@3 for absolute)
+    /// When set, prevents resolution changes on device rotation
+    /// Useful for hardware decoders (NVDEC) that can't handle dynamic resolution
+    pub capture_orientation: Option<String>,
 }
 
 impl Default for ServerParams {
@@ -103,11 +108,34 @@ impl Default for ServerParams {
             // 或手动设置设备特定配置
             // 详见: docs/VIDEO_CODEC_OPTIONS_COMPATIBILITY.md
             video_codec_options: None,
+            capture_orientation: None, // Auto (follows device rotation)
         }
     }
 }
 
 impl ServerParams {
+    /// Check if should lock capture orientation for NVDEC
+    ///
+    /// Strategy: Always lock orientation when using NVDEC to prevent resolution changes
+    /// Benefits:
+    /// - Avoid decoder rebuild overhead (~200ms + brief black screen)
+    /// - No need for prepend-sps-pps-to-idr-frames=1 (compatibility issues)
+    /// - More stable and predictable behavior
+    /// - Works on all devices
+    ///
+    /// Returns true if NVDEC is likely to be used (NVIDIA GPU detected)
+    pub fn should_lock_orientation_for_nvdec() -> bool {
+        // Check if NVIDIA GPU is available
+        // This is a simple heuristic - actual decoder selection happens later
+        if let Ok(content) = std::fs::read_to_string("/proc/driver/nvidia/version") {
+            if !content.is_empty() {
+                info!("NVIDIA GPU detected, will lock capture orientation for NVDEC");
+                return true;
+            }
+        }
+        false
+    }
+
     /// Create params with device-specific codec options
     ///
     /// Loads from cache if available, otherwise uses defaults
@@ -208,6 +236,12 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
     if let Some(ref options) = params.video_codec_options {
         args.push(format!("video_codec_options={}", options));
         info!("Using video codec options: {}", options);
+    }
+
+    // 🔒 NVDEC WORKAROUND: Lock capture orientation to prevent resolution changes
+    if let Some(ref orientation) = params.capture_orientation {
+        args.push(format!("capture_orientation={}", orientation));
+        info!("Locked capture orientation: {} (prevents resolution changes)", orientation);
     }
 
     // Audio parameters

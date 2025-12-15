@@ -28,11 +28,83 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    tracing::{debug, error, info, trace},
+    tracing::{debug, error, info, trace, warn},
 };
 
 const FRAME_BUFFER_SIZE: usize = 3;
 const STATS_BUFFER_SIZE: usize = 100;
+
+use crate::decoder::extract_resolution_from_stream;
+
+/// Handle decoder failure and attempt recovery
+///
+/// Strategy for devices without prepend-sps-pps-to-idr-frames support:
+/// 1. Try to extract SPS from current packet (might exist even without explicit prepending)
+/// 2. If no SPS, assume screen rotation (swap width/height)
+///
+/// Returns: Some(new_decoder) if recovery successful, None otherwise
+fn try_recover_decoder(
+    error_msg: &str,
+    packet_data: &[u8],
+    last_resolution: (u32, u32),
+    decoder_type: &str,
+) -> Option<AutoDecoder> {
+    // Check if this is NVDEC resolution change error
+    if !error_msg.contains("consecutive empty frames") && !error_msg.contains("resolution change") {
+        return None;
+    }
+
+    warn!(
+        "⚠️ {} detected resolution change via decode failure, attempting recovery...",
+        decoder_type
+    );
+
+    // Strategy 1: Try to extract SPS from packet (works even without prepend-sps-pps flag)
+    if let Some((width_sps, height_sps)) = extract_resolution_from_stream(packet_data) {
+        let new_res = (width_sps, height_sps);
+        info!(
+            "🔍 Extracted resolution from failed packet: {}x{}",
+            new_res.0, new_res.1
+        );
+
+        // Ignore obviously invalid resolutions (Android encoder init artifacts)
+        if new_res != last_resolution && new_res.0 > 32 && new_res.1 > 32 {
+            match AutoDecoder::new(new_res.0, new_res.1) {
+                Ok(new_decoder) => {
+                    info!(
+                        "✅ Decoder recreated after failure with SPS resolution: {}",
+                        new_decoder.decoder_type()
+                    );
+                    return Some(new_decoder);
+                }
+                Err(e) => {
+                    error!("❌ Failed to recreate decoder: {}", e);
+                }
+            }
+        }
+    }
+
+    // Strategy 2 DISABLED: Dimension swap doesn't work reliably
+    // Reason: Network pipeline has delay, old frames still arriving
+    // Swapping dimensions just causes ping-pong between wrong resolutions
+    warn!(
+        "❌ No SPS found in packet, cannot determine new resolution"
+    );
+    warn!(
+        "Device doesn't support prepend-sps-pps-to-idr-frames=1"
+    );
+    error!(
+        "NVDEC cannot handle resolution change without SPS. Suggestions:"
+    );
+    error!(
+        "  1. Use VAAPI or software decoder (set in config)"
+    );
+    error!(
+        "  2. Lock device rotation to prevent resolution changes"
+    );
+    
+    None  // Don't guess, just fail gracefully
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StreamStats {
@@ -186,12 +258,12 @@ impl StreamPlayer {
     pub fn stop(&mut self) {
         info!("Stopping stream");
         self.state = PlayerState::Idle;
-        
+
         // Drop channels first to signal thread to exit
         self.frame_rx = None;
         self.stats_rx = None;
         self.current_frame = None;
-        
+
         // Wait for thread to finish (with timeout)
         if let Some(thread) = self.stream_thread.take() {
             trace!("Waiting for stream thread to finish...");
@@ -324,7 +396,7 @@ impl StreamPlayer {
     pub fn video_rect(&self) -> egui::Rect { self.video_rect }
 
     /// Get video dimensions
-    pub fn video_dimensions(&self) -> (u32, u32) { 
+    pub fn video_dimensions(&self) -> (u32, u32) {
         // Return effective dimensions (considering rotation)
         self.dimensions()
     }
@@ -333,9 +405,7 @@ impl StreamPlayer {
     pub fn rotation(&self) -> u32 { self.video_rotation }
 
     /// Get actual video resolution (NOT considering rotation, for control messages)
-    pub fn video_resolution(&self) -> (u32, u32) {
-        (self.video_width, self.video_height)
-    }
+    pub fn video_resolution(&self) -> (u32, u32) { (self.video_width, self.video_height) }
 
     /// Get player state
     pub fn state(&self) -> &PlayerState { &self.state }
@@ -394,17 +464,23 @@ fn stream_worker_with_streams(
         height,
     })?;
 
-    // Initialize decoders
-    let mut video_decoder = AutoDecoder::new(width, height)?;
+    // Initialize decoders (use Option for clean drop/rebuild lifecycle)
+    let mut video_decoder = Some(AutoDecoder::new(width, height)?);
     let mut audio_decoder = OpusDecoder::new(48000, 2)?;
     let audio_player = AudioPlayer::new(48000, 2)?;
 
     // Track last resolution for change detection
     let mut last_resolution = (width, height);
 
+    // Track last decoder rebuild time to prevent rapid rebuilds
+    let mut last_decoder_rebuild: Option<std::time::Instant> = None;
+    let mut frames_since_rebuild: u32 = 0;
+    let mut consecutive_rebuilds: u32 = 0;  // Track failed rebuilds
+    let mut waiting_for_keyframe_after_rebuild = false;  // Skip frames until keyframe
+
     info!(
         "Decoders initialized: {} + Opus",
-        video_decoder.decoder_type()
+        video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown")
     );
 
     // Shared state
@@ -419,9 +495,8 @@ fn stream_worker_with_streams(
                 loop {
                     let mut header = [0u8; 12];
                     audio_stream.read_exact(&mut header)?;
-                    let packet_size = u32::from_be_bytes([
-                        header[8], header[9], header[10], header[11],
-                    ]) as usize;
+                    let packet_size =
+                        u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
                     let pts = i64::from_be_bytes([
                         header[0], header[1], header[2], header[3], header[4], header[5],
                         header[6], header[7],
@@ -465,21 +540,24 @@ fn stream_worker_with_streams(
                     extract_resolution_from_stream(&video_packet.data)
                 {
                     let new_res = (width_sps, height_sps);
-                    if new_res != last_resolution {
+                    // Ignore obviously invalid resolutions (Android encoder init artifacts)
+                    if new_res != last_resolution && new_res.0 > 32 && new_res.1 > 32 {
                         info!(
-                            "Resolution change detected: {}x{} -> {}x{}",
+                            "Resolution change detected in SPS: {}x{} -> {}x{}",
                             last_resolution.0, last_resolution.1, new_res.0, new_res.1
                         );
 
                         // Recreate decoder with new resolution
                         match AutoDecoder::new(new_res.0, new_res.1) {
                             Ok(new_decoder) => {
-                                video_decoder = new_decoder;
+                                // Explicit drop old decoder first
+                                let old_decoder = video_decoder.take();
+                                drop(old_decoder);
+                                video_decoder = Some(new_decoder);
                                 last_resolution = new_res;
-                                info!(
-                                    "Decoder recreated: {}",
-                                    video_decoder.decoder_type()
-                                );
+                        last_decoder_rebuild = Some(std::time::Instant::now());
+                        frames_since_rebuild = 0;
+                                info!("Decoder recreated: {}", video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown"));
 
                                 // Notify UI about resolution change
                                 let _ = event_tx.send(PlayerEvent::ResolutionChanged {
@@ -496,10 +574,108 @@ fn stream_worker_with_streams(
                 }
             }
 
+            // Skip non-keyframes after rebuild (wait for new resolution)
+            if waiting_for_keyframe_after_rebuild {
+                if video_packet.is_keyframe {
+                    info!("🔑 First keyframe after rebuild, resuming decoding");
+                    waiting_for_keyframe_after_rebuild = false;
+                } else {
+                    trace!("Skipping non-keyframe while waiting for keyframe after rebuild");
+                    continue;
+                }
+            }
+
             // Decode frame
-            let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
+            let frame_opt = match video_decoder.as_mut().unwrap().decode(&video_packet.data, pts) {
                 Ok(frame) => frame,
                 Err(e) => {
+                    // Max rebuilds: prevent infinite loop
+                    const MAX_CONSECUTIVE_REBUILDS: u32 = 3;
+                    if consecutive_rebuilds >= MAX_CONSECUTIVE_REBUILDS {
+                        error!(
+                            "❌ Max rebuild attempts ({}) reached, decoder cannot recover.",
+                            MAX_CONSECUTIVE_REBUILDS
+                        );
+                        error!("Device does not support prepend-sps-pps-to-idr-frames=1");
+                        error!("NVDEC cannot handle resolution changes without SPS data");
+                        error!("Solution: Use VAAPI or software decoder (see docs/pitfalls.md)");
+                        error!("Stopping video decode thread...");
+                        return Err(anyhow::anyhow!(
+                            "NVDEC decoder failed after {} rebuild attempts", 
+                            MAX_CONSECUTIVE_REBUILDS
+                        ));
+                    }
+                    
+                    // Cooldown period: prevent rapid decoder rebuilds (skip first rebuild)
+                    if let Some(last_rebuild_time) = last_decoder_rebuild {
+                        let elapsed_since_rebuild = last_rebuild_time.elapsed();
+                        const MIN_REBUILD_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+                        const MIN_FRAMES_BEFORE_REBUILD: u32 = 10;
+                        
+                        // Only attempt recovery if enough time/frames have passed
+                        let can_rebuild = elapsed_since_rebuild >= MIN_REBUILD_INTERVAL
+                            || frames_since_rebuild >= MIN_FRAMES_BEFORE_REBUILD;
+                        
+                        if !can_rebuild {
+                            trace!(
+                                "Skipping decoder rebuild (cooldown: {:.1}s elapsed, {} frames since last rebuild)",
+                                elapsed_since_rebuild.as_secs_f32(),
+                                frames_since_rebuild
+                            );
+                            trace!("Decode error (likely during shutdown): {}", e);
+                            continue;
+                        }
+                    }
+                    
+                    // Try to recover from NVDEC resolution change (for devices without SPS
+                    // prepending)
+                    
+                    // Increment rebuild counter BEFORE attempting recovery
+                    consecutive_rebuilds += 1;
+                    debug!("Rebuild attempt {}/3", consecutive_rebuilds);
+                    
+                    // Flush old decoder before rebuilding to ensure clean state
+                    let decoder_type = video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown");
+                    if let Some(ref mut decoder) = video_decoder {
+                        let _ = decoder.flush();
+                    }
+                    trace!("Flushed old decoder before rebuild");
+                    
+                    if let Some(new_decoder) = try_recover_decoder(
+                        &e.to_string(),
+                        &video_packet.data,
+                        last_resolution,
+                        decoder_type,
+                    ) {
+                        let new_res = match &new_decoder {
+                            AutoDecoder::Nvdec(d) => (d.width(), d.height()),
+                            AutoDecoder::Vaapi(_) | AutoDecoder::Software(_) => last_resolution,
+                        };
+                        
+                        // Explicit lifecycle management for NVDEC:
+                        // 1. Take old decoder out (triggers drop)
+                        let old_decoder = video_decoder.take();
+                        drop(old_decoder);
+                        debug!("Old decoder dropped, waiting for CUDA cleanup...");
+                        
+                        // 2. Brief pause to ensure CUDA context cleanup
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        
+                        // 3. Install new decoder
+                        video_decoder = Some(new_decoder);
+                        debug!("New decoder installed");
+                        last_resolution = new_res;
+                        last_decoder_rebuild = Some(std::time::Instant::now());
+                        frames_since_rebuild = 0;
+                        waiting_for_keyframe_after_rebuild = true;  // Wait for keyframe
+
+                        let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                            width: new_res.0,
+                            height: new_res.1,
+                        });
+                        continue;
+                    }
+
                     // During shutdown, CUDA context may be invalid - don't spam logs
                     trace!("Decode error (likely during shutdown): {}", e);
                     continue;
@@ -596,7 +772,9 @@ fn stream_worker(
     params.send_codec_meta = true;
     params.send_frame_meta = true;
 
-    // Enable SPS/PPS prepending for NVDEC resolution change detection
+    // Try to enable SPS/PPS prepending for optimal resolution change detection
+    // Note: Not all Android devices support this option, but it's safe to include
+    // (unsupported options are ignored by the encoder)
     params.video_codec_options = Some(
         "profile=65536,\
          prepend-sps-pps-to-idr-frames=1,\
@@ -631,17 +809,23 @@ fn stream_worker(
         height,
     })?;
 
-    // Initialize decoders
-    let mut video_decoder = AutoDecoder::new(width, height)?;
+    // Initialize decoders (use Option for clean drop/rebuild lifecycle)
+    let mut video_decoder = Some(AutoDecoder::new(width, height)?);
     let mut audio_decoder = OpusDecoder::new(48000, 2)?;
     let audio_player = AudioPlayer::new(48000, 2)?;
 
     // Track last resolution for change detection
     let mut last_resolution = (width, height);
 
+    // Track last decoder rebuild time to prevent rapid rebuilds
+    let mut last_decoder_rebuild: Option<std::time::Instant> = None;
+    let mut frames_since_rebuild: u32 = 0;
+    let mut consecutive_rebuilds: u32 = 0;  // Track failed rebuilds
+    let mut waiting_for_keyframe_after_rebuild = false;  // Skip frames until keyframe
+
     info!(
         "Decoders initialized: {} + Opus",
-        video_decoder.decoder_type()
+        video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown")
     );
 
     // Shared state
@@ -697,21 +881,24 @@ fn stream_worker(
                     extract_resolution_from_stream(&video_packet.data)
                 {
                     let new_res = (width_sps, height_sps);
-                    if new_res != last_resolution {
+                    // Ignore obviously invalid resolutions (Android encoder init artifacts)
+                    if new_res != last_resolution && new_res.0 > 32 && new_res.1 > 32 {
                         info!(
-                            "Resolution change detected: {}x{} -> {}x{}",
+                            "Resolution change detected in SPS: {}x{} -> {}x{}",
                             last_resolution.0, last_resolution.1, new_res.0, new_res.1
                         );
 
                         // Recreate decoder with new resolution
                         match AutoDecoder::new(new_res.0, new_res.1) {
                             Ok(new_decoder) => {
-                                video_decoder = new_decoder;
+                                // Explicit drop old decoder first
+                                let old_decoder = video_decoder.take();
+                                drop(old_decoder);
+                                video_decoder = Some(new_decoder);
                                 last_resolution = new_res;
-                                info!(
-                                    "Decoder recreated: {}",
-                                    video_decoder.decoder_type()
-                                );
+                        last_decoder_rebuild = Some(std::time::Instant::now());
+                        frames_since_rebuild = 0;
+                                info!("Decoder recreated: {}", video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown"));
 
                                 // Notify UI about resolution change
                                 let _ = event_tx.send(PlayerEvent::ResolutionChanged {
@@ -728,10 +915,108 @@ fn stream_worker(
                 }
             }
 
+            // Skip non-keyframes after rebuild (wait for new resolution)
+            if waiting_for_keyframe_after_rebuild {
+                if video_packet.is_keyframe {
+                    info!("🔑 First keyframe after rebuild, resuming decoding");
+                    waiting_for_keyframe_after_rebuild = false;
+                } else {
+                    trace!("Skipping non-keyframe while waiting for keyframe after rebuild");
+                    continue;
+                }
+            }
+
             // Decode frame
-            let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
+            let frame_opt = match video_decoder.as_mut().unwrap().decode(&video_packet.data, pts) {
                 Ok(frame) => frame,
                 Err(e) => {
+                    // Max rebuilds: prevent infinite loop
+                    const MAX_CONSECUTIVE_REBUILDS: u32 = 3;
+                    if consecutive_rebuilds >= MAX_CONSECUTIVE_REBUILDS {
+                        error!(
+                            "❌ Max rebuild attempts ({}) reached, decoder cannot recover.",
+                            MAX_CONSECUTIVE_REBUILDS
+                        );
+                        error!("Device does not support prepend-sps-pps-to-idr-frames=1");
+                        error!("NVDEC cannot handle resolution changes without SPS data");
+                        error!("Solution: Use VAAPI or software decoder (see docs/pitfalls.md)");
+                        error!("Stopping video decode thread...");
+                        return Err(anyhow::anyhow!(
+                            "NVDEC decoder failed after {} rebuild attempts", 
+                            MAX_CONSECUTIVE_REBUILDS
+                        ));
+                    }
+                    
+                    // Cooldown period: prevent rapid decoder rebuilds (skip first rebuild)
+                    if let Some(last_rebuild_time) = last_decoder_rebuild {
+                        let elapsed_since_rebuild = last_rebuild_time.elapsed();
+                        const MIN_REBUILD_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+                        const MIN_FRAMES_BEFORE_REBUILD: u32 = 10;
+                        
+                        // Only attempt recovery if enough time/frames have passed
+                        let can_rebuild = elapsed_since_rebuild >= MIN_REBUILD_INTERVAL
+                            || frames_since_rebuild >= MIN_FRAMES_BEFORE_REBUILD;
+                        
+                        if !can_rebuild {
+                            trace!(
+                                "Skipping decoder rebuild (cooldown: {:.1}s elapsed, {} frames since last rebuild)",
+                                elapsed_since_rebuild.as_secs_f32(),
+                                frames_since_rebuild
+                            );
+                            trace!("Decode error (likely during shutdown): {}", e);
+                            continue;
+                        }
+                    }
+                    
+                    // Try to recover from NVDEC resolution change (for devices without SPS
+                    // prepending)
+                    
+                    // Increment rebuild counter BEFORE attempting recovery
+                    consecutive_rebuilds += 1;
+                    debug!("Rebuild attempt {}/3", consecutive_rebuilds);
+                    
+                    // Flush old decoder before rebuilding to ensure clean state
+                    let decoder_type = video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown");
+                    if let Some(ref mut decoder) = video_decoder {
+                        let _ = decoder.flush();
+                    }
+                    trace!("Flushed old decoder before rebuild");
+                    
+                    if let Some(new_decoder) = try_recover_decoder(
+                        &e.to_string(),
+                        &video_packet.data,
+                        last_resolution,
+                        decoder_type,
+                    ) {
+                        let new_res = match &new_decoder {
+                            AutoDecoder::Nvdec(d) => (d.width(), d.height()),
+                            AutoDecoder::Vaapi(_) | AutoDecoder::Software(_) => last_resolution,
+                        };
+                        
+                        // Explicit lifecycle management for NVDEC:
+                        // 1. Take old decoder out (triggers drop)
+                        let old_decoder = video_decoder.take();
+                        drop(old_decoder);
+                        debug!("Old decoder dropped, waiting for CUDA cleanup...");
+                        
+                        // 2. Brief pause to ensure CUDA context cleanup
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        
+                        // 3. Install new decoder
+                        video_decoder = Some(new_decoder);
+                        debug!("New decoder installed");
+                        last_resolution = new_res;
+                        last_decoder_rebuild = Some(std::time::Instant::now());
+                        frames_since_rebuild = 0;
+                        waiting_for_keyframe_after_rebuild = true;  // Wait for keyframe
+
+                        let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                            width: new_res.0,
+                            height: new_res.1,
+                        });
+                        continue;
+                    }
+
                     // During shutdown, CUDA context may be invalid - don't spam logs
                     trace!("Decode error (likely during shutdown): {}", e);
                     continue;
@@ -778,11 +1063,11 @@ fn stream_worker(
 
     // Explicitly drop decoder before exiting to release CUDA context cleanly
     drop(video_decoder);
-    
+
     match decode_result {
         Ok(_) => debug!("Video decode loop terminated gracefully"),
         Err(e) => debug!("Video decode loop error: {}", e),
     }
-    
+
     Ok(())
 }

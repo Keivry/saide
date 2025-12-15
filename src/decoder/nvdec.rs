@@ -33,7 +33,7 @@ impl NvdecDecoder {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         // Initialize FFmpeg
         ffmpeg::init().context("Failed to initialize FFmpeg")?;
-        
+
         // Set FFmpeg log level to error only (suppress warnings)
         unsafe {
             ffmpeg::sys::av_log_set_level(ffmpeg::sys::AV_LOG_ERROR);
@@ -115,9 +115,16 @@ impl NvdecDecoder {
         packet.set_pts(Some(pts));
         packet.set_dts(Some(pts));
 
-        self.decoder
-            .send_packet(&packet)
-            .context("Failed to send packet to decoder")?;
+        // Try to send packet - if it fails due to resolution change, let it through
+        // (will be caught by empty frame detection)
+        if let Err(e) = self.decoder.send_packet(&packet) {
+            // EAGAIN is normal (decoder busy), others might indicate resolution change
+            let err_str = format!("{:?}", e);
+            if !err_str.contains("EAGAIN") {
+                warn!("send_packet failed (possibly resolution change): {:?}", e);
+                // Don't fail here - let receive_frames handle it
+            }
+        }
 
         Ok(())
     }
@@ -194,7 +201,10 @@ impl NvdecDecoder {
                 Err(ffmpeg::Error::Eof) => break,
                 Err(ffmpeg::Error::Other { errno: 11 }) => break, // EAGAIN
                 Err(e) => {
-                    bail!("Failed to receive frame: {:?}", e);
+                    // Don't bail immediately - might be resolution change
+                    // Let empty frame detection handle it
+                    warn!("receive_frame failed: {:?}", e);
+                    break;
                 }
             }
         }
@@ -215,13 +225,15 @@ impl VideoDecoder for NvdecDecoder {
         // Check for consecutive empty frames (indicates decode failure)
         if frames.is_empty() {
             self.consecutive_empty_frames += 1;
-            
+
             // After 3 consecutive empty frames, assume resolution changed
             if self.consecutive_empty_frames >= 3 {
-                bail!("NVDEC decoder stuck: {} consecutive empty frames (likely resolution change)", 
-                      self.consecutive_empty_frames);
+                bail!(
+                    "NVDEC decoder stuck: {} consecutive empty frames (likely resolution change)",
+                    self.consecutive_empty_frames
+                );
             }
-            
+
             return Ok(None);
         }
 

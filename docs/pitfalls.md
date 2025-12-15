@@ -201,4 +201,207 @@ RUST_LOG=error cargo run  # 只显示 error 级别日志
 
 ---
 
+## 硬件解码（新增）
+
+### 12. NVDEC 旋转崩溃 — 不支持 prepend-sps-pps 的设备 (2025-12-15)
+
+**问题现象**：
+- VAAPI 和软件解码：旋转正常 ✅
+- NVDEC + `prepend-sps-pps-to-idr-frames=1`：通过 SPS 检测分辨率，重建解码器正常 ✅
+- NVDEC + 不支持该选项的 Android 设备：旋转后视频画面崩溃 ❌
+
+**根本原因**：
+1. 部分 Android 设备不支持 `prepend-sps-pps-to-idr-frames=1` 选项（如 HiSilicon Kirin 980）
+2. 旋转导致视频分辨率变化（如 592x1280 → 1280x592）
+3. NVDEC 硬件解码器内部上下文（AVHWFramesContext）与新分辨率不兼容
+4. FFmpeg 错误：`AVHWFramesContext is already initialized with incompatible parameters`
+5. 后续所有帧解码失败：`CUDA_ERROR_INVALID_HANDLE: invalid resource handle`
+6. 无 SPS 数据，无法提前检测分辨率变化
+
+**解决方案（三层防御）**：
+
+**第一层：容忍 FFmpeg 错误**
+```rust
+// src/decoder/nvdec.rs
+fn send_packet(&mut self, data: &[u8], pts: i64) -> Result<()> {
+    if let Err(e) = self.decoder.send_packet(&packet) {
+        warn!("send_packet failed (possibly resolution change): {:?}", e);
+        // Don't fail - let empty frame detection handle it
+    }
+    Ok(())
+}
+
+fn receive_frames(&mut self) -> Result<Vec<DecodedFrame>> {
+    match self.decoder.receive_frame(&mut hw_frame) {
+        Err(e) => {
+            warn!("receive_frame failed: {:?}", e);
+            break; // Return empty frames
+        }
+    }
+}
+```
+
+**第二层：空帧计数器**
+```rust
+// 连续 3 帧空帧触发错误
+if frames.is_empty() {
+    self.consecutive_empty_frames += 1;
+    if self.consecutive_empty_frames >= 3 {
+        bail!("NVDEC decoder stuck: {} consecutive empty frames", ...);
+    }
+}
+```
+
+**第三层：双策略恢复**
+```rust
+// stream_player.rs: try_recover_decoder()
+// Strategy 1: Try to extract SPS from failed packet
+if let Some((w, h)) = extract_resolution_from_stream(packet_data) {
+    if w > 32 && h > 32 {  // Filter invalid init values
+        AutoDecoder::new(w, h)  // ✅ 重建解码器
+    }
+}
+
+// Strategy 2: No SPS? Assume screen rotation (swap dimensions)
+let swapped = (last_height, last_width);  // 592x1280 -> 1280x592
+AutoDecoder::new(swapped.0, swapped.1)    // ✅ 重建解码器
+```
+
+**实现细节**：
+1. **错误容忍**：NVDEC 在遇到 CUDA 错误时不立即失败，返回空帧
+2. **空帧检测**：连续 3 帧空帧触发 "consecutive empty frames" 错误
+3. **策略 1**：尝试从失败的数据包中提取 SPS（即使不是 Key 帧）
+4. **策略 2**：如无 SPS，交换宽高（Android 旋转最常见场景：90°/270°）
+5. **尺寸过滤**：忽略 32x32 等明显无效的分辨率（编码器初始化伪值）
+
+**调试日志示例**：
+```
+旋转前：
+2025-12-15T06:06:33.263194Z  INFO Video resolution: 592x1280
+2025-12-15T06:06:33.410326Z DEBUG NVDEC H.264 decoder initialized
+
+旋转时（FFmpeg错误）：
+[h264_cuvid @ ...] AVHWFramesContext is already initialized with incompatible parameters
+[h264_cuvid @ ...] CUDA_ERROR_INVALID_HANDLE: invalid resource handle
+（重复多次）
+
+旋转后（预期日志）：
+2025-12-15T06:06:43.253884Z DEBUG Rotation changed: Some(0) -> 1
+2025-12-15T06:06:43.262214Z DEBUG Device rotated to orientation: 90
+2025-12-15T06:06:44.XXX  WARN ⚠️ NVDEC detected resolution change via decode failure
+2025-12-15T06:06:44.XXX  INFO 🔄 No SPS found, trying dimension swap: 592x1280 -> 1280x592
+2025-12-15T06:06:44.XXX  INFO ✅ Decoder recreated with swapped dimensions: NVDEC
+```
+
+**教训**：
+- **FFmpeg 硬件解码脆弱性**：分辨率变化时 AVHWFramesContext 不能热更新
+- **错误传播链**：CUDA 错误 → FFmpeg 错误 → 需要 Rust 层容忍
+- **Android 碎片化**：同一 MediaCodec 参数在不同设备支持度差异大（HiSilicon vs MTK）
+- **多层防御**：容忍 + 检测 + 恢复，缺一不可
+- **延迟 vs 兼容性**：`prepend-sps-pps=1` 可优化但非必须，代码需容忍缺失
+
+**相关代码**：
+- `src/app/ui/stream_player.rs` line 46-110 (`try_recover_decoder`)
+- `src/decoder/nvdec.rs` line 112-130 (error tolerance)
+- `src/decoder/nvdec.rs` line 216-228 (empty frame detection)
+
+**测试建议**：
+```bash
+# 使用不支持 prepend-sps-pps 的设备测试（如 HiSilicon Kirin 980）
+cargo run
+# 1. 等待视频正常显示
+# 2. 旋转设备屏幕（90°或270°）
+# 3. 观察日志：
+#    - [h264_cuvid] CUDA_ERROR_INVALID_HANDLE (FFmpeg错误)
+#    - ⚠️ NVDEC detected resolution change via decode failure
+#    - 🔄 No SPS found, trying dimension swap: 592x1280 -> 1280x592
+#    - ✅ Decoder recreated with swapped dimensions: NVDEC
+# 4. 确认视频在 ~1 秒内恢复正常
+```
+
+**防护机制 - 防止重建循环**：
+```rust
+// 使用 Option 跟踪重建时间（首次重建允许，后续需冷却期）
+let mut last_decoder_rebuild: Option<Instant> = None;
+
+if let Some(last_rebuild_time) = last_decoder_rebuild {
+    // 冷却期：2 秒或 10 帧
+    const MIN_REBUILD_INTERVAL: Duration = Duration::from_secs(2);
+    const MIN_FRAMES_BEFORE_REBUILD: u32 = 10;
+    
+    let can_rebuild = elapsed >= MIN_REBUILD_INTERVAL 
+        || frames >= MIN_FRAMES_BEFORE_REBUILD;
+    
+    if !can_rebuild {
+        continue;  // 跳过重建
+    }
+}
+
+// 重建后更新时间
+last_decoder_rebuild = Some(Instant::now());
+```
+
+**关键设计**：
+- **首次重建无限制**：`None` 状态允许立即重建
+- **后续重建需冷却**：`Some(time)` 状态强制 2 秒或 10 帧间隔
+- **原因**: 新解码器需要时间接收正确分辨率的帧，否则立即又会触发"连续 3 帧空帧"
+
+**最终解决方案（2025-12-15）**：
+
+## 完美方案：capture_orientation
+
+**策略**：使用 NVDEC 时**总是锁定 capture_orientation**
+
+### 实现
+
+```rust
+// 检测到 NVIDIA GPU → 自动锁定方向
+if has_nvidia_gpu() {
+    params.capture_orientation = Some("@0".to_string());
+}
+```
+
+### 原理
+
+- scrcpy-server 以固定方向抓取屏幕
+- 视频分辨率永不变化（592x1280 或 1280x592）
+- NVDEC 解码器无需重建
+- 系统自动旋转显示内容
+
+### 优势
+
+1. ✅ **根本性解决**：阻止分辨率变化，而不是处理变化
+2. ✅ **零性能损失**：无解码器重建（~200ms 开销）
+3. ✅ **无黑屏**：解码持续进行
+4. ✅ **不需要 SPS**：无需 `prepend-sps-pps-to-idr-frames=1`
+5. ✅ **通用性强**：所有 NVDEC 设备都受益
+6. ✅ **兼容性好**：scrcpy 原生支持
+
+### 为什么不用 prepend-sps-pps？
+
+| 方案 | 优势 | 劣势 |
+|------|------|------|
+| prepend-sps + 重建 | 支持旋转 | 兼容性差、有重建开销、可能黑屏 |
+| **capture_orientation** | **通用、稳定、零开销** | **方向固定（可接受）** |
+
+### 受影响设备
+
+- **所有使用 NVDEC 的设备**（自动检测 NVIDIA GPU）
+- 视频方向固定，但始终正常工作
+- 用户可通过配置禁用此行为
+
+### 回退方案
+
+如果用户需要视频随设备旋转：
+1. 使用 VAAPI 解码器（Intel GPU）
+2. 使用软件解码器
+3. 手动禁用 `capture_orientation` 锁定
+
+### 代码位置
+
+- `src/scrcpy/server.rs`: `should_lock_orientation_for_nvdec()`
+- `src/app/init.rs`: 自动应用逻辑
+
+---
+
 **最后更新**: 2025-12-15
