@@ -285,7 +285,10 @@ impl StreamPlayer {
     pub fn video_rect(&self) -> egui::Rect { self.video_rect }
 
     /// Get video dimensions
-    pub fn video_dimensions(&self) -> (u32, u32) { (self.video_width, self.video_height) }
+    pub fn video_dimensions(&self) -> (u32, u32) { 
+        // Return effective dimensions (considering rotation)
+        self.dimensions()
+    }
 
     /// Get player state
     pub fn state(&self) -> &PlayerState { &self.state }

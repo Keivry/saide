@@ -162,4 +162,4 @@ x = 708
 y = 1066
 
 [logging]
-level = "info"
+level = "debug"
