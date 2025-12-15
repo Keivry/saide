@@ -90,7 +90,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
                         // Send rotation event
                         if let Err(e) = event_tx.send(DeviceMonitorEvent::Rotated(current_rotation))
                         {
-                            error!("Failed to send rotation event: {}", e);
+                            debug!("Rotation event channel disconnected: {}", e);
                             break;
                         }
                     }
@@ -102,11 +102,13 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
 
             // Poll input method state
             if let Ok(im_state) = AdbShell::get_ime_state() {
-                event_tx
+                if event_tx
                     .send(DeviceMonitorEvent::ImStateChanged(im_state))
-                    .unwrap_or_else(|e| {
-                        error!("Failed to send IME state event: {}", e);
-                    });
+                    .is_err()
+                {
+                    debug!("IME event channel disconnected, stopping monitor");
+                    break;
+                }
             }
 
             thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
