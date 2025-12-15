@@ -19,15 +19,25 @@ fn main() -> anyhow::Result<()> {
 
     let config = config_manager.config();
     let level = config.logging.level.as_str();
+    
+    // Build default filter from config, but allow RUST_LOG to override
+    // Filter out verbose third-party logs unless explicitly debugging
+    let default_filter = format!(
+        "{},wgpu_hal={},wgpu_core={},naga={},eframe=info,winit=info,sctk=info,egui_wgpu=info",
+        level,
+        match level {
+            "trace" => "debug",
+            _ => WGPU_LOG_LEVEL,
+        },
+        WGPU_LOG_LEVEL,
+        WGPU_LOG_LEVEL
+    );
+    
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default_filter));
+    
     tracing_subscriber::registry()
-        .with(EnvFilter::new(
-            level.to_owned() + ",wgpu_hal=" + {
-                match level {
-                    "trace" | "debug" => "debug",
-                    _ => WGPU_LOG_LEVEL,
-                }
-            },
-        ))
+        .with(env_filter)
         .with(fmt::layer())
         .init();
 
