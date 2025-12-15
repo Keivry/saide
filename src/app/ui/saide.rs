@@ -794,12 +794,24 @@ impl eframe::App for SAideApp {
             InitState::Ready => {
                 // Store dimensions before update
                 let old_dimensions = self.player.video_dimensions();
+                let old_raw = self.player.raw_dimensions();
+                let old_rotation = self.player.rotation();
 
                 // Update player state
                 self.player.update();
 
                 // Get new dimensions after update
                 let new_dimensions = self.player.video_dimensions();
+                let new_raw = self.player.raw_dimensions();
+                let new_rotation = self.player.rotation();
+
+                // Debug log
+                debug!(
+                    "Dimension check: raw {}x{} rot={} → {}x{} rot={}, dims {:?} → {:?}",
+                    old_raw.0, old_raw.1, old_rotation,
+                    new_raw.0, new_raw.1, new_rotation,
+                    old_dimensions, new_dimensions
+                );
 
                 // Check if dimensions changed (device rotation)
                 if new_dimensions != old_dimensions && new_dimensions.0 > 0 {

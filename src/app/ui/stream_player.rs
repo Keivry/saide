@@ -293,6 +293,9 @@ impl StreamPlayer {
     /// Check if player is ready (streaming)
     pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Streaming) }
 
+    /// Get raw video dimensions (not considering rotation)
+    pub fn raw_dimensions(&self) -> (u32, u32) { (self.video_width, self.video_height) }
+
     /// Get effective video dimensions (considering rotation)
     pub fn dimensions(&self) -> (u32, u32) {
         if self.video_rotation.is_multiple_of(2) {
