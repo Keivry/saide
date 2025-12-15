@@ -329,6 +329,14 @@ impl StreamPlayer {
         self.dimensions()
     }
 
+    /// Get video rotation (0-3)
+    pub fn rotation(&self) -> u32 { self.video_rotation }
+
+    /// Get actual video resolution (NOT considering rotation, for control messages)
+    pub fn video_resolution(&self) -> (u32, u32) {
+        (self.video_width, self.video_height)
+    }
+
     /// Get player state
     pub fn state(&self) -> &PlayerState { &self.state }
 
@@ -353,9 +361,6 @@ impl StreamPlayer {
             latency_ms: 0.0, // TODO: implement latency measurement
         }
     }
-
-    /// Get current video rotation
-    pub fn rotation(&self) -> u32 { self.video_rotation }
 
     /// Set video rotation (0-3, clockwise 90°)
     pub fn set_rotation(&mut self, rotation: u32) { self.video_rotation = rotation % 4; }

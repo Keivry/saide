@@ -539,7 +539,7 @@ impl SAideApp {
         trace!("Processing mouse button event: {:?} at {:?}", button, pos);
 
         // Use video coordinates for scrcpy control channel
-        let Some((video_x, video_y, screen_w, screen_h)) = screen_to_video_coords(
+        let Some((video_x, video_y, _, _)) = screen_to_video_coords(
             pos,
             &self.player.video_rect(),
             self.player.rotation(),
@@ -548,14 +548,17 @@ impl SAideApp {
             return;
         };
 
+        // Get actual video resolution (not display size) for screenSize field
+        let (video_w, video_h) = self.player.video_resolution();
+
         // Update ControlSender screen size (in case video resolution changed)
         if let Some(sender) = &self.control_sender {
-            sender.update_screen_size(screen_w, screen_h);
+            sender.update_screen_size(video_w as u16, video_h as u16);
         }
 
         debug!(
-            "Converted screen ({:.1}, {:.1}) -> video ({}, {}) in {}x{}",
-            pos.x, pos.y, video_x, video_y, screen_w, screen_h
+            "Converted screen ({:.1}, {:.1}) -> video ({}, {}) in {}x{} (resolution)",
+            pos.x, pos.y, video_x, video_y, video_w, video_h
         );
 
         let button = MouseButton::from(button);
@@ -574,12 +577,15 @@ impl SAideApp {
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
-            if let Some((video_x, video_y, screen_w, screen_h)) =
+            if let Some((video_x, video_y, _, _)) =
                 screen_to_video_coords(pos, &self.player.video_rect(), self.player.rotation())
             {
+                // Get actual video resolution for screenSize
+                let (video_w, video_h) = self.player.video_resolution();
+
                 // Update ControlSender screen size
                 if let Some(sender) = &self.control_sender {
-                    sender.update_screen_size(screen_w, screen_h);
+                    sender.update_screen_size(video_w as u16, video_h as u16);
                 }
 
                 if let Err(e) = mouse_mapper.handle_move_event(video_x, video_y) {
@@ -598,15 +604,18 @@ impl SAideApp {
 
             // If dragging and moved outside, send a button release
             if mouse_mapper.get_button_state() != MouseState::Idle
-                && let Some((video_x, video_y, screen_w, screen_h)) = screen_to_video_coords(
+                && let Some((video_x, video_y, _, _)) = screen_to_video_coords(
                     last_pointer_pos,
                     &self.player.video_rect(),
                     self.player.rotation(),
                 )
             {
+                // Get actual video resolution for screenSize
+                let (video_w, video_h) = self.player.video_resolution();
+
                 // Update ControlSender screen size
                 if let Some(sender) = &self.control_sender {
-                    sender.update_screen_size(screen_w, screen_h);
+                    sender.update_screen_size(video_w as u16, video_h as u16);
                 }
 
                 if let Err(e) =
@@ -636,7 +645,7 @@ impl SAideApp {
             delta, pointer_pos
         );
 
-        let Some((video_x, video_y, screen_w, screen_h)) = screen_to_video_coords(
+        let Some((video_x, video_y, _, _)) = screen_to_video_coords(
             &pointer_pos,
             &self.player.video_rect(),
             self.player.rotation(),
@@ -644,9 +653,12 @@ impl SAideApp {
             return;
         };
 
+        // Get actual video resolution for screenSize
+        let (video_w, video_h) = self.player.video_resolution();
+
         // Update ControlSender screen size
         if let Some(sender) = &self.control_sender {
-            sender.update_screen_size(screen_w, screen_h);
+            sender.update_screen_size(video_w as u16, video_h as u16);
         }
 
         let dir = if delta.y < 0.0 {
@@ -660,7 +672,7 @@ impl SAideApp {
         } else {
             debug!(
                 "Mouse wheel event at video coords: ({}, {}) in {}x{}",
-                video_x, video_y, screen_w, screen_h
+                video_x, video_y, video_w, video_h
             );
         }
     }
