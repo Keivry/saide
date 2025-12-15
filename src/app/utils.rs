@@ -1,7 +1,9 @@
 /// Utility functions for coordinate transformations and mapping lookups
-use eframe::egui::Pos2;
-
-use crate::config::mapping::{AdbAction, Key, KeyMapping};
+use {
+    crate::config::mapping::{AdbAction, Key, KeyMapping},
+    eframe::egui::Pos2,
+    tracing::debug,
+};
 
 pub struct CoordinatesTransformParams {
     pub video_rect: egui::Rect,
@@ -39,6 +41,11 @@ pub fn screen_to_device_coords(
     let video_width = video_rect.width();
     let video_height = video_rect.height();
 
+    debug!("== Coordinate Transform ==");
+    debug!("Screen pos: ({:.1}, {:.1})", pos.x, pos.y);
+    debug!("Video rect: {:?}", video_rect);
+    debug!("Relative pos in video: ({:.1}, {:.1})", rel_x, rel_y);
+
     // Step 2: Inverse apply user rotation to get video original coordinates
     // This transforms from rotated display back to scrcpy's fixed output orientation
     //
@@ -72,6 +79,14 @@ pub fn screen_to_device_coords(
         _ => return None,
     };
 
+    debug!(
+        "Video original coords: ({:.1}, {:.1}) in {}x{}",
+        video_x, video_y, video_w, video_h
+    );
+    debug!("Video rotation: {}", video_rotation);
+    debug!("Device orientation: {}", device_orientation);
+    debug!("Device physical size: {:?}", device_physical_size);
+
     // Step 3: Transform from video orientation to device current orientation
     //
     // Video orientation: natural orientation + counter-clockwise capture_orientation
@@ -83,6 +98,7 @@ pub fn screen_to_device_coords(
     // - Device may be rotated to different orientation (orientation clockwise)
     // - ADB expects coords relative to device's current display orientation
     let total_rotation = (capture_orientation + device_orientation) % 4;
+    debug!("Total rotation: {}", total_rotation);
 
     // Calculate device logical size at current orientation
     let (device_w, device_h) = if device_orientation & 1 == 0 {
@@ -119,6 +135,18 @@ pub fn screen_to_device_coords(
         }
         _ => return None,
     };
+
+    debug!(
+        "Device logical size: {}x{}",
+        device_w as u32, device_h as u32
+    );
+    debug!(
+        "Device coords: ({:.1}, {:.1}) -> ({}, {})",
+        device_x,
+        device_y,
+        device_x as u32,
+        device_y as u32
+    );
 
     Some((device_x as u32, device_y as u32))
 }
