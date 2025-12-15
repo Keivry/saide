@@ -11,6 +11,7 @@ use {
 /// Custom wgpu render callback for NV12 frame
 pub struct Nv12RenderCallback {
     frame: Arc<DecodedFrame>,
+    rotation: u32,
 }
 
 impl CallbackTrait for Nv12RenderCallback {
@@ -38,6 +39,7 @@ impl CallbackTrait for Nv12RenderCallback {
     ) -> Vec<wgpu::CommandBuffer> {
         let resources = callback_resources.get_mut::<Nv12RenderResources>().unwrap();
         resources.upload_frame(device, queue, &self.frame);
+        resources.update_rotation(queue, self.rotation);
         Vec::new()
     }
 }
@@ -47,6 +49,7 @@ pub struct Nv12RenderResources {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    uniform_buffer: wgpu::Buffer,
     y_texture: Option<wgpu::Texture>,
     uv_texture: Option<wgpu::Texture>,
     y_texture_view: Option<wgpu::TextureView>,
@@ -60,6 +63,14 @@ impl Nv12RenderResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("NV12 Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("nv12_shader.wgsl").into()),
+        });
+
+        // Create uniform buffer for rotation
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("NV12 Rotation Uniform"),
+            size: 16, // u32 + padding to 16 bytes
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -92,6 +103,17 @@ impl Nv12RenderResources {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Rotation uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -145,6 +167,7 @@ impl Nv12RenderResources {
             pipeline,
             bind_group_layout,
             sampler,
+            uniform_buffer,
             y_texture: None,
             uv_texture: None,
             y_texture_view: None,
@@ -152,6 +175,12 @@ impl Nv12RenderResources {
             bind_group: None,
             cached_dimensions: (0, 0),
         }
+    }
+
+    fn update_rotation(&self, queue: &wgpu::Queue, rotation: u32) {
+        // Write rotation value to uniform buffer (padded to 16 bytes)
+        let data = [rotation, 0, 0, 0]; // u32 + 12 bytes padding
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&data));
     }
 
     fn upload_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &DecodedFrame) {
@@ -209,6 +238,10 @@ impl Nv12RenderResources {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.uniform_buffer.as_entire_binding(),
                     },
                 ],
             }));
@@ -290,6 +323,6 @@ impl Nv12RenderResources {
     }
 }
 
-pub fn new_nv12_render_callback(frame: Arc<DecodedFrame>) -> Nv12RenderCallback {
-    Nv12RenderCallback { frame }
+pub fn new_nv12_render_callback(frame: Arc<DecodedFrame>, rotation: u32) -> Nv12RenderCallback {
+    Nv12RenderCallback { frame, rotation }
 }

@@ -1,4 +1,4 @@
-// NV12 to RGB shader - Standard implementation
+// NV12 to RGB shader - Standard implementation with rotation support
 // Based on mpv/ffmpeg/chromium implementations
 //
 // NV12 format:
@@ -8,6 +8,40 @@
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) tex_coord: vec2<f32>,
+}
+
+// Rotation uniform (0-3, clockwise 90° increments)
+struct Uniforms {
+    rotation: u32,
+}
+@group(0) @binding(3) var<uniform> uniforms: Uniforms;
+
+fn rotate_tex_coord(uv: vec2<f32>, rotation: u32) -> vec2<f32> {
+    // Center around 0.5
+    let centered = uv - vec2<f32>(0.5, 0.5);
+    var rotated: vec2<f32>;
+    
+    switch rotation {
+        case 0u: {
+            // No rotation
+            rotated = centered;
+        }
+        case 1u: {
+            // 90° clockwise: (x, y) -> (y, -x)
+            rotated = vec2<f32>(centered.y, -centered.x);
+        }
+        case 2u: {
+            // 180°: (x, y) -> (-x, -y)
+            rotated = vec2<f32>(-centered.x, -centered.y);
+        }
+        default: {
+            // 270° clockwise: (x, y) -> (-y, x)
+            rotated = vec2<f32>(-centered.y, centered.x);
+        }
+    }
+    
+    // Return to [0, 1] range
+    return rotated + vec2<f32>(0.5, 0.5);
 }
 
 @vertex
@@ -33,7 +67,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     );
     
     out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
-    out.tex_coord = tex_coords[vertex_index];
+    
+    // Apply rotation to texture coordinates
+    out.tex_coord = rotate_tex_coord(tex_coords[vertex_index], uniforms.rotation);
     
     return out;
 }

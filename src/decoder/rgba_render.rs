@@ -10,6 +10,7 @@ use {
 /// Custom wgpu render callback for RGBA frame
 pub struct RgbaRenderCallback {
     frame: Arc<DecodedFrame>,
+    rotation: u32,
 }
 
 impl CallbackTrait for RgbaRenderCallback {
@@ -37,6 +38,7 @@ impl CallbackTrait for RgbaRenderCallback {
     ) -> Vec<wgpu::CommandBuffer> {
         let resources = callback_resources.get_mut::<RgbaRenderResources>().unwrap();
         resources.upload_frame(device, queue, &self.frame);
+        resources.update_rotation(queue, self.rotation);
         Vec::new()
     }
 }
@@ -46,6 +48,7 @@ pub struct RgbaRenderResources {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    uniform_buffer: wgpu::Buffer,
     texture: Option<wgpu::Texture>,
     texture_view: Option<wgpu::TextureView>,
     bind_group: Option<wgpu::BindGroup>,
@@ -57,6 +60,14 @@ impl RgbaRenderResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RGBA Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("rgba_shader.wgsl").into()),
+        });
+
+        // Create uniform buffer for rotation
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("RGBA Rotation Uniform"),
+            size: 16, // u32 + padding to 16 bytes
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -76,6 +87,17 @@ impl RgbaRenderResources {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Rotation uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -129,11 +151,18 @@ impl RgbaRenderResources {
             pipeline,
             bind_group_layout,
             sampler,
+            uniform_buffer,
             texture: None,
             texture_view: None,
             bind_group: None,
             cached_dimensions: (0, 0),
         }
+    }
+
+    fn update_rotation(&self, queue: &wgpu::Queue, rotation: u32) {
+        // Write rotation value to uniform buffer (padded to 16 bytes)
+        let data = [rotation, 0, 0, 0]; // u32 + 12 bytes padding
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&data));
     }
 
     fn upload_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &DecodedFrame) {
@@ -170,6 +199,10 @@ impl RgbaRenderResources {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&self.sampler),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.uniform_buffer.as_entire_binding(),
+                    },
                 ],
             }));
 
@@ -201,6 +234,6 @@ impl RgbaRenderResources {
     }
 }
 
-pub fn new_rgba_render_callback(frame: Arc<DecodedFrame>) -> RgbaRenderCallback {
-    RgbaRenderCallback { frame }
+pub fn new_rgba_render_callback(frame: Arc<DecodedFrame>, rotation: u32) -> RgbaRenderCallback {
+    RgbaRenderCallback { frame, rotation }
 }
