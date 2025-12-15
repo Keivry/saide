@@ -81,9 +81,6 @@ pub struct SAideApp {
     /// Whether window has been initially sized to video
     window_initialized: bool,
 
-    /// Last window size to detect changes
-    last_window_size: (u32, u32),
-
     // Frame rate limiter duration
     frame_rate_limiter: Option<Duration>,
 
@@ -145,7 +142,6 @@ impl SAideApp {
             device_orientation: 0,
 
             window_initialized: false,
-            last_window_size: (0, 0),
 
             frame_rate_limiter: if vsync {
                 None
@@ -233,6 +229,15 @@ impl SAideApp {
         }
     }
 
+    /// Resize the application window to match video dimensions
+    fn resize(&mut self, ctx: &egui::Context) {
+        let (w, h) = self.player.dimensions();
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+            w as f32 + Toolbar::width(),
+            h as f32,
+        )));
+    }
+
     /// Rotate video by 90 degrees clockwise
     fn rotate(&mut self, ctx: &egui::Context) {
         let video_rotation = (self.player.rotation() + 1) % 4;
@@ -241,16 +246,11 @@ impl SAideApp {
         self.player.set_rotation(video_rotation);
         self.indicator.update_video_rotation(video_rotation);
 
-        // Get effective dimensions after rotation
-        let (w, h) = self.player.dimensions();
-
         // Resize window to match new video dimensions
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-            w as f32 + Toolbar::width(),
-            h as f32,
-        )));
+        self.resize(ctx);
 
         // Update indicator resolution
+        let (w, h) = self.player.dimensions();
         self.indicator.update_video_resolution((w, h));
 
         // Request repaint to apply changes immediately
@@ -790,75 +790,29 @@ impl eframe::App for SAideApp {
                 ctx.request_repaint();
             }
             InitState::Ready => {
+                // Store dimensions before update
+                let old_dimensions = if self.window_initialized {
+                    self.player.video_dimensions()
+                } else {
+                    (0, 0)
+                };
+
                 // Update player state
                 self.player.update();
 
-                // Resize window to match video dimensions
-                if self.player.ready() {
-                    let (w, h) = self.player.video_dimensions();
+                // Get new dimensions after update
+                let new_dimensions = self.player.video_dimensions();
+
+                // Check if dimensions changed (device rotation or first frame)
+                if new_dimensions != old_dimensions && new_dimensions.0 > 0 {
+                    info!("Video dimensions changed: {:?} -> {:?}", old_dimensions, new_dimensions);
                     
-                    if w > 0 && h > 0 {
-                        let current_window_size = (
-                            (w as f32 + Toolbar::width()) as u32,
-                            h
-                        );
-                        
-                        // Only resize if window size doesn't match video dimensions
-                        if !self.window_initialized || 
-                           current_window_size != self.last_window_size
-                        {
-                            let window_w = w as f32 + Toolbar::width();
-                            let window_h = h as f32;
-                            
-                            info!("Adjusting window to {}x{} (video {}x{})", 
-                                  window_w, window_h, w, h);
-
-                            // Remove aspect ratio lock first
-                            ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(None));
-
-                            // Resize window
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                                window_w,
-                                window_h,
-                            )));
-
-                            // Re-apply aspect ratio lock
-                            let aspect = window_w / window_h;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(Some(
-                                egui::vec2(aspect, 1.0),
-                            )));
-
-                            self.indicator.update_video_resolution((w, h));
-                            self.last_window_size = current_window_size;
-                            self.window_initialized = true;
-                            
-                            ctx.request_repaint();
-                        }
-                    }
-                }
-
-                // Initialize window on first frame
-                if self.player.ready() && !self.window_initialized {
-                    let (w, h) = self.player.video_dimensions();
-
-                    if w > 0 && h > 0 {
-                        // Resize window to match video
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                            w as f32 + Toolbar::width(),
-                            h as f32,
-                        )));
-
-                        // Lock aspect ratio
-                        let aspect = (w as f32 + Toolbar::width()) / h as f32;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(Some(
-                            egui::vec2(aspect, 1.0),
-                        )));
-
-                        self.indicator.update_video_resolution((w, h));
-                        self.window_initialized = true;
-
-                        info!("Window initialized to {}x{}", w, h);
-                    }
+                    // Resize window to match new video dimensions
+                    self.resize(ctx);
+                    
+                    // Update indicator
+                    self.indicator.update_video_resolution(new_dimensions);
+                    self.window_initialized = true;
                 }
 
                 // Process mapping configuration window
