@@ -2,7 +2,7 @@ use {
     crate::controller::utils::*,
     eframe::egui::{self, PointerButton},
     parking_lot::RwLock,
-    serde::{Deserialize, Deserializer, Serialize},
+    serde::{Deserialize, Serialize},
     std::{collections::HashMap, ops::Deref, sync::Arc},
 };
 
@@ -203,14 +203,24 @@ impl<'de> Deserialize<'de> for KeyMapping {
         struct RawMapping {
             key: Key,
             #[serde(flatten)]
-            action: AdbAction,
+            action: RawAdbAction,
         }
 
         let raw_mappings: Vec<RawMapping> = Deserialize::deserialize(deserializer)?;
+        
+        // Validate all percentage coordinates
+        for rm in &raw_mappings {
+            rm.action.validate().map_err(serde::de::Error::custom)?;
+        }
+        
+        // Store as pixel actions with dummy 1x1 resolution
+        // Will be properly converted in Profile::convert_to_pixels()
         let mut m = HashMap::new();
         raw_mappings.into_iter().for_each(|rm| {
-            m.insert(rm.key, rm.action);
+            let pixel_action = rm.action.to_pixels(1, 1);
+            m.insert(rm.key, pixel_action);
         });
+        
         Ok(KeyMapping {
             inner: Arc::new(RwLock::new(m)),
         })
@@ -262,41 +272,44 @@ pub struct Profile {
 impl Profile {
     /// Convert all percentage coordinates in this profile to pixel coordinates
     /// This should be called after loading from config when video resolution is known
+    /// 
+    /// Note: During deserialization, coordinates are stored as 0-1 range (from dummy 1x1 conversion)
+    /// This method scales them to actual video resolution
     pub fn convert_to_pixels(&self, video_width: u32, video_height: u32) {
         let mut mappings = self.mappings.inner.write();
         for (_key, action) in mappings.iter_mut() {
             let new_action = match &*action {
-                AdbAction::Tap { x, y } if *x <= 1 && *y <= 1 => AdbAction::Tap {
-                    x: (*x as f32 * video_width as f32) as u32,
-                    y: (*y as f32 * video_height as f32) as u32,
+                AdbAction::Tap { x, y } => AdbAction::Tap {
+                    x: (*x * video_width),
+                    y: (*y * video_height),
                 },
-                AdbAction::TouchDown { x, y } if *x <= 1 && *y <= 1 => AdbAction::TouchDown {
-                    x: (*x as f32 * video_width as f32) as u32,
-                    y: (*y as f32 * video_height as f32) as u32,
+                AdbAction::TouchDown { x, y } => AdbAction::TouchDown {
+                    x: (*x * video_width),
+                    y: (*y * video_height),
                 },
-                AdbAction::TouchMove { x, y } if *x <= 1 && *y <= 1 => AdbAction::TouchMove {
-                    x: (*x as f32 * video_width as f32) as u32,
-                    y: (*y as f32 * video_height as f32) as u32,
+                AdbAction::TouchMove { x, y } => AdbAction::TouchMove {
+                    x: (*x * video_width),
+                    y: (*y * video_height),
                 },
-                AdbAction::TouchUp { x, y } if *x <= 1 && *y <= 1 => AdbAction::TouchUp {
-                    x: (*x as f32 * video_width as f32) as u32,
-                    y: (*y as f32 * video_height as f32) as u32,
+                AdbAction::TouchUp { x, y } => AdbAction::TouchUp {
+                    x: (*x * video_width),
+                    y: (*y * video_height),
                 },
-                AdbAction::Scroll { x, y, direction } if *x <= 1 && *y <= 1 => AdbAction::Scroll {
-                    x: (*x as f32 * video_width as f32) as u32,
-                    y: (*y as f32 * video_height as f32) as u32,
+                AdbAction::Scroll { x, y, direction } => AdbAction::Scroll {
+                    x: (*x * video_width),
+                    y: (*y * video_height),
                     direction: direction.clone(),
                 },
-                AdbAction::Swipe { x1, y1, x2, y2, duration } if *x1 <= 1 && *y1 <= 1 && *x2 <= 1 && *y2 <= 1 => {
+                AdbAction::Swipe { x1, y1, x2, y2, duration } => {
                     AdbAction::Swipe {
-                        x1: (*x1 as f32 * video_width as f32) as u32,
-                        y1: (*y1 as f32 * video_height as f32) as u32,
-                        x2: (*x2 as f32 * video_width as f32) as u32,
-                        y2: (*y2 as f32 * video_height as f32) as u32,
+                        x1: (*x1 * video_width),
+                        y1: (*y1 * video_height),
+                        x2: (*x2 * video_width),
+                        y2: (*y2 * video_height),
                         duration: *duration,
                     }
                 }
-                _ => continue,  // Skip if already converted or no coordinates
+                other => other.clone(),
             };
             *action = new_action;
         }
