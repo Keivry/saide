@@ -2,9 +2,109 @@ use {
     crate::controller::utils::*,
     eframe::egui::{self, PointerButton},
     parking_lot::RwLock,
-    serde::{Deserialize, Serialize},
+    serde::{Deserialize, Deserializer, Serialize},
     std::{collections::HashMap, ops::Deref, sync::Arc},
 };
+
+/// Raw action from config file (with percentage coordinates)
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "action")]
+enum RawAdbAction {
+    Tap { x: f32, y: f32 },
+    Swipe { x1: f32, y1: f32, x2: f32, y2: f32, duration: u32 },
+    TouchDown { x: f32, y: f32 },
+    TouchMove { x: f32, y: f32 },
+    TouchUp { x: f32, y: f32 },
+    Scroll { x: f32, y: f32, direction: WheelDirection },
+    Key { keycode: u8 },
+    KeyCombo { modifiers: Modifiers, keycode: u8 },
+    Text { text: String },
+    Back,
+    Home,
+    Menu,
+    Power,
+    Ignore,
+}
+
+impl RawAdbAction {
+    /// Validate percentage values are in [0, 1] range
+    fn validate(&self) -> Result<(), String> {
+        let check_percent = |v: f32, name: &str| -> Result<(), String> {
+            if v >= 2.0 {
+                Err(format!(
+                    "{} coordinate {} appears to be in legacy absolute format. \
+                    Please run: python scripts/convert_coords_to_percent.py",
+                    name, v
+                ))
+            } else if !(0.0..=1.0).contains(&v) {
+                Err(format!("{} percentage {} must be in range [0.0, 1.0]", name, v))
+            } else {
+                Ok(())
+            }
+        };
+
+        match self {
+            Self::Tap { x, y } | Self::TouchDown { x, y } | Self::TouchMove { x, y } | Self::TouchUp { x, y } => {
+                check_percent(*x, "x")?;
+                check_percent(*y, "y")?;
+            }
+            Self::Scroll { x, y, .. } => {
+                check_percent(*x, "x")?;
+                check_percent(*y, "y")?;
+            }
+            Self::Swipe { x1, y1, x2, y2, .. } => {
+                check_percent(*x1, "x1")?;
+                check_percent(*y1, "y1")?;
+                check_percent(*x2, "x2")?;
+                check_percent(*y2, "y2")?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Convert to AdbAction with pixel coordinates
+    fn to_pixels(&self, video_width: u32, video_height: u32) -> AdbAction {
+        match self {
+            Self::Tap { x, y } => AdbAction::Tap {
+                x: (x * video_width as f32) as u32,
+                y: (y * video_height as f32) as u32,
+            },
+            Self::Swipe { x1, y1, x2, y2, duration } => AdbAction::Swipe {
+                x1: (x1 * video_width as f32) as u32,
+                y1: (y1 * video_height as f32) as u32,
+                x2: (x2 * video_width as f32) as u32,
+                y2: (y2 * video_height as f32) as u32,
+                duration: *duration,
+            },
+            Self::TouchDown { x, y } => AdbAction::TouchDown {
+                x: (x * video_width as f32) as u32,
+                y: (y * video_height as f32) as u32,
+            },
+            Self::TouchMove { x, y } => AdbAction::TouchMove {
+                x: (x * video_width as f32) as u32,
+                y: (y * video_height as f32) as u32,
+            },
+            Self::TouchUp { x, y } => AdbAction::TouchUp {
+                x: (x * video_width as f32) as u32,
+                y: (y * video_height as f32) as u32,
+            },
+            Self::Scroll { x, y, direction } => AdbAction::Scroll {
+                x: (x * video_width as f32) as u32,
+                y: (y * video_height as f32) as u32,
+                direction: direction.clone(),
+            },
+            Self::Key { keycode } => AdbAction::Key { keycode: *keycode },
+            Self::KeyCombo { modifiers, keycode } => AdbAction::KeyCombo { modifiers: *modifiers, keycode: *keycode },
+            Self::Text { text } => AdbAction::Text { text: text.clone() },
+            Self::Back => AdbAction::Back,
+            Self::Home => AdbAction::Home,
+            Self::Menu => AdbAction::Menu,
+            Self::Power => AdbAction::Power,
+            Self::Ignore => AdbAction::Ignore,
+        }
+    }
+}
 
 pub type Key = egui::Key;
 pub type Modifiers = egui::Modifiers;
@@ -35,6 +135,8 @@ impl From<PointerButton> for MouseButton {
 }
 
 /// ADB input command types
+/// 
+/// Coordinates are stored as actual pixels after conversion from config percentages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action")]
 pub enum AdbAction {
@@ -86,6 +188,7 @@ pub enum AdbAction {
 
     Ignore,
 }
+
 #[derive(Debug, Default)]
 pub struct KeyMapping {
     inner: Arc<RwLock<HashMap<Key, AdbAction>>>,
@@ -157,6 +260,54 @@ pub struct Profile {
 }
 
 impl Profile {
+    /// Convert all percentage coordinates in this profile to pixel coordinates
+    /// This should be called after loading from config when video resolution is known
+    pub fn convert_to_pixels(&self, video_width: u32, video_height: u32) {
+        let mut mappings = self.mappings.inner.write();
+        for (_key, action) in mappings.iter_mut() {
+            let new_action = match &*action {
+                AdbAction::Tap { x, y } if *x <= 1 && *y <= 1 => AdbAction::Tap {
+                    x: (*x as f32 * video_width as f32) as u32,
+                    y: (*y as f32 * video_height as f32) as u32,
+                },
+                AdbAction::TouchDown { x, y } if *x <= 1 && *y <= 1 => AdbAction::TouchDown {
+                    x: (*x as f32 * video_width as f32) as u32,
+                    y: (*y as f32 * video_height as f32) as u32,
+                },
+                AdbAction::TouchMove { x, y } if *x <= 1 && *y <= 1 => AdbAction::TouchMove {
+                    x: (*x as f32 * video_width as f32) as u32,
+                    y: (*y as f32 * video_height as f32) as u32,
+                },
+                AdbAction::TouchUp { x, y } if *x <= 1 && *y <= 1 => AdbAction::TouchUp {
+                    x: (*x as f32 * video_width as f32) as u32,
+                    y: (*y as f32 * video_height as f32) as u32,
+                },
+                AdbAction::Scroll { x, y, direction } if *x <= 1 && *y <= 1 => AdbAction::Scroll {
+                    x: (*x as f32 * video_width as f32) as u32,
+                    y: (*y as f32 * video_height as f32) as u32,
+                    direction: direction.clone(),
+                },
+                AdbAction::Swipe { x1, y1, x2, y2, duration } if *x1 <= 1 && *y1 <= 1 && *x2 <= 1 && *y2 <= 1 => {
+                    AdbAction::Swipe {
+                        x1: (*x1 as f32 * video_width as f32) as u32,
+                        y1: (*y1 as f32 * video_height as f32) as u32,
+                        x2: (*x2 as f32 * video_width as f32) as u32,
+                        y2: (*y2 as f32 * video_height as f32) as u32,
+                        duration: *duration,
+                    }
+                }
+                _ => continue,  // Skip if already converted or no coordinates
+            };
+            *action = new_action;
+        }
+        tracing::debug!(
+            "Converted profile '{}' coordinates to {}x{} pixels",
+            self.name,
+            video_width,
+            video_height
+        );
+    }
+
     /// Add a mapping to the profile, returning a new profile
     pub fn add_mapping(&self, key: Key, action: AdbAction) -> &Self {
         self.mappings.inner.write().insert(key, action);

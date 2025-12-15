@@ -38,128 +38,128 @@ rotation = 1
 [[mappings.profiles.mappings]]
 key = "S"
 action = "Tap"
-x = 2597
-y = 824
+x = 0.9275  # was 2597 / 2800
+y = 0.654  # was 824 / 1260
 
 [[mappings.profiles.mappings]]
 key = "W"
 action = "Tap"
-x = 2185
-y = 31
+x = 0.7804  # was 2185 / 2800
+y = 0.0246  # was 31 / 1260
 
 [[mappings.profiles.mappings]]
 key = "Backtick"
 action = "Tap"
-x = 177
-y = 82
+x = 0.0632  # was 177 / 2800
+y = 0.0651  # was 82 / 1260
 
 [[mappings.profiles.mappings]]
 key = "Num6"
 action = "Tap"
-x = 2400
-y = 452
+x = 0.8571  # was 2400 / 2800
+y = 0.3587  # was 452 / 1260
 
 [[mappings.profiles.mappings]]
 key = "Z"
 action = "Tap"
-x = 2482
-y = 376
+x = 0.8864  # was 2482 / 2800
+y = 0.2984  # was 376 / 1260
 
 [[mappings.profiles.mappings]]
 key = "G"
 action = "Tap"
-x = 2232
-y = 880
+x = 0.7971  # was 2232 / 2800
+y = 0.6984  # was 880 / 1260
 
 [[mappings.profiles.mappings]]
 key = "V"
 action = "Tap"
-x = 2485
-y = 527
+x = 0.8875  # was 2485 / 2800
+y = 0.4183  # was 527 / 1260
 
 [[mappings.profiles.mappings]]
 key = "F1"
 action = "Tap"
-x = 830
-y = 80
+x = 0.2964  # was 830 / 2800
+y = 0.0635  # was 80 / 1260
 
 [[mappings.profiles.mappings]]
 key = "Num3"
 action = "Tap"
-x = 2563
-y = 456
+x = 0.9154  # was 2563 / 2800
+y = 0.3619  # was 456 / 1260
 
 [[mappings.profiles.mappings]]
 key = "Q"
 action = "Tap"
-x = 2593
-y = 614
+x = 0.9261  # was 2593 / 2800
+y = 0.4873  # was 614 / 1260
 
 [[mappings.profiles.mappings]]
 key = "C"
 action = "Tap"
-x = 2105
-y = 1066
+x = 0.7518  # was 2105 / 2800
+y = 0.846  # was 1066 / 1260
 
 [[mappings.profiles.mappings]]
 key = "Num5"
 action = "Tap"
-x = 2245
-y = 459
+x = 0.8018  # was 2245 / 2800
+y = 0.3643  # was 459 / 1260
 
 [[mappings.profiles.mappings]]
 key = "B"
 action = "Tap"
-x = 2630
-y = 1012
+x = 0.9393  # was 2630 / 2800
+y = 0.8032  # was 1012 / 1260
 
 [[mappings.profiles.mappings]]
 key = "A"
 action = "Tap"
-x = 2596
-y = 1155
+x = 0.9271  # was 2596 / 2800
+y = 0.9167  # was 1155 / 1260
 
 [[mappings.profiles.mappings]]
 key = "T"
 action = "Tap"
-x = 2274
-y = 74
+x = 0.8121  # was 2274 / 2800
+y = 0.0587  # was 74 / 1260
 
 [[mappings.profiles.mappings]]
 key = "F2"
 action = "Tap"
-x = 706
-y = 77
+x = 0.2521  # was 706 / 2800
+y = 0.0611  # was 77 / 1260
 
 [[mappings.profiles.mappings]]
 key = "F"
 action = "Tap"
-x = 172
-y = 836
+x = 0.0614  # was 172 / 2800
+y = 0.6635  # was 836 / 1260
 
 [[mappings.profiles.mappings]]
 key = "Tab"
 action = "Tap"
-x = 336
-y = 135
+x = 0.12  # was 336 / 2800
+y = 0.1071  # was 135 / 1260
 
 [[mappings.profiles.mappings]]
 key = "D"
 action = "Tap"
-x = 303
-y = 840
+x = 0.1082  # was 303 / 2800
+y = 0.6667  # was 840 / 1260
 
 [[mappings.profiles.mappings]]
 key = "Num2"
 action = "Tap"
-x = 2395
-y = 619
+x = 0.8554  # was 2395 / 2800
+y = 0.4913  # was 619 / 1260
 
 [[mappings.profiles.mappings]]
 key = "X"
 action = "Tap"
-x = 708
-y = 1066
+x = 0.2529  # was 708 / 2800
+y = 0.846  # was 1066 / 1260
 
 [logging]
 level = "debug"

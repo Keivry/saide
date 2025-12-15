@@ -137,6 +137,15 @@ impl KeyboardMapper {
                 device_id,
                 device_rotation
             );
+            
+            // Get video resolution from ControlSender
+            let (video_width, video_height) = self.sender.get_screen_size();
+            
+            // Convert percentage coordinates to pixels for all profiles
+            for profile in &avail_profiles {
+                profile.convert_to_pixels(video_width as u32, video_height as u32);
+            }
+            
             self.active_profile
                 .store(Arc::new(Some(avail_profiles[0].clone())));
             info!("Active profile set to: {}", avail_profiles[0].name);
