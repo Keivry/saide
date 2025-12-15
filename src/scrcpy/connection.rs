@@ -34,6 +34,9 @@ pub struct ScrcpyConnection {
     /// Audio stream socket (optional)
     pub audio_stream: Option<TcpStream>,
 
+    /// Audio disabled reason (if audio was requested but unavailable)
+    pub audio_disabled_reason: Option<String>,
+
     /// Control stream socket
     pub control_stream: Option<TcpStream>,
 
@@ -67,17 +70,21 @@ impl ScrcpyConnection {
         info!("SCID: {:08x}, socket: {}", scid, socket_name);
 
         // Step 0: Check Android version and disable audio if unsupported
+        let mut audio_disabled_reason = None;
+        
         if params.audio {
             let android_version = super::server::get_android_version(serial)
                 .context("Failed to get Android version")?;
 
             // Audio capture requires Android 11 (API 30) or higher
             if android_version < 30 {
-                tracing::warn!(
-                    "Audio capture requires Android 11+ (API 30+), but device is Android {} (API {}). Disabling audio.",
+                let reason = format!(
+                    "Audio capture requires Android 11+ (API 30+). Device is Android {} (API {}).",
                     if android_version >= 29 { "10" } else { "<10" },
                     android_version
                 );
+                tracing::warn!("{} Disabling audio.", reason);
+                audio_disabled_reason = Some(reason);
                 params.audio = false;
             } else {
                 info!("Audio capture supported (Android API {})", android_version);
@@ -212,6 +219,7 @@ impl ScrcpyConnection {
             video_resolution,
             video_stream,
             audio_stream,
+            audio_disabled_reason,
             control_stream,
             local_port,
             server_process: Some(server_process),

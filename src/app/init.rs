@@ -42,6 +42,7 @@ pub enum InitEvent {
         audio_stream: Option<TcpStream>,
         video_resolution: (u32, u32),
         device_name: Option<String>,
+        audio_disabled_reason: Option<String>,
     },
     KeyboardMapper(KeyboardMapper),
     MouseMapper(MouseMapper),
@@ -223,6 +224,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
             .video_resolution
             .ok_or_else(|| anyhow::anyhow!("Video resolution not available"))?;
         let device_name = connection.device_name.clone();
+        let audio_disabled_reason = connection.audio_disabled_reason.clone();
 
         // Create ControlSender with cloned stream
         // We need to clone the TcpStream to keep both in ControlSender and return original
@@ -252,6 +254,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
             audio_stream,
             video_resolution,
             device_name,
+            audio_disabled_reason,
         })?;
 
         // Now create keyboard mapper (if enabled)

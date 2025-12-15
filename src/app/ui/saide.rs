@@ -8,8 +8,11 @@ use {
                 start_initialization,
             },
             utils::{
-                CoordinatesTransformParams, device_to_video_coords, find_nearest_mapping,
-                screen_to_device_coords, screen_to_video_coords,
+                CoordinatesTransformParams,
+                device_to_video_coords,
+                find_nearest_mapping,
+                screen_to_device_coords,
+                screen_to_video_coords,
             },
         },
         indicator::Indicator,
@@ -87,6 +90,9 @@ pub struct SAideApp {
     /// Device orientation (0-3), clockwise
     device_orientation: u32,
 
+    /// Audio disabled warning message (if audio was requested but unavailable)
+    audio_warning: Option<String>,
+
     /// Whether window has been initially sized to video
     window_initialized: bool,
 
@@ -154,6 +160,8 @@ impl SAideApp {
 
             device_orientation: 0,
 
+            audio_warning: None,
+
             window_initialized: false,
 
             frame_rate_limiter: if vsync {
@@ -205,11 +213,15 @@ impl SAideApp {
                         audio_stream,
                         video_resolution,
                         device_name,
+                        audio_disabled_reason,
                     } => {
                         info!(
                             "ScrcpyConnection ready: {}x{}, device: {:?}",
                             video_resolution.0, video_resolution.1, device_name
                         );
+
+                        // Store audio warning if present
+                        self.audio_warning = audio_disabled_reason;
 
                         // Save connection (to keep it alive and prevent server shutdown)
                         self.connection = Some(connection);
@@ -539,11 +551,9 @@ impl SAideApp {
         trace!("Processing mouse button event: {:?} at {:?}", button, pos);
 
         // Use video coordinates for scrcpy control channel
-        let Some((video_x, video_y, _, _)) = screen_to_video_coords(
-            pos,
-            &self.player.video_rect(),
-            self.player.rotation(),
-        ) else {
+        let Some((video_x, video_y, ..)) =
+            screen_to_video_coords(pos, &self.player.video_rect(), self.player.rotation())
+        else {
             debug!("Failed to convert screen coords to video coords");
             return;
         };
@@ -577,7 +587,7 @@ impl SAideApp {
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
-            if let Some((video_x, video_y, _, _)) =
+            if let Some((video_x, video_y, ..)) =
                 screen_to_video_coords(pos, &self.player.video_rect(), self.player.rotation())
             {
                 // Get actual video resolution for screenSize
@@ -604,7 +614,7 @@ impl SAideApp {
 
             // If dragging and moved outside, send a button release
             if mouse_mapper.get_button_state() != MouseState::Idle
-                && let Some((video_x, video_y, _, _)) = screen_to_video_coords(
+                && let Some((video_x, video_y, ..)) = screen_to_video_coords(
                     last_pointer_pos,
                     &self.player.video_rect(),
                     self.player.rotation(),
@@ -645,7 +655,7 @@ impl SAideApp {
             delta, pointer_pos
         );
 
-        let Some((video_x, video_y, _, _)) = screen_to_video_coords(
+        let Some((video_x, video_y, ..)) = screen_to_video_coords(
             &pointer_pos,
             &self.player.video_rect(),
             self.player.rotation(),
@@ -881,11 +891,14 @@ impl eframe::App for SAideApp {
 
                 // Check if dimensions changed (device rotation or first frame)
                 if new_dimensions != old_dimensions && new_dimensions.0 > 0 {
-                    info!("Video dimensions changed: {:?} -> {:?}", old_dimensions, new_dimensions);
-                    
+                    info!(
+                        "Video dimensions changed: {:?} -> {:?}",
+                        old_dimensions, new_dimensions
+                    );
+
                     // Resize window to match new video dimensions
                     self.resize(ctx);
-                    
+
                     // Update indicator
                     self.indicator.update_video_resolution(new_dimensions);
                     self.window_initialized = true;
@@ -917,6 +930,38 @@ impl eframe::App for SAideApp {
         if self.init_state == InitState::Ready && self.config().general.indicator {
             self.indicator.update_video_stats(self.player.video_stats());
             self.draw_indicator(ctx);
+        }
+
+        // Show audio warning if present (overlay at top)
+        if let Some(warning) = self.audio_warning.clone() {
+            let mut close_clicked = false;
+            egui::Area::new(egui::Id::new("audio_warning"))
+                .fixed_pos(egui::pos2(10.0, 10.0))
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(40, 40, 40, 220))
+                        .rounding(5.0)
+                        .inner_margin(10.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("⚠").color(egui::Color32::YELLOW).size(20.0));
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("Audio Not Available")
+                                            .color(egui::Color32::YELLOW)
+                                            .strong()
+                                    );
+                                    ui.label(egui::RichText::new(&warning).color(egui::Color32::LIGHT_GRAY));
+                                });
+                                if ui.button("✖").clicked() {
+                                    close_clicked = true;
+                                }
+                            });
+                        });
+                });
+            if close_clicked {
+                self.audio_warning = None;
+            }
         }
 
         // Frame rate limiting (only when streaming)
