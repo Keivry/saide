@@ -50,6 +50,10 @@ pub enum PlayerEvent {
         width: u32,
         height: u32,
     },
+    ResolutionChanged {
+        width: u32,
+        height: u32,
+    },
     Failed(String),
 }
 
@@ -174,6 +178,11 @@ impl StreamPlayer {
                     self.video_width = width;
                     self.video_height = height;
                     self.state = PlayerState::Streaming;
+                }
+                PlayerEvent::ResolutionChanged { width, height } => {
+                    info!("Resolution changed: {}x{}", width, height);
+                    self.video_width = width;
+                    self.video_height = height;
                 }
                 PlayerEvent::Failed(err) => {
                     error!("Stream failed: {}", err);
@@ -470,6 +479,12 @@ fn stream_worker(
                                 "Decoder recreated: {}",
                                 video_decoder.decoder_type()
                             );
+
+                            // Notify UI about resolution change
+                            let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                                width: new_res.0,
+                                height: new_res.1,
+                            });
                         }
                         Err(e) => {
                             error!("Failed to recreate decoder: {}", e);

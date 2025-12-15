@@ -792,10 +792,36 @@ impl eframe::App for SAideApp {
                 ctx.request_repaint();
             }
             InitState::Ready => {
+                // Store dimensions before update
+                let old_dimensions = self.player.video_dimensions();
+
                 // Update player state
                 self.player.update();
 
-                // Update window size and aspect ratio on first frame
+                // Get new dimensions after update
+                let new_dimensions = self.player.video_dimensions();
+
+                // Check if dimensions changed (device rotation)
+                if new_dimensions != old_dimensions && new_dimensions.0 > 0 {
+                    let (w, h) = new_dimensions;
+                    info!("Video dimensions changed: {:?} -> {:?}", old_dimensions, new_dimensions);
+
+                    // Resize window to match new video dimensions
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                        w as f32 + Toolbar::width(),
+                        h as f32,
+                    )));
+
+                    // Update aspect ratio lock
+                    let aspect = (w as f32 + Toolbar::width()) / h as f32;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(Some(
+                        egui::vec2(aspect, 1.0),
+                    )));
+
+                    self.indicator.update_video_resolution((w, h));
+                }
+
+                // Initialize window on first frame
                 if self.player.ready() && !self.window_initialized {
                     let (w, h) = self.player.video_dimensions();
 
