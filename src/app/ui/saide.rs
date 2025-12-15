@@ -762,7 +762,7 @@ impl SAideApp {
     fn coodinates_transform_params(&self) -> CoordinatesTransformParams {
         CoordinatesTransformParams {
             video_rect: self.player.video_rect(),
-            video_rotation: 0, // Rotation handled by device orientation
+            video_rotation: self.player.rotation(), // User manual rotation
             device_physical_size: self.device_physical_size,
             device_orientation: self.device_orientation,
             capture_orientation: 0, // No V4L2, always 0
