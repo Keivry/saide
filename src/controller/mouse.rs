@@ -6,7 +6,7 @@ use {
     anyhow::Result,
     parking_lot::Mutex,
     std::time::Instant,
-    tracing::{debug, error, trace},
+    tracing::{debug, trace},
 };
 
 /// Movement threshold to distinguish drag from click (in pixels)
@@ -253,7 +253,7 @@ impl MouseMapper {
                     + (y as f32 - start_y as f32).powi(2))
                 .sqrt();
 
-                debug!(
+                trace!(
                     "Move during Pressed: from ({}, {}) to ({}, {}), distance={:.1}px",
                     start_x, start_y, x, y, distance
                 );

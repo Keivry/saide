@@ -28,7 +28,7 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    tracing::{debug, error, info},
+    tracing::{debug, error, info, trace},
 };
 
 const FRAME_BUFFER_SIZE: usize = 3;
@@ -502,7 +502,8 @@ fn stream_worker(
         let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
             Ok(frame) => frame,
             Err(e) => {
-                debug!("Decode error: {}", e);
+                // During shutdown, CUDA context may be invalid - don't spam logs
+                trace!("Decode error (likely during shutdown): {}", e);
                 continue;
             }
         };
