@@ -5,6 +5,7 @@
 use {
     super::VideoStats,
     crate::{
+        config::scrcpy::ScrcpyConfig,
         decoder::{
             AudioDecoder,
             AudioPlayer,
@@ -85,6 +86,9 @@ pub struct StreamPlayer {
     video_width: u32,
     video_height: u32,
 
+    /// Video rotation (0-3, clockwise 90°)
+    video_rotation: u32,
+
     /// FPS counter
     fps: f32,
     frame_count: u32,
@@ -119,6 +123,7 @@ impl StreamPlayer {
             video_rect: egui::Rect::NOTHING,
             video_width: 0,
             video_height: 0,
+            video_rotation: 0,
             fps: 0.0,
             frame_count: 0,
             fps_timer: Instant::now(),
@@ -128,14 +133,14 @@ impl StreamPlayer {
     }
 
     /// Start streaming from device
-    pub fn start(&mut self, serial: String) {
+    pub fn start(&mut self, serial: String, config: ScrcpyConfig) {
         info!("Starting stream for device: {}", serial);
         self.state = PlayerState::Connecting;
 
         let event_tx = self.event_tx.clone();
 
         self._stream_thread = Some(thread::spawn(move || {
-            if let Err(e) = stream_worker(serial, event_tx.clone()) {
+            if let Err(e) = stream_worker(serial, config, event_tx.clone()) {
                 error!("Stream worker error: {}", e);
                 let _ = event_tx.send(PlayerEvent::Failed(format!("{}", e)));
             }
@@ -215,7 +220,15 @@ impl StreamPlayer {
                     .response;
             }
 
-            let aspect_ratio = self.video_width as f32 / self.video_height as f32;
+            // Calculate effective dimensions after rotation
+            let (effective_width, effective_height) = if self.video_rotation.is_multiple_of(2) {
+                (self.video_width, self.video_height)
+            } else {
+                // 90° or 270° rotation swaps dimensions
+                (self.video_height, self.video_width)
+            };
+
+            let aspect_ratio = effective_width as f32 / effective_height as f32;
             let available_aspect = available_rect.width() / available_rect.height();
 
             let (display_width, display_height) = if available_aspect > aspect_ratio {
@@ -235,8 +248,8 @@ impl StreamPlayer {
 
             self.video_rect = rect;
 
-            // Create NV12 render callback
-            let callback = new_nv12_render_callback(frame.clone());
+            // Create NV12 render callback with rotation
+            let callback = new_nv12_render_callback(frame.clone(), self.video_rotation);
 
             ui.painter()
                 .add(egui_wgpu::Callback::new_paint_callback(rect, callback));
@@ -271,8 +284,14 @@ impl StreamPlayer {
     /// Check if player is ready (streaming)
     pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Streaming) }
 
-    /// Get video dimensions
-    pub fn dimensions(&self) -> (u32, u32) { (self.video_width, self.video_height) }
+    /// Get effective video dimensions (considering rotation)
+    pub fn dimensions(&self) -> (u32, u32) {
+        if self.video_rotation.is_multiple_of(2) {
+            (self.video_width, self.video_height)
+        } else {
+            (self.video_height, self.video_width)
+        }
+    }
 
     /// Get video statistics
     pub fn video_stats(&self) -> VideoStats {
@@ -284,16 +303,11 @@ impl StreamPlayer {
         }
     }
 
-    /// Rotation is handled by device orientation, not player
-    /// This is a compatibility method for migration
-    pub fn rotation(&self) -> u32 {
-        0 // Always 0, rotation handled externally
-    }
+    /// Get current video rotation
+    pub fn rotation(&self) -> u32 { self.video_rotation }
 
-    /// Set rotation (no-op for compatibility)
-    pub fn set_rotation(&mut self, _rotation: u32) {
-        // No-op: rotation handled by device orientation
-    }
+    /// Set video rotation (0-3, clockwise 90°)
+    pub fn set_rotation(&mut self, rotation: u32) { self.video_rotation = rotation % 4; }
 }
 
 impl Drop for StreamPlayer {
@@ -301,23 +315,41 @@ impl Drop for StreamPlayer {
 }
 
 /// Stream worker thread
-fn stream_worker(serial: String, event_tx: Sender<PlayerEvent>) -> Result<()> {
+fn stream_worker(
+    serial: String,
+    config: ScrcpyConfig,
+    event_tx: Sender<PlayerEvent>,
+) -> Result<()> {
     let server_jar = "3rd-party/scrcpy-server-v3.3.3";
     if !std::path::Path::new(server_jar).exists() {
         let err = format!("Server JAR not found: {}", server_jar);
         anyhow::bail!(err);
     }
 
-    // Setup connection parameters
+    // Parse bit_rate from config (e.g., "24M" -> 24_000_000)
+    let bit_rate = {
+        let rate_str = &config.video.bit_rate;
+        let multiplier = if rate_str.ends_with('M') || rate_str.ends_with('m') {
+            1_000_000
+        } else if rate_str.ends_with('K') || rate_str.ends_with('k') {
+            1_000
+        } else {
+            1
+        };
+        let num_str = rate_str.trim_end_matches(|c: char| !c.is_ascii_digit());
+        num_str.parse::<u32>().unwrap_or(8) * multiplier
+    };
+
+    // Setup connection parameters from config
     let mut params = ServerParams::for_device(&serial)?;
     params.video = true;
-    params.video_codec = "h264".to_string();
-    params.video_bit_rate = 8_000_000;
-    params.max_size = 1920;
-    params.max_fps = 60;
-    params.audio = true;
-    params.audio_codec = "opus".to_string();
-    params.audio_source = "playback".to_string();
+    params.video_codec = config.video.codec.clone();
+    params.video_bit_rate = bit_rate;
+    params.max_size = config.video.max_size as u16;
+    params.max_fps = config.video.max_fps as u16;
+    params.audio = config.audio.enabled;
+    params.audio_codec = config.audio.codec.clone();
+    params.audio_source = config.audio.source.clone();
     params.control = true;
     params.send_device_meta = true;
     params.send_codec_meta = true;

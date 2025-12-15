@@ -78,6 +78,9 @@ pub struct SAideApp {
     /// Device orientation (0-3), clockwise
     device_orientation: u32,
 
+    /// Whether window has been initially sized to video
+    window_initialized: bool,
+
     // Frame rate limiter duration
     frame_rate_limiter: Option<Duration>,
 
@@ -138,6 +141,8 @@ impl SAideApp {
 
             device_orientation: 0,
 
+            window_initialized: false,
+
             frame_rate_limiter: if vsync {
                 None
             } else {
@@ -197,7 +202,8 @@ impl SAideApp {
                     InitEvent::DeviceId(device_id) => {
                         self.device_id = Some(device_id.clone());
                         // Start streaming when device ID is available
-                        self.player.start(device_id);
+                        let config = self.config();
+                        self.player.start(device_id, (*config.scrcpy).clone());
                     }
                     InitEvent::PhysicalSize(size) => self.device_physical_size = size,
                     InitEvent::Error(e) => {
@@ -223,15 +229,6 @@ impl SAideApp {
         }
     }
 
-    /// Resize the application window to match video dimensions
-    fn resize(&mut self, ctx: &egui::Context) {
-        let (w, h) = self.player.dimensions();
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-            w as f32 + Toolbar::width(),
-            h as f32,
-        )));
-    }
-
     /// Rotate video by 90 degrees clockwise
     fn rotate(&mut self, ctx: &egui::Context) {
         let video_rotation = (self.player.rotation() + 1) % 4;
@@ -240,8 +237,26 @@ impl SAideApp {
         self.player.set_rotation(video_rotation);
         self.indicator.update_video_rotation(video_rotation);
 
+        // Get effective dimensions after rotation
+        let (w, h) = self.player.dimensions();
+
         // Resize window to match new video dimensions
-        self.resize(ctx);
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+            w as f32 + Toolbar::width(),
+            h as f32,
+        )));
+
+        // Lock aspect ratio
+        let aspect = (w as f32 + Toolbar::width()) / h as f32;
+        ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(Some(egui::vec2(
+            aspect, 1.0,
+        ))));
+
+        // Update indicator resolution
+        self.indicator.update_video_resolution((w, h));
+
+        // Request repaint to apply changes immediately
+        ctx.request_repaint();
     }
 
     /// Toggle mapping configuration window
@@ -769,23 +784,38 @@ impl eframe::App for SAideApp {
             InitState::InProgress => {
                 // Update player to receive events
                 self.player.update();
-                
+
                 // Check initialization progress
                 self.check_init_stage(ctx);
+
+                // Request repaint during initialization
+                ctx.request_repaint();
             }
             InitState::Ready => {
                 // Update player state
                 self.player.update();
 
-                // Resize window when first frame arrives
-                if self.player.ready() && self.player.video_dimensions().0 > 0 {
+                // Update window size and aspect ratio on first frame
+                if self.player.ready() && !self.window_initialized {
                     let (w, h) = self.player.video_dimensions();
-                    if w != self.device_physical_size.0 || h != self.device_physical_size.1 {
+
+                    if w > 0 && h > 0 {
+                        // Resize window to match video
                         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                             w as f32 + Toolbar::width(),
                             h as f32,
                         )));
+
+                        // Lock aspect ratio
+                        let aspect = (w as f32 + Toolbar::width()) / h as f32;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::ResizeIncrements(Some(
+                            egui::vec2(aspect, 1.0),
+                        )));
+
                         self.indicator.update_video_resolution((w, h));
+                        self.window_initialized = true;
+
+                        info!("Window initialized to {}x{}", w, h);
                     }
                 }
 

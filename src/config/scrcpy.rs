@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ScrcpyConfig {
     pub video: VideoConfig,
     pub audio: AudioConfig,
     pub options: OptionsConfig,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct VideoConfig {
     #[serde(default = "default_bitrate")]
     pub bit_rate: String,
@@ -27,7 +27,7 @@ fn default_max_size() -> u32 { 1920 }
 fn default_codec() -> String { "h264".to_string() }
 fn default_encoder() -> Option<String> { None }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioConfig {
     #[serde(default = "default_audio_enabled")]
     pub enabled: bool,
@@ -51,7 +51,7 @@ fn default_audio_enabled() -> bool { true }
 fn default_audio_codec() -> String { "opus".to_string() }
 fn default_audio_source() -> String { "playback".to_string() }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct OptionsConfig {
     #[serde(default = "default_true")]
     pub turn_screen_off: bool,
