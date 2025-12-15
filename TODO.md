@@ -381,8 +381,9 @@ cargo run --example render_avsync [device_serial]
 
 ## 进行中 🔄 (2025-12-15)
 
-暂无进行中任务
-
+### 鼠标拖动优化
+- [ ] 诊断鼠标拖动卡顿问题
+- [ ] 优化事件频率或坐标转换逻辑
 
 ---
 
@@ -467,4 +468,133 @@ cargo run
 ```
 
 **参考文档**：`docs/pitfalls.md` #12
+
+---
+
+### NVDEC 旋转处理终极方案 ✅ (2025-12-15)
+
+**目标**：解决不支持 SPS 的设备 NVDEC 旋转问题
+
+**最终方案**：
+- [x] 使用 NVDEC 时强制锁定屏幕方向（`capture-orientation=@0`）
+- [x] 避免分辨率变化导致的解码器重建
+- [x] 移除复杂的宽高交换恢复逻辑
+- [x] 自动检测并应用最佳策略
+
+**完成内容**：
+- [x] 在 ScrcpyConnection 初始化时检测 NVDEC
+- [x] 使用 NVDEC 时自动添加 `capture-orientation=@0` 参数
+- [x] 移除 `prepend-sps-pps-to-idr-frames=1` 依赖
+- [x] 简化解码器恢复逻辑（达到上限后退出）
+- [x] 添加用户友好的错误提示
+
+**优势**：
+- ✅ 更简单：不需要 SPS 检测和宽高交换
+- ✅ 更稳定：避免解码器重建带来的短暂黑屏
+- ✅ 更通用：所有 NVDEC 设备都受益
+- ✅ 零开销：无性能损失
+
+**技术实现**：
+```rust
+// scrcpy/connection.rs
+if gpu_type == GpuType::Nvidia {
+    args.push(format!("capture-orientation=@{}", initial_rotation));
+    info!("🔒 NVDEC detected: Locking capture orientation to {} to prevent resolution changes", 
+          initial_rotation * 90);
+}
+```
+
+**测试方法**：
+```bash
+cargo run
+# 旋转设备 - 视频方向不变，解码器稳定运行
+```
+
+---
+
+### 键盘映射百分比坐标支持 ✅ (2025-12-15)
+
+**目标**：解决键盘映射坐标系不兼容问题
+
+**问题背景**：
+- 配置文件存储的是物理分辨率坐标（如 1080x2340）
+- scrcpy 使用视频分辨率坐标（如 592x1280）
+- 旋转角度会影响坐标系
+
+**完成内容**：
+- [x] 实现 `RawAdbAction` 中间类型（百分比坐标）
+- [x] 反序列化时存储为 0-1000 范围保留精度
+- [x] `Profile::convert_to_pixels()` 转换为实际像素
+- [x] 修复映射配置窗口不显示问题
+- [x] 创建坐标转换脚本 `scripts/convert_coords_to_percent.py`
+
+**技术细节**：
+```rust
+// 反序列化时存储为 0-1000（3 位小数精度）
+let pixel_action = rm.action.to_pixels(1000, 1000);
+
+// 运行时转换为实际像素
+AdbAction::Tap {
+    x: (*x * video_width) / 1000,
+    y: (*y * video_height) / 1000,
+}
+```
+
+**转换脚本使用**：
+```bash
+# 自动查询设备分辨率并转换
+python scripts/convert_coords_to_percent.py
+
+# 输出示例
+✓ Detected device physical size: 1260x2800
+🔧 Converting profile: AskTao
+  Rotation 1 (effective resolution: 2800x1260)
+    x: 2597 → 0.9275 (92.75%)
+    y: 824 → 0.6540 (65.40%)
+```
+
+**测试方法**：
+1. 运行脚本转换坐标：`python scripts/convert_coords_to_percent.py`
+2. 启动应用：`cargo run`
+3. 进入映射配置模式（默认 F10）
+4. 验证已有映射正确显示在屏幕上
+
+---
+
+### 音频不可用 UI 提示 ✅ (2025-12-15)
+
+**目标**：为 Android 10 及以下设备提供清晰的音频不可用提示
+
+**问题背景**：
+- Android 10 (API 29) 不支持音频捕获
+- 后端日志有警告，但用户界面没有提示
+- 用户不知道为什么没有声音
+
+**完成内容**：
+- [x] 在 `AudioAvailability` 枚举中添加 `Unavailable` 变体
+- [x] 在 SAideApp 状态中存储音频可用性
+- [x] 从 ScrcpyConnection 错误信息中解析音频不可用原因
+- [x] 在 indicator UI 中显示音频图标和工具提示
+- [x] Android 10: 红色 🔇 + "Audio requires Android 11+"
+- [x] Android 11+: 绿色 🔊 + "Audio: 48kHz stereo"
+
+**UI 效果**：
+```
+Android 10 设备：
+  🔇 (红色) - Hover: "Audio capture requires Android 11+ (API 30+)"
+
+Android 11+ 设备：
+  🔊 (绿色) - Hover: "Audio: 48kHz stereo Opus"
+```
+
+**测试方法**：
+```bash
+# Android 10 设备
+cargo run
+# 查看右上角音频图标为红色 🔇，悬停查看提示
+
+# Android 11+ 设备
+cargo run
+# 查看右上角音频图标为绿色 🔊，悬停查看音频信息
+```
 
