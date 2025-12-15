@@ -213,11 +213,12 @@ impl<'de> Deserialize<'de> for KeyMapping {
             rm.action.validate().map_err(serde::de::Error::custom)?;
         }
         
-        // Store as pixel actions with dummy 1x1 resolution
-        // Will be properly converted in Profile::convert_to_pixels()
+        // Store percentage as u32 by multiplying by 1000 (e.g., 0.5 -> 500)
+        // This preserves the percentage while keeping u32 type
+        // Will be converted to actual pixels in Profile::convert_to_pixels()
         let mut m = HashMap::new();
         raw_mappings.into_iter().for_each(|rm| {
-            let pixel_action = rm.action.to_pixels(1, 1);
+            let pixel_action = rm.action.to_pixels(1000, 1000); // Store as 0-1000 range
             m.insert(rm.key, pixel_action);
         });
         
@@ -273,39 +274,39 @@ impl Profile {
     /// Convert all percentage coordinates in this profile to pixel coordinates
     /// This should be called after loading from config when video resolution is known
     /// 
-    /// Note: During deserialization, coordinates are stored as 0-1 range (from dummy 1x1 conversion)
-    /// This method scales them to actual video resolution
+    /// Note: During deserialization, coordinates are stored as 0-1000 range
+    /// This method converts: percentage_1000 -> (percentage_1000 / 1000.0) * video_size
     pub fn convert_to_pixels(&self, video_width: u32, video_height: u32) {
         let mut mappings = self.mappings.inner.write();
         for (_key, action) in mappings.iter_mut() {
             let new_action = match &*action {
                 AdbAction::Tap { x, y } => AdbAction::Tap {
-                    x: (*x * video_width),
-                    y: (*y * video_height),
+                    x: (*x * video_width) / 1000,
+                    y: (*y * video_height) / 1000,
                 },
                 AdbAction::TouchDown { x, y } => AdbAction::TouchDown {
-                    x: (*x * video_width),
-                    y: (*y * video_height),
+                    x: (*x * video_width) / 1000,
+                    y: (*y * video_height) / 1000,
                 },
                 AdbAction::TouchMove { x, y } => AdbAction::TouchMove {
-                    x: (*x * video_width),
-                    y: (*y * video_height),
+                    x: (*x * video_width) / 1000,
+                    y: (*y * video_height) / 1000,
                 },
                 AdbAction::TouchUp { x, y } => AdbAction::TouchUp {
-                    x: (*x * video_width),
-                    y: (*y * video_height),
+                    x: (*x * video_width) / 1000,
+                    y: (*y * video_height) / 1000,
                 },
                 AdbAction::Scroll { x, y, direction } => AdbAction::Scroll {
-                    x: (*x * video_width),
-                    y: (*y * video_height),
+                    x: (*x * video_width) / 1000,
+                    y: (*y * video_height) / 1000,
                     direction: direction.clone(),
                 },
                 AdbAction::Swipe { x1, y1, x2, y2, duration } => {
                     AdbAction::Swipe {
-                        x1: (*x1 * video_width),
-                        y1: (*y1 * video_height),
-                        x2: (*x2 * video_width),
-                        y2: (*y2 * video_height),
+                        x1: (*x1 * video_width) / 1000,
+                        y1: (*y1 * video_height) / 1000,
+                        x2: (*x2 * video_width) / 1000,
+                        y2: (*y2 * video_height) / 1000,
                         duration: *duration,
                     }
                 }
