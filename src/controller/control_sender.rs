@@ -53,6 +53,8 @@ impl ControlSender {
         msg.serialize(&mut buf)
             .context("Failed to serialize control message")?;
 
+        trace!("Serialized message: {} bytes", buf.len());
+
         let mut stream = self.stream.lock();
         stream
             .write_all(&buf)

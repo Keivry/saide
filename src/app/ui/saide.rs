@@ -538,20 +538,29 @@ impl SAideApp {
 
         trace!("Processing mouse button event: {:?} at {:?}", button, pos);
 
-        let Some((device_x, device_y)) =
-            screen_to_device_coords(pos, &self.coodinates_transform_params())
-        else {
+        // Use video coordinates for scrcpy control channel
+        let Some((video_x, video_y, screen_w, screen_h)) = screen_to_video_coords(
+            pos,
+            &self.player.video_rect(),
+            self.player.rotation(),
+        ) else {
+            debug!("Failed to convert screen coords to video coords");
             return;
         };
 
+        // Update ControlSender screen size (in case video resolution changed)
+        if let Some(sender) = &self.control_sender {
+            sender.update_screen_size(screen_w, screen_h);
+        }
+
+        debug!(
+            "Converted screen ({:.1}, {:.1}) -> video ({}, {}) in {}x{}",
+            pos.x, pos.y, video_x, video_y, screen_w, screen_h
+        );
+
         let button = MouseButton::from(button);
-        if let Err(e) = mouse_mapper.handle_button_event(button, pressed, device_x, device_y) {
+        if let Err(e) = mouse_mapper.handle_button_event(button, pressed, video_x, video_y) {
             error!("Failed to handle mouse button event: {}", e);
-        } else {
-            debug!(
-                "Mouse button event at device coords: ({}, {})",
-                device_x, device_y
-            );
         }
     }
 
