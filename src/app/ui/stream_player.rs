@@ -28,7 +28,7 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    tracing::{debug, error, info, warn},
+    tracing::{debug, error, info},
 };
 
 const FRAME_BUFFER_SIZE: usize = 3;
@@ -355,6 +355,14 @@ fn stream_worker(
     params.send_codec_meta = true;
     params.send_frame_meta = true;
 
+    // Enable SPS/PPS prepending for NVDEC resolution change detection
+    params.video_codec_options = Some(
+        "profile=65536,\
+         prepend-sps-pps-to-idr-frames=1,\
+         max-bframes=0"
+            .to_string(),
+    );
+
     // Connect to device
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -386,6 +394,9 @@ fn stream_worker(
     let mut video_decoder = AutoDecoder::new(width, height)?;
     let mut audio_decoder = OpusDecoder::new(48000, 2)?;
     let audio_player = AudioPlayer::new(48000, 2)?;
+
+    // Track last resolution for change detection
+    let mut last_resolution = (width, height);
 
     info!(
         "Decoders initialized: {} + Opus",
@@ -436,38 +447,45 @@ fn stream_worker(
         let video_packet = VideoPacket::read_from(&mut video_stream)?;
         let pts = video_packet.pts_us as i64;
 
-        // Decode with error recovery for resolution changes
-        let decode_result = video_decoder.decode(&video_packet.data, pts);
+        // Check for resolution change in keyframes (SPS embedded)
+        if video_packet.is_keyframe {
+            use crate::decoder::extract_resolution_from_stream;
 
-        let frame_opt = match decode_result {
-            Ok(frame) => frame,
-            Err(e) => {
-                let error_msg = e.to_string();
-                // Detect NVDEC resolution change errors
-                if error_msg.contains("AVHWFramesContext")
-                    || error_msg.contains("CUDA_ERROR_INVALID_HANDLE")
-                {
-                    warn!("NVDEC resolution change detected, recreating decoder");
-                    warn!("Error: {}", error_msg);
+            if let Some((width_sps, height_sps)) =
+                extract_resolution_from_stream(&video_packet.data)
+            {
+                let new_res = (width_sps, height_sps);
+                if new_res != last_resolution {
+                    info!(
+                        "Resolution change detected: {}x{} -> {}x{}",
+                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                    );
 
-                    // Recreate decoder with current dimensions from connection
-                    // Note: new dimensions will be detected from the video stream
-                    video_decoder = AutoDecoder::new(width, height)?;
-                    info!("Decoder recreated");
-
-                    // Retry decoding this packet
-                    match video_decoder.decode(&video_packet.data, pts) {
-                        Ok(frame) => frame,
+                    // Recreate decoder with new resolution
+                    match AutoDecoder::new(new_res.0, new_res.1) {
+                        Ok(new_decoder) => {
+                            video_decoder = new_decoder;
+                            last_resolution = new_res;
+                            info!(
+                                "Decoder recreated: {}",
+                                video_decoder.decoder_type()
+                            );
+                        }
                         Err(e) => {
-                            error!("Failed to decode after recreation: {}", e);
+                            error!("Failed to recreate decoder: {}", e);
                             continue;
                         }
                     }
-                } else {
-                    // Other decode errors
-                    debug!("Decode error: {}", e);
-                    continue;
                 }
+            }
+        }
+
+        // Decode frame
+        let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
+            Ok(frame) => frame,
+            Err(e) => {
+                debug!("Decode error: {}", e);
+                continue;
             }
         };
 
