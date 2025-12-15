@@ -7,7 +7,10 @@ use {
                 InitEvent,
                 start_initialization,
             },
-            utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_device_coords},
+            utils::{
+                CoordinatesTransformParams, device_to_video_coords, find_nearest_mapping,
+                screen_to_device_coords, screen_to_video_coords,
+            },
         },
         indicator::Indicator,
         mapping::{MappingConfigEvent, MappingConfigWindow},
@@ -562,10 +565,15 @@ impl SAideApp {
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
-            if let Some((device_x, device_y)) =
-                screen_to_device_coords(pos, &self.coodinates_transform_params())
+            if let Some((video_x, video_y, screen_w, screen_h)) =
+                screen_to_video_coords(pos, &self.player.video_rect(), self.player.rotation())
             {
-                if let Err(e) = mouse_mapper.handle_move_event(device_x, device_y) {
+                // Update ControlSender screen size
+                if let Some(sender) = &self.control_sender {
+                    sender.update_screen_size(screen_w, screen_h);
+                }
+
+                if let Err(e) = mouse_mapper.handle_move_event(video_x, video_y) {
                     error!("Failed to handle mouse move event: {}", e);
                 }
             } else {
@@ -581,12 +589,22 @@ impl SAideApp {
 
             // If dragging and moved outside, send a button release
             if mouse_mapper.get_button_state() != MouseState::Idle
-                && let Some((device_x, device_y)) =
-                    screen_to_device_coords(last_pointer_pos, &self.coodinates_transform_params())
-                && let Err(e) =
-                    mouse_mapper.handle_button_event(MouseButton::Left, false, device_x, device_y)
+                && let Some((video_x, video_y, screen_w, screen_h)) = screen_to_video_coords(
+                    last_pointer_pos,
+                    &self.player.video_rect(),
+                    self.player.rotation(),
+                )
             {
-                error!("Failed to handle mouse button release event: {}", e);
+                // Update ControlSender screen size
+                if let Some(sender) = &self.control_sender {
+                    sender.update_screen_size(screen_w, screen_h);
+                }
+
+                if let Err(e) =
+                    mouse_mapper.handle_button_event(MouseButton::Left, false, video_x, video_y)
+                {
+                    error!("Failed to handle mouse button release event: {}", e);
+                }
             }
 
             None
@@ -609,11 +627,18 @@ impl SAideApp {
             delta, pointer_pos
         );
 
-        let Some((device_x, device_y)) =
-            screen_to_device_coords(&pointer_pos, &self.coodinates_transform_params())
-        else {
+        let Some((video_x, video_y, screen_w, screen_h)) = screen_to_video_coords(
+            &pointer_pos,
+            &self.player.video_rect(),
+            self.player.rotation(),
+        ) else {
             return;
         };
+
+        // Update ControlSender screen size
+        if let Some(sender) = &self.control_sender {
+            sender.update_screen_size(screen_w, screen_h);
+        }
 
         let dir = if delta.y < 0.0 {
             WheelDirection::Up
@@ -621,12 +646,12 @@ impl SAideApp {
             WheelDirection::Down
         };
 
-        if let Err(e) = mouse_mapper.handle_wheel_event(device_x, device_y, &dir) {
+        if let Err(e) = mouse_mapper.handle_wheel_event(video_x, video_y, &dir) {
             error!("Failed to handle wheel event: {}", e);
         } else {
             debug!(
-                "Mouse wheel event at device coords: ({}, {})",
-                device_x, device_y
+                "Mouse wheel event at video coords: ({}, {}) in {}x{}",
+                video_x, video_y, screen_w, screen_h
             );
         }
     }

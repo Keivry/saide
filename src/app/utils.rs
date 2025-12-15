@@ -1,7 +1,7 @@
 /// Utility functions for coordinate transformations and mapping lookups
 use {
     crate::config::mapping::{AdbAction, Key, KeyMapping},
-    eframe::egui::Pos2,
+    eframe::egui::{Pos2, Rect},
     tracing::trace,
 };
 
@@ -265,4 +265,164 @@ pub fn extract_position(action: &AdbAction) -> Option<(u32, u32)> {
         AdbAction::TouchDown { x, y } => Some((*x, *y)),
         _ => None,
     }
+}
+
+/// Transform egui position to video coordinates for scrcpy control channel
+///
+/// Scrcpy 控制通道期望：
+/// - 坐标相对于视频分辨率（不是设备分辨率）
+/// - 不需要考虑设备旋转（服务端会自动处理）
+/// - screenSize = video resolution（当前视频分辨率）
+///
+/// 坐标转换链：
+/// 1. egui 屏幕坐标 → 视频显示区域相对坐标
+/// 2. 反向应用用户旋转 → 视频原始坐标
+///
+/// 返回：(x, y, screenWidth, screenHeight)
+/// - x, y: 视频坐标（相对于视频分辨率）
+/// - screenWidth, screenHeight: 视频原始尺寸（发送给服务端用于验证）
+pub fn screen_to_video_coords(
+    pos: &Pos2,
+    video_rect: &Rect,
+    video_rotation: u32,
+) -> Option<(u32, u32, u16, u16)> {
+    // Step 1: Get relative coordinates in video display rect
+    let rel_x = pos.x - video_rect.left();
+    let rel_y = pos.y - video_rect.top();
+
+    // Check if position is within video rect
+    if rel_x < 0.0 || rel_y < 0.0 {
+        return None;
+    }
+
+    let display_width = video_rect.width();
+    let display_height = video_rect.height();
+
+    if rel_x > display_width || rel_y > display_height {
+        return None;
+    }
+
+    trace!("== Video Coordinate Transform ==");
+    trace!("Screen pos: ({:.1}, {:.1})", pos.x, pos.y);
+    trace!("Video rect: {:?}", video_rect);
+    trace!("Relative pos in display: ({:.1}, {:.1})", rel_x, rel_y);
+    trace!("Video rotation (user manual): {}", video_rotation);
+
+    // Step 2: Inverse apply user rotation to get video original coordinates
+    //
+    // User rotation transforms video original coords to display coords
+    // We need to do the inverse transform
+    //
+    // Note: display_width/height are the dimensions AFTER rotation
+    // Original video dimensions depend on rotation parity
+    let (video_x, video_y, video_w, video_h) = match video_rotation % 4 {
+        // 0 degrees - no rotation
+        // Display: W×H, Original: W×H
+        0 => (rel_x, rel_y, display_width, display_height),
+
+        // 90 degrees clockwise rotation
+        // Display: H×W, Original: W×H
+        // Forward: (x, y) => (H - y, x)
+        // Inverse: (x', y') => (y', W - x')
+        1 => (
+            rel_y,
+            display_width - rel_x,
+            display_height,
+            display_width,
+        ),
+
+        // 180 degrees rotation
+        // Display: W×H, Original: W×H
+        // Forward: (x, y) => (W - x, H - y)
+        // Inverse: (x', y') => (W - x', H - y')
+        2 => (
+            display_width - rel_x,
+            display_height - rel_y,
+            display_width,
+            display_height,
+        ),
+
+        // 270 degrees clockwise rotation (= 90 degrees counter-clockwise)
+        // Display: H×W, Original: W×H
+        // Forward: (x, y) => (y, W - x)
+        // Inverse: (x', y') => (H - y', x')
+        3 => (
+            display_height - rel_y,
+            rel_x,
+            display_height,
+            display_width,
+        ),
+
+        _ => return None,
+    };
+
+    trace!(
+        "Video original coords: ({:.1}, {:.1}) in {}x{}",
+        video_x,
+        video_y,
+        video_w as u32,
+        video_h as u32
+    );
+
+    // Return: (x, y, screenWidth, screenHeight)
+    // These are the exact values that go into ControlMessage::Position
+    Some((
+        video_x as u32,
+        video_y as u32,
+        video_w as u16,
+        video_h as u16,
+    ))
+}
+
+/// Convert device coordinates (from config.toml) to video coordinates
+///
+/// 自定义映射中的坐标是设备坐标，需要转换为视频坐标
+///
+/// 转换链：
+/// 1. 设备坐标（考虑设备旋转） → 设备 portrait 坐标
+/// 2. 缩放（设备分辨率 → 视频分辨率）
+/// 3. 应用 capture_orientation（如果视频本身被旋转捕获）
+pub fn device_to_video_coords(
+    device_x: u32,
+    device_y: u32,
+    device_physical_size: (u32, u32),
+    device_orientation: u32,
+    video_size: (u16, u16),
+) -> (u32, u32, u16, u16) {
+    // Step 1: Convert device coords to portrait orientation
+    let (device_w, device_h) = if device_orientation & 1 == 0 {
+        device_physical_size
+    } else {
+        (device_physical_size.1, device_physical_size.0)
+    };
+
+    let (portrait_x, portrait_y) = match device_orientation % 4 {
+        0 => (device_x, device_y),
+        1 => (device_y, device_w - device_x),
+        2 => (device_w - device_x, device_h - device_y),
+        3 => (device_h - device_y, device_x),
+        _ => (device_x, device_y),
+    };
+
+    // Step 2: Scale to video resolution
+    let scale_x = video_size.0 as f32 / device_physical_size.0 as f32;
+    let scale_y = video_size.1 as f32 / device_physical_size.1 as f32;
+
+    let video_x = (portrait_x as f32 * scale_x) as u32;
+    let video_y = (portrait_y as f32 * scale_y) as u32;
+
+    trace!(
+        "Device→Video: ({}, {}) in {}x{} (orient={}) → ({}, {}) in {}x{}",
+        device_x,
+        device_y,
+        device_w,
+        device_h,
+        device_orientation,
+        video_x,
+        video_y,
+        video_size.0,
+        video_size.1
+    );
+
+    (video_x, video_y, video_size.0, video_size.1)
 }
