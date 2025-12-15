@@ -4,7 +4,7 @@ use {
     super::{AudioDecoder, DecodedAudio},
     anyhow::{Context, Result},
     opus::{Channels, Decoder},
-    tracing::{debug, info},
+    tracing::{debug, info, trace},
 };
 
 /// Native Opus decoder (using libopus directly)
@@ -66,7 +66,7 @@ impl AudioDecoder for OpusNativeDecoder {
                 let total_samples = samples_per_channel * self.channels as usize;
                 output.truncate(total_samples);
 
-                debug!(
+                trace!(
                     "Decoded audio: {} samples per channel, {} total samples",
                     samples_per_channel, total_samples
                 );

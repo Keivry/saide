@@ -5,7 +5,7 @@ use {
         egui_wgpu::{self, CallbackTrait},
     },
     std::sync::Arc,
-    tracing::debug,
+    tracing::trace,
 };
 
 /// Custom wgpu render callback for NV12 frame
@@ -268,7 +268,7 @@ impl Nv12RenderResources {
 
         // Debug: Print data info on first upload
         if needs_rebuild {
-            debug!(
+            trace!(
                 "NV12 texture upload: {}x{} (Y: {}x{}, UV: {}x{})",
                 width,
                 height,

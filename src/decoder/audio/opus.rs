@@ -4,7 +4,7 @@ use {
     super::{AudioDecoder, DecodedAudio},
     anyhow::{Context, Result},
     ffmpeg_next as ffmpeg,
-    tracing::{debug, info},
+    tracing::{debug, info, trace},
 };
 
 /// Opus decoder
@@ -74,7 +74,7 @@ impl AudioDecoder for OpusDecoder {
         match self.decoder.receive_frame(&mut frame) {
             Ok(_) => {
                 let samples = extract_f32_samples(&frame)?;
-                debug!(
+                trace!(
                     "Decoded audio: {} samples, {} channels, format={:?}",
                     samples.len() / self.channels as usize,
                     self.channels,

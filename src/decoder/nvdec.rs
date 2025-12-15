@@ -11,7 +11,7 @@ use {
     },
     ffmpeg_next as ffmpeg,
     std::ptr,
-    tracing::{debug, info, warn},
+    tracing::{debug, info, trace, warn},
 };
 
 pub struct NvdecDecoder {
@@ -144,7 +144,7 @@ impl NvdecDecoder {
                     let height = sw_frame.height();
                     let format = sw_frame.format();
 
-                    debug!(
+                    trace!(
                         "Decoded frame (NVDEC): {}x{} {:?} PTS={:?}",
                         width,
                         height,
@@ -158,7 +158,7 @@ impl NvdecDecoder {
                     let y_linesize = sw_frame.stride(0);
                     let uv_linesize = sw_frame.stride(1);
 
-                    info!(
+                    trace!(
                         "NV12 frame layout: {}x{}, Y linesize={} UV linesize={}",
                         width, height, y_linesize, uv_linesize
                     );
