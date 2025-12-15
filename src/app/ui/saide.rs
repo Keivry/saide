@@ -817,6 +817,7 @@ impl eframe::App for SAideApp {
                 if new_dimensions != old_dimensions && new_dimensions.0 > 0 {
                     let (w, h) = new_dimensions;
                     info!("Video dimensions changed: {:?} -> {:?}", old_dimensions, new_dimensions);
+                    info!("Resizing window to {}x{} + toolbar", w, h);
 
                     // Resize window to match new video dimensions
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
@@ -831,6 +832,9 @@ impl eframe::App for SAideApp {
                     )));
 
                     self.indicator.update_video_resolution((w, h));
+                    
+                    // Force repaint to ensure window update
+                    ctx.request_repaint();
                 }
 
                 // Initialize window on first frame
