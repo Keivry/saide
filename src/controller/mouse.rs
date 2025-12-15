@@ -1,7 +1,7 @@
 use {
     crate::{
-        config::mapping::{AdbAction, MouseButton, WheelDirection},
-        controller::adb::AdbShell,
+        config::mapping::{MouseButton, WheelDirection},
+        controller::control_sender::ControlSender,
     },
     anyhow::Result,
     parking_lot::Mutex,
@@ -36,18 +36,16 @@ pub enum MouseState {
 }
 
 pub struct MouseMapper {
-    adb_shell: AdbShell,
+    sender: ControlSender,
     /// Current mouse state for left button
     left_button_state: Mutex<MouseState>,
 }
 
 impl MouseMapper {
     /// Create a new mouse mapper
-    pub fn new() -> Result<Self> {
-        let adb_shell = AdbShell::new(false);
-        adb_shell.connect()?;
+    pub fn new(sender: ControlSender) -> Result<Self> {
         Ok(Self {
-            adb_shell,
+            sender,
             left_button_state: Mutex::new(MouseState::Idle),
         })
     }
@@ -85,10 +83,7 @@ impl MouseMapper {
                 let elapsed = last_update.elapsed().as_millis();
                 if elapsed >= DRAG_UPDATE_INTERVAL_MS {
                     // Send TouchMove event for drag updates
-                    self.adb_shell.send_input(&AdbAction::TouchMove {
-                        x: current_x,
-                        y: current_y,
-                    })?;
+                    self.sender.send_touch_move(current_x, current_y)?;
                     debug!(
                         "UPDATE: Drag move to ({}, {}) [elapsed={}ms]",
                         current_x, current_y, elapsed
@@ -133,11 +128,11 @@ impl MouseMapper {
                 }
             }
             MouseButton::Right if pressed => {
-                self.adb_shell.send_input(&AdbAction::Back)?;
+                self.sender.send_key_press(4, 0)?; // KEYCODE_BACK
                 debug!("Mouse right button -> Back");
             }
             MouseButton::Middle if pressed => {
-                self.adb_shell.send_input(&AdbAction::Home)?;
+                self.sender.send_key_press(3, 0)?; // KEYCODE_HOME
                 debug!("Mouse middle button -> Home");
             }
             _ => {}
@@ -156,7 +151,7 @@ impl MouseMapper {
         });
 
         // Send TouchDown event immediately
-        self.adb_shell.send_input(&AdbAction::TouchDown { x, y })?;
+        self.sender.send_touch_down(x, y)?;
         trace!("Left button pressed at ({}, {}), sent TouchDown", x, y);
         Ok(())
     }
@@ -190,7 +185,7 @@ impl MouseMapper {
                 );
 
                 // Send TouchUp to complete the touch sequence
-                self.adb_shell.send_input(&AdbAction::TouchUp { x, y })?;
+                self.sender.send_touch_up(x, y)?;
 
                 if distance >= DRAG_THRESHOLD {
                     // Fast drag that didn't trigger Dragging state transition
@@ -218,7 +213,7 @@ impl MouseMapper {
                 ..
             } => {
                 // Dragging ended - send TouchUp to complete the touch sequence
-                self.adb_shell.send_input(&AdbAction::TouchUp { x, y })?;
+                self.sender.send_touch_up(x, y)?;
                 debug!(
                     "ACTION: Drag completed, ended at ({}, {})",
                     current_x, current_y
@@ -226,12 +221,12 @@ impl MouseMapper {
             }
             MouseState::LongPressing { x: lp_x, y: lp_y } => {
                 // Long press event was already sent, send TouchUp to complete
-                self.adb_shell.send_input(&AdbAction::TouchUp { x, y })?;
+                self.sender.send_touch_up(x, y)?;
                 debug!("ACTION: Long press released at ({}, {})", lp_x, lp_y);
             }
             MouseState::Idle => {
                 // Spurious release, but still send TouchUp to be safe
-                self.adb_shell.send_input(&AdbAction::TouchUp { x, y })?;
+                self.sender.send_touch_up(x, y)?;
                 debug!("Spurious left button release at ({}, {})", x, y);
             }
         }
@@ -323,12 +318,11 @@ impl MouseMapper {
 
     /// Handle mouse wheel event
     pub fn handle_wheel_event(&self, x: u32, y: u32, dir: &WheelDirection) -> Result<()> {
-        let action = AdbAction::Scroll {
-            x,
-            y,
-            direction: dir.clone(),
+        let (hscroll, vscroll) = match dir {
+            WheelDirection::Up => (0.0, -5.0),
+            WheelDirection::Down => (0.0, 5.0),
         };
-        self.adb_shell.send_input(&action)?;
+        self.sender.send_scroll(x, y, hscroll, vscroll)?;
 
         debug!("Mouse wheel {:?}", dir);
 

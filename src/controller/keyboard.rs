@@ -1,7 +1,7 @@
 use {
     crate::{
-        config::mapping::{AdbAction, Mappings, Modifiers, Profile},
-        controller::adb::AdbShell,
+        config::mapping::{Mappings, Modifiers, Profile},
+        controller::control_sender::ControlSender,
     },
     anyhow::{Result, anyhow},
     arc_swap::ArcSwap,
@@ -102,23 +102,17 @@ lazy_static::lazy_static! {
 /// Keyboard mapping state
 pub struct KeyboardMapper {
     config: Arc<Mappings>,
-
-    adb_shell: AdbShell,
-
+    sender: ControlSender,
     avail_profiles: RwLock<Vec<Arc<Profile>>>,
     active_profile: ArcSwap<Option<Arc<Profile>>>,
 }
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(config: Arc<Mappings>) -> Result<Self> {
-        let adb = AdbShell::new(false);
-        adb.connect()?;
+    pub fn new(config: Arc<Mappings>, sender: ControlSender) -> Result<Self> {
         Ok(Self {
             config,
-
-            adb_shell: adb,
-
+            sender,
             avail_profiles: RwLock::new(Vec::new()),
             active_profile: ArcSwap::from_pointee(None),
         })
@@ -188,10 +182,9 @@ impl KeyboardMapper {
             return Ok(false);
         }
 
-        if let Some(keycode) = EGUI_TO_ANDROID_KEY.get(key) {
-            trace!("Handling standard key event: {:?}", key);
-            self.adb_shell
-                .send_input(&AdbAction::Key { keycode: *keycode })?;
+        if let Some(&keycode) = EGUI_TO_ANDROID_KEY.get(key) {
+            trace!("Handling standard key event: {:?} -> keycode {}", key, keycode);
+            self.sender.send_key_press(keycode as u32, 0)?;
             return Ok(true);
         }
 
@@ -200,12 +193,10 @@ impl KeyboardMapper {
 
     /// Handle shifted key event, returns true if handled
     pub fn handle_shifted_key_event(&self, key: &Key) -> Result<bool> {
-        if let Some(keycode) = EGUI_TO_ANDROID_SHIFT_KEY.get(key) {
-            trace!("Handling shifted key event: {:?}", key);
-            self.adb_shell.send_input(&AdbAction::KeyCombo {
-                modifiers: Modifiers::SHIFT,
-                keycode: *keycode,
-            })?;
+        if let Some(&keycode) = EGUI_TO_ANDROID_SHIFT_KEY.get(key) {
+            trace!("Handling shifted key event: {:?} -> keycode {}", key, keycode);
+            // SHIFT metastate = 1 (AMETA_SHIFT_ON)
+            self.sender.send_key_press(keycode as u32, 1)?;
             return Ok(true);
         }
         Ok(false)
@@ -223,33 +214,115 @@ impl KeyboardMapper {
             .fold(text.to_owned(), |acc, (k, v)| acc.replace(k, v));
 
         trace!("Handling text input event: {}", text);
-        self.adb_shell.send_input(&AdbAction::Text { text })?;
+        self.sender.send_text(&text)?;
         Ok(true)
     }
 
     /// Handle key combo event, returns true if handled
     pub fn handle_keycombo_event(&self, modifiers: Modifiers, key: &Key) -> Result<bool> {
-        if let Some(keycode) = EGUI_TO_ANDROID_KEY.get(key) {
+        if let Some(&keycode) = EGUI_TO_ANDROID_KEY.get(key) {
             trace!("Handling key combo event: {:?} + {:?}", modifiers, key);
-            self.adb_shell.send_input(&AdbAction::KeyCombo {
-                modifiers,
-                keycode: *keycode,
-            })?;
+            
+            // Convert modifiers to Android metastate
+            // AMETA_SHIFT_ON = 1, AMETA_ALT_ON = 2, AMETA_CTRL_ON = 4096, AMETA_META_ON = 65536
+            let mut metastate = 0u32;
+            if modifiers.shift {
+                metastate |= 1;
+            }
+            if modifiers.alt {
+                metastate |= 2;
+            }
+            if modifiers.ctrl || modifiers.command {
+                metastate |= 4096;
+            }
+            
+            self.sender.send_key_press(keycode as u32, metastate)?;
             return Ok(true);
         }
         Ok(false)
     }
 
-    /// Handle custom keyboard event, returns true if handled
+    /// Handle custom keyboard event using legacy ADB actions
+    /// 
+    /// Note: This still uses the legacy AdbAction format from config.toml
+    /// TODO: Convert custom mappings to use ControlMessage directly
     pub fn handle_custom_keymapping_event(&self, key: &Key) -> Result<bool> {
         if let Some(profile) = self.active_profile.load().as_ref()
             && let Some(action) = profile.get_mapping(key)
         {
-            trace!("Handling custom key mapping event: {:?}", key);
-            self.adb_shell.send_input(&action)?;
+            trace!("Handling custom key mapping event: {:?} -> {:?}", key, action);
+            self.send_adb_action(&action)?;
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// Convert AdbAction to control messages (temporary bridge)
+    fn send_adb_action(&self, action: &crate::config::mapping::AdbAction) -> Result<()> {
+        use crate::config::mapping::AdbAction;
+
+        match action {
+            AdbAction::Key { keycode } => {
+                self.sender.send_key_press(*keycode as u32, 0)?;
+            }
+            AdbAction::KeyCombo { modifiers, keycode } => {
+                let mut metastate = 0u32;
+                if modifiers.shift {
+                    metastate |= 1;
+                }
+                if modifiers.alt {
+                    metastate |= 2;
+                }
+                if modifiers.ctrl || modifiers.command {
+                    metastate |= 4096;
+                }
+                self.sender.send_key_press(*keycode as u32, metastate)?;
+            }
+            AdbAction::Text { text } => {
+                self.sender.send_text(text)?;
+            }
+            AdbAction::Back => {
+                self.sender.send_key_press(4, 0)?; // KEYCODE_BACK
+            }
+            AdbAction::Home => {
+                self.sender.send_key_press(3, 0)?; // KEYCODE_HOME
+            }
+            AdbAction::Menu => {
+                self.sender.send_key_press(82, 0)?; // KEYCODE_MENU
+            }
+            AdbAction::Power => {
+                self.sender.send_key_press(26, 0)?; // KEYCODE_POWER
+            }
+            AdbAction::Tap { x, y } => {
+                self.sender.send_touch_down(*x, *y)?;
+                self.sender.send_touch_up(*x, *y)?;
+            }
+            AdbAction::TouchDown { x, y } => {
+                self.sender.send_touch_down(*x, *y)?;
+            }
+            AdbAction::TouchMove { x, y } => {
+                self.sender.send_touch_move(*x, *y)?;
+            }
+            AdbAction::TouchUp { x, y } => {
+                self.sender.send_touch_up(*x, *y)?;
+            }
+            AdbAction::Scroll { x, y, direction } => {
+                use crate::config::mapping::WheelDirection;
+                let (h, v) = match direction {
+                    WheelDirection::Up => (0.0, -5.0),
+                    WheelDirection::Down => (0.0, 5.0),
+                };
+                self.sender.send_scroll(*x, *y, h, v)?;
+            }
+            AdbAction::Swipe { x1, y1, x2, y2, .. } => {
+                // Simulate swipe with touch down + move + up
+                self.sender.send_touch_down(*x1, *y1)?;
+                self.sender.send_touch_move(*x2, *y2)?;
+                self.sender.send_touch_up(*x2, *y2)?;
+            }
+            AdbAction::Ignore => {}
+        }
+        Ok(())
     }
 
     /// Get list of available profiles

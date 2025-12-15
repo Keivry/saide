@@ -1,15 +1,21 @@
 use {
     crate::{
         config::ConfigManager,
-        controller::{adb::AdbShell, keyboard::KeyboardMapper, mouse::MouseMapper},
+        controller::{
+            adb::AdbShell, control_sender::ControlSender, keyboard::KeyboardMapper,
+            mouse::MouseMapper,
+        },
+        scrcpy::connection::ScrcpyConnection,
     },
+    anyhow::Context,
     crossbeam_channel::{Receiver, Sender, bounded},
     std::{
+        net::TcpStream,
         process::Command,
         thread,
         time::{Duration, Instant},
     },
-    tracing::{debug, error},
+    tracing::{debug, error, info},
 };
 
 pub const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
@@ -25,12 +31,18 @@ pub enum DeviceMonitorEvent {
 pub const INIT_RESULT_CHANNEL_CAPACITY: usize = 5;
 
 /// Initialization event
-#[allow(dead_code)] // Keep for compatibility during transition
 pub enum InitEvent {
-    #[deprecated(note = "External scrcpy no longer used")]
-    Scrcpy(()),
-    KeyboardMapper(Option<KeyboardMapper>),
-    MouseMapper(Option<MouseMapper>),
+    /// ScrcpyConnection established with streams
+    ConnectionReady {
+        connection: ScrcpyConnection,
+        control_sender: ControlSender,
+        video_stream: TcpStream,
+        audio_stream: Option<TcpStream>,
+        video_resolution: (u32, u32),
+        device_name: Option<String>,
+    },
+    KeyboardMapper(KeyboardMapper),
+    MouseMapper(MouseMapper),
     DeviceMonitor(Receiver<DeviceMonitorEvent>),
     DeviceId(String),
     PhysicalSize((u32, u32)),
@@ -117,33 +129,129 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         Ok(())
     });
 
-    let kbd_config = config_manager.config();
-    let kbd_tx = tx.clone();
+    // ScrcpyConnection initialization (async - moved to separate thread)
+    // This will create mappers AFTER connection is established
+    let conn_config = config_manager.config();
+    let conn_tx = tx.clone();
     thread::spawn(move || -> Result<(), anyhow::Error> {
-        // Initialize keyboard mapper
-        let keyboard_mapper = kbd_config
-            .general
-            .keyboard_enabled
-            .then_some(KeyboardMapper::new(kbd_config.mappings.clone()))
-            .transpose()?;
-        debug!("Keyboard mapper initialized");
+        info!("Establishing scrcpy connection...");
 
-        kbd_tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
-        Ok(())
-    });
+        // Wait for device to be ready
+        thread::sleep(Duration::from_millis(500));
 
-    let mouse_config = config_manager.config();
-    let mouse_tx = tx.clone();
-    thread::spawn(move || -> Result<(), anyhow::Error> {
-        // Initialize mouse mapper
-        let mouse_mapper = mouse_config
-            .general
-            .mouse_enabled
-            .then_some(MouseMapper::new())
-            .transpose()?;
-        debug!("Mouse mapper initialized");
+        // Get device serial
+        let serial = AdbShell::get_device_id()?;
+        debug!("Connecting to device: {}", serial);
 
-        mouse_tx.send(InitEvent::MouseMapper(mouse_mapper))?;
+        // Establish ScrcpyConnection (blocking)
+        let runtime = tokio::runtime::Runtime::new()?;
+        let mut connection = runtime.block_on(async {
+            use crate::scrcpy::server::ServerParams;
+
+            let server_jar_path = "3rd-party/scrcpy-server-v3.3.3";
+
+            // Create server params from config
+            let mut params = ServerParams::for_device(&serial)?;
+
+            // Apply config settings
+            let bit_rate = {
+                let rate_str = &conn_config.scrcpy.video.bit_rate;
+                let multiplier = if rate_str.ends_with('M') || rate_str.ends_with('m') {
+                    1_000_000
+                } else if rate_str.ends_with('K') || rate_str.ends_with('k') {
+                    1_000
+                } else {
+                    1
+                };
+                let num_str = rate_str.trim_end_matches(|c: char| !c.is_ascii_digit());
+                num_str.parse::<u32>().unwrap_or(8) * multiplier
+            };
+
+            params.video = true;
+            params.video_codec = conn_config.scrcpy.video.codec.clone();
+            params.video_bit_rate = bit_rate;
+            params.max_size = conn_config.scrcpy.video.max_size as u16;
+            params.max_fps = conn_config.scrcpy.video.max_fps as u16;
+            params.audio = conn_config.scrcpy.audio.enabled;
+            params.audio_codec = conn_config.scrcpy.audio.codec.clone();
+            params.audio_source = conn_config.scrcpy.audio.source.clone();
+            params.control = true;
+            params.send_device_meta = true;
+            params.send_codec_meta = true;
+            params.send_frame_meta = true;
+
+            ScrcpyConnection::connect(&serial, server_jar_path, params)
+                .await
+                .map_err(|e| {
+                    error!("Failed to establish scrcpy connection: {}", e);
+                    e
+                })
+        })?;
+
+        info!("ScrcpyConnection established successfully");
+
+        // Extract streams (but keep connection alive)
+        let video_stream = connection
+            .video_stream
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Video stream not available"))?;
+        let audio_stream = connection.audio_stream.take();
+        let control_stream = connection
+            .control_stream
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Control stream not available"))?;
+        let video_resolution = connection
+            .video_resolution
+            .ok_or_else(|| anyhow::anyhow!("Video resolution not available"))?;
+        let device_name = connection.device_name.clone();
+
+        // Create ControlSender with cloned stream
+        // We need to clone the TcpStream to keep both in ControlSender and return original
+        let control_stream_clone = control_stream
+            .try_clone()
+            .context("Failed to clone control stream")?;
+        
+        let control_sender = ControlSender::new(
+            control_stream_clone,
+            video_resolution.0 as u16,
+            video_resolution.1 as u16,
+        );
+
+        info!(
+            "ControlSender created with resolution {}x{}",
+            video_resolution.0, video_resolution.1
+        );
+
+        // Put the original control_stream back into connection to keep it alive
+        connection.control_stream = Some(control_stream);
+
+        // Send connection ready event (with connection to keep alive)
+        conn_tx.send(InitEvent::ConnectionReady {
+            connection,
+            control_sender: control_sender.clone(),
+            video_stream,
+            audio_stream,
+            video_resolution,
+            device_name,
+        })?;
+
+        // Now create keyboard mapper (if enabled)
+        if conn_config.general.keyboard_enabled {
+            let keyboard_mapper = KeyboardMapper::new(
+                conn_config.mappings.clone(),
+                control_sender.clone(),
+            )?;
+            debug!("Keyboard mapper initialized with ControlSender");
+            conn_tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
+        }
+
+        // Create mouse mapper (if enabled)
+        if conn_config.general.mouse_enabled {
+            let mouse_mapper = MouseMapper::new(control_sender.clone())?;
+            debug!("Mouse mapper initialized with ControlSender");
+            conn_tx.send(InitEvent::MouseMapper(mouse_mapper))?;
+        }
+
         Ok(())
     });
 }

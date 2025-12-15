@@ -136,7 +136,8 @@ impl StreamPlayer {
         }
     }
 
-    /// Start streaming from device
+    /// Start streaming from device (legacy method for examples)
+    #[allow(dead_code)]
     pub fn start(&mut self, serial: String, config: ScrcpyConfig) {
         info!("Starting stream for device: {}", serial);
         self.state = PlayerState::Connecting;
@@ -145,6 +146,36 @@ impl StreamPlayer {
 
         self.stream_thread = Some(thread::spawn(move || {
             if let Err(e) = stream_worker(serial, config, event_tx.clone()) {
+                error!("Stream worker error: {}", e);
+                let _ = event_tx.send(PlayerEvent::Failed(format!("{}", e)));
+            }
+        }));
+    }
+
+    /// Start streaming with already established streams (new method)
+    pub fn start_with_streams(
+        &mut self,
+        video_stream: std::net::TcpStream,
+        audio_stream: Option<std::net::TcpStream>,
+        video_resolution: (u32, u32),
+        config: ScrcpyConfig,
+    ) {
+        info!(
+            "Starting stream with provided connections: {}x{}",
+            video_resolution.0, video_resolution.1
+        );
+        self.state = PlayerState::Connecting;
+
+        let event_tx = self.event_tx.clone();
+
+        self.stream_thread = Some(thread::spawn(move || {
+            if let Err(e) = stream_worker_with_streams(
+                video_stream,
+                audio_stream,
+                video_resolution,
+                config,
+                event_tx.clone(),
+            ) {
                 error!("Stream worker error: {}", e);
                 let _ = event_tx.send(PlayerEvent::Failed(format!("{}", e)));
             }
@@ -335,6 +366,191 @@ impl Drop for StreamPlayer {
 }
 
 /// Stream worker thread
+/// Worker function that uses already-established streams (new implementation)
+fn stream_worker_with_streams(
+    mut video_stream: std::net::TcpStream,
+    audio_stream: Option<std::net::TcpStream>,
+    video_resolution: (u32, u32),
+    _config: ScrcpyConfig,
+    event_tx: Sender<PlayerEvent>,
+) -> Result<()> {
+    let (width, height) = video_resolution;
+    info!("Video resolution: {}x{}", width, height);
+
+    // Setup channels
+    let (frame_tx, frame_rx) = bounded(FRAME_BUFFER_SIZE);
+    let (stats_tx, stats_rx) = bounded(STATS_BUFFER_SIZE);
+
+    // Notify ready
+    event_tx.send(PlayerEvent::Ready {
+        frame_rx,
+        stats_rx,
+        width,
+        height,
+    })?;
+
+    // Initialize decoders
+    let mut video_decoder = AutoDecoder::new(width, height)?;
+    let mut audio_decoder = OpusDecoder::new(48000, 2)?;
+    let audio_player = AudioPlayer::new(48000, 2)?;
+
+    // Track last resolution for change detection
+    let mut last_resolution = (width, height);
+
+    info!(
+        "Decoders initialized: {} + Opus",
+        video_decoder.decoder_type()
+    );
+
+    // Shared state
+    let av_sync = Arc::new(Mutex::new(AVSync::new(20)));
+    let stats = Arc::new(Mutex::new(StreamStats::default()));
+
+    // Spawn audio thread (if audio stream available)
+    let _audio_thread = if let Some(mut audio_stream) = audio_stream {
+        let stats_audio = stats.clone();
+        Some(thread::spawn(move || {
+            match (|| -> Result<()> {
+                loop {
+                    let mut header = [0u8; 12];
+                    audio_stream.read_exact(&mut header)?;
+                    let packet_size = u32::from_be_bytes([
+                        header[8], header[9], header[10], header[11],
+                    ]) as usize;
+                    let pts = i64::from_be_bytes([
+                        header[0], header[1], header[2], header[3], header[4], header[5],
+                        header[6], header[7],
+                    ]);
+
+                    let mut payload = vec![0u8; packet_size];
+                    audio_stream.read_exact(&mut payload)?;
+
+                    {
+                        let mut s = stats_audio.lock().unwrap();
+                        s.audio_frames += 1;
+                        s.last_audio_pts = pts;
+                    }
+
+                    if let Ok(Some(decoded)) = audio_decoder.decode(&payload, pts) {
+                        let _ = audio_player.play(&decoded);
+                    }
+                }
+            })() {
+                Ok(_) => {}
+                Err(e) => debug!("Audio thread terminated: {}", e),
+            }
+        }))
+    } else {
+        None
+    };
+
+    // Video decode loop (main thread)
+    debug!("Starting video decode loop...");
+    let decode_result = (|| -> Result<()> {
+        loop {
+            use crate::scrcpy::protocol::video::VideoPacket;
+            let video_packet = VideoPacket::read_from(&mut video_stream)?;
+            let pts = video_packet.pts_us as i64;
+
+            // Check for resolution change in keyframes (SPS embedded)
+            if video_packet.is_keyframe {
+                use crate::decoder::extract_resolution_from_stream;
+
+                if let Some((width_sps, height_sps)) =
+                    extract_resolution_from_stream(&video_packet.data)
+                {
+                    let new_res = (width_sps, height_sps);
+                    if new_res != last_resolution {
+                        info!(
+                            "Resolution change detected: {}x{} -> {}x{}",
+                            last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                        );
+
+                        // Recreate decoder with new resolution
+                        match AutoDecoder::new(new_res.0, new_res.1) {
+                            Ok(new_decoder) => {
+                                video_decoder = new_decoder;
+                                last_resolution = new_res;
+                                info!(
+                                    "Decoder recreated: {}",
+                                    video_decoder.decoder_type()
+                                );
+
+                                // Notify UI about resolution change
+                                let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                                    width: new_res.0,
+                                    height: new_res.1,
+                                });
+                            }
+                            Err(e) => {
+                                error!("Failed to recreate decoder: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Decode frame
+            let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
+                Ok(frame) => frame,
+                Err(e) => {
+                    // During shutdown, CUDA context may be invalid - don't spam logs
+                    trace!("Decode error (likely during shutdown): {}", e);
+                    continue;
+                }
+            };
+
+            if let Some(frame) = frame_opt {
+                let current_stats = {
+                    let mut s = stats.lock().unwrap();
+                    s.video_frames += 1;
+                    s.last_video_pts = frame.pts;
+                    *s
+                };
+
+                // Check sync and update stats
+                let should_drop = {
+                    let sync = av_sync.lock().unwrap();
+                    sync.should_drop_video(frame.pts)
+                };
+
+                if should_drop {
+                    let mut s = stats.lock().unwrap();
+                    s.dropped_frames += 1;
+                    continue;
+                }
+
+                // Send frame - if channel is closed, receiver dropped, exit gracefully
+                if frame_tx.try_send(Arc::new(frame)).is_err() {
+                    if frame_tx.is_full() {
+                        let mut s = stats.lock().unwrap();
+                        s.dropped_frames += 1;
+                    } else {
+                        // Channel disconnected, exit gracefully
+                        debug!("Frame channel disconnected, stopping decode loop");
+                        return Ok(());
+                    }
+                }
+
+                // Send stats periodically (every 30 frames to reduce overhead)
+                if current_stats.video_frames % 30 == 0 {
+                    let _ = stats_tx.try_send(current_stats);
+                }
+            }
+        }
+    })();
+
+    match decode_result {
+        Ok(_) => info!("Video decode loop completed normally"),
+        Err(e) => error!("Video decode error: {}", e),
+    }
+
+    Ok(())
+}
+
+/// Worker function that establishes connection internally (legacy for examples)
+#[allow(dead_code)]
 fn stream_worker(
     serial: String,
     config: ScrcpyConfig,

@@ -57,6 +57,12 @@ pub struct SAideApp {
     /// Configuration manager
     config_manager: ConfigManager,
 
+    /// ScrcpyConnection (kept alive to prevent server shutdown)
+    connection: Option<crate::scrcpy::connection::ScrcpyConnection>,
+
+    /// Control sender (for sending input commands to device)
+    control_sender: Option<crate::controller::control_sender::ControlSender>,
+
     /// Mouse input mapper
     mouse_mapper: Option<MouseMapper>,
 
@@ -127,6 +133,10 @@ impl SAideApp {
 
             config_manager,
 
+            connection: None,
+
+            control_sender: None,
+
             mouse_mapper: None,
 
             keyboard_mapper: None,
@@ -184,26 +194,46 @@ impl SAideApp {
     fn check_init_stage(&mut self, _ctx: &egui::Context) {
         if let Some(rx) = &self.init_rx {
             while let Ok(result) = rx.try_recv() {
-                #[allow(deprecated)] // Handle legacy InitEvent::Scrcpy during transition
                 match result {
-                    InitEvent::Scrcpy(_) => {
-                        // Scrcpy no longer needed (using internal implementation)
-                        debug!("Ignoring legacy Scrcpy init event");
+                    InitEvent::ConnectionReady {
+                        connection,
+                        control_sender,
+                        video_stream,
+                        audio_stream,
+                        video_resolution,
+                        device_name,
+                    } => {
+                        info!(
+                            "ScrcpyConnection ready: {}x{}, device: {:?}",
+                            video_resolution.0, video_resolution.1, device_name
+                        );
+
+                        // Save connection (to keep it alive and prevent server shutdown)
+                        self.connection = Some(connection);
+
+                        // Save control sender
+                        self.control_sender = Some(control_sender);
+
+                        // Start player with streams
+                        let config = self.config();
+                        self.player.start_with_streams(
+                            video_stream,
+                            audio_stream,
+                            video_resolution,
+                            (*config.scrcpy).clone(),
+                        );
                     }
                     InitEvent::KeyboardMapper(keyboard_mapper) => {
-                        self.keyboard_mapper = keyboard_mapper;
+                        self.keyboard_mapper = Some(keyboard_mapper);
                     }
                     InitEvent::MouseMapper(mouse_mapper) => {
-                        self.mouse_mapper = mouse_mapper;
+                        self.mouse_mapper = Some(mouse_mapper);
                     }
                     InitEvent::DeviceMonitor(_device_monitor_rx) => {
                         self.device_monitor_rx = Some(_device_monitor_rx);
                     }
                     InitEvent::DeviceId(device_id) => {
-                        self.device_id = Some(device_id.clone());
-                        // Start streaming when device ID is available
-                        let config = self.config();
-                        self.player.start(device_id, (*config.scrcpy).clone());
+                        self.device_id = Some(device_id);
                     }
                     InitEvent::PhysicalSize(size) => self.device_physical_size = size,
                     InitEvent::Error(e) => {
