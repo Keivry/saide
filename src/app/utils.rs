@@ -16,17 +16,20 @@ pub struct CoordinatesTransformParams {
 /// Transform egui position to device logical coordinates for ADB input
 ///
 /// Coordinate transformation chain:
-/// 1. egui screen coords -> video display coords (considering user rotation)
-/// 2. Inverse apply user rotation -> video original coords (scrcpy fixed output)
-/// 3. Transform from video orientation to device current orientation -> ADB logical coords
+/// 1. egui screen coords -> video display coords (considering user manual rotation)
+/// 2. Inverse apply user rotation -> video original coords
+/// 3. Scale to device size -> ADB logical coords
 ///
-/// Note: ADB automatically handles the mapping from logical coords to physical touch coords,
-/// so we only need to provide coords relative to the device's current display orientation.
+/// Note: 
+/// - scrcpy video orientation follows device rotation (not fixed!)
+/// - When device rotates, video resolution changes to match
+/// - So video coords = device current coords (just need scaling)
+/// - ADB expects coords relative to device's current display orientation
 pub fn screen_to_device_coords(
     pos: &egui::Pos2,
     trans_params: &CoordinatesTransformParams,
 ) -> Option<(u32, u32)> {
-    let (video_rect, video_rotation, device_physical_size, device_orientation, capture_orientation) = (
+    let (video_rect, video_rotation, device_physical_size, device_orientation, _capture_orientation) = (
         &trans_params.video_rect,
         trans_params.video_rotation,
         trans_params.device_physical_size,
@@ -83,23 +86,18 @@ pub fn screen_to_device_coords(
         "Video original coords: ({:.1}, {:.1}) in {}x{}",
         video_x, video_y, video_w, video_h
     );
-    debug!("Video rotation: {}", video_rotation);
+    debug!("Video rotation: {} (user manual)", video_rotation);
     debug!("Device orientation: {}", device_orientation);
     debug!("Device physical size: {:?}", device_physical_size);
 
-    // Step 3: Transform from video orientation to device current orientation
+    // Step 3: Scale to device size
     //
-    // Video orientation: natural orientation + counter-clockwise capture_orientation
-    // Device current orientation: natural orientation + clockwise orientation
-    // Total rotation needed: clockwise (capture_orientation + orientation)
-    //
-    // This accounts for:
-    // - Video is captured with fixed orientation (capture_orientation counter-clockwise)
-    // - Device may be rotated to different orientation (orientation clockwise)
-    // - ADB expects coords relative to device's current display orientation
-    let total_rotation = (capture_orientation + device_orientation) % 4;
-    debug!("Total rotation: {}", total_rotation);
-
+    // Important: scrcpy video resolution follows device orientation!
+    // - Device orientation 0 (portrait): video is 540x1200
+    // - Device orientation 1 (landscape): video is 1200x540
+    // So video coords are already in device's current orientation
+    // We only need to scale from video size to device size
+    
     // Calculate device logical size at current orientation
     let (device_w, device_h) = if device_orientation & 1 == 0 {
         (device_physical_size.0 as f32, device_physical_size.1 as f32)
@@ -107,34 +105,10 @@ pub fn screen_to_device_coords(
         (device_physical_size.1 as f32, device_physical_size.0 as f32)
     };
 
-    // Apply rotation and scaling
-    let (device_x, device_y) = match total_rotation {
-        // 0 degrees - direct scale
-        0 => {
-            let scale_x = device_w / video_w;
-            let scale_y = device_h / video_h;
-            (video_x * scale_x, video_y * scale_y)
-        }
-        // 90 degrees clockwise - transpose and flip X
-        1 => {
-            let scale_x = device_w / video_h;
-            let scale_y = device_h / video_w;
-            (video_y * scale_x, device_h - video_x * scale_y)
-        }
-        // 180 degrees - flip both axes
-        2 => {
-            let scale_x = device_w / video_w;
-            let scale_y = device_h / video_h;
-            (device_w - video_x * scale_x, device_h - video_y * scale_y)
-        }
-        // 270 degrees clockwise - transpose and flip Y
-        3 => {
-            let scale_x = device_w / video_h;
-            let scale_y = device_h / video_w;
-            (device_w - video_y * scale_x, video_x * scale_y)
-        }
-        _ => return None,
-    };
+    // Simple scaling (video orientation = device orientation)
+    let scale_x = device_w / video_w;
+    let scale_y = device_h / video_h;
+    let (device_x, device_y) = (video_x * scale_x, video_y * scale_y);
 
     debug!(
         "Device logical size: {}x{}",
