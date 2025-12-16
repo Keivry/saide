@@ -256,11 +256,26 @@ impl StreamPlayer {
         self.stats_rx = None;
         self.current_frame = None;
 
-        // Wait for thread to finish (with timeout)
+        // Wait for thread to finish (with timeout using spawn)
         if let Some(thread) = self.stream_thread.take() {
             trace!("Waiting for stream thread to finish...");
-            let _ = thread.join();
-            trace!("Stream thread finished");
+
+            // Spawn a detached thread to join (avoid blocking forever)
+            std::thread::spawn(move || {
+                // Try to join with timeout simulation
+                let start = std::time::Instant::now();
+                while !thread.is_finished() && start.elapsed().as_secs() < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+
+                if !thread.is_finished() {
+                    warn!("Stream thread did not finish within timeout, abandoning join");
+                    // Thread will be detached and cleaned up by OS
+                } else {
+                    let _ = thread.join();
+                    trace!("Stream thread finished");
+                }
+            });
         }
     }
 

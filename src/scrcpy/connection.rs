@@ -319,17 +319,25 @@ impl ScrcpyConnection {
         self.audio_stream.take();
         self.control_stream.take();
 
-        // Step 3: Wait for server process to exit gracefully
+        // Step 3: Wait for server process to exit gracefully (with timeout)
         if let Some(mut process) = self.server_process.take() {
-            // Give server 1 second to exit gracefully
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            // Try to wait with timeout (non-blocking)
+            for _ in 0..5 {
+                // 5 * 200ms = 1 second max
+                if process.try_wait().ok().flatten().is_some() {
+                    debug!("Server process exited gracefully");
+                    return Ok(());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
 
             // Force kill if still running
-            if process.try_wait().ok().flatten().is_none() {
-                debug!("Force killing server process");
-                process.kill().ok();
-            }
-            process.wait().ok();
+            debug!("Force killing server process (timeout)");
+            process.kill().ok();
+
+            // Final wait with very short timeout
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let _ = process.try_wait();
         }
 
         info!("Connection closed");
@@ -436,6 +444,18 @@ fn accept_connection(listener: &TcpListener, channel: &str) -> Result<TcpStream>
         .context("Failed to set TCP_NODELAY")?;
 
     debug!("{} connection: TCP_NODELAY enabled", channel);
+
+    // 🛡️ CRITICAL: Set read timeout to detect USB disconnection
+    // Without timeout, read() blocks forever when USB is unplugged
+    let timeout = match channel {
+        "control" => std::time::Duration::from_secs(2), // Faster detection for control
+        _ => std::time::Duration::from_secs(5),         // Video/Audio can tolerate more delay
+    };
+    stream
+        .set_read_timeout(Some(timeout))
+        .with_context(|| format!("Failed to set {} stream read timeout", channel))?;
+
+    debug!("{} connection: read timeout set to {:?}", channel, timeout);
 
     // NOTE: In adb reverse mode (default), the server does NOT send dummy byte
     // Dummy byte is only sent in tunnel_forward mode (when server listens)
