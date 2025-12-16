@@ -866,13 +866,15 @@ impl SAideApp {
                 ToolbarEvent::ToggleScreenPower => {
                     debug!("Toggling screen power from toolbar");
                     if let Some(sender) = &self.control_sender {
-                        // Send POWER keycode to toggle screen
-                        // This is like pressing the physical power button
-                        // Will turn on if off, turn off if on
-                        if let Err(e) = sender.send_toggle_screen() {
-                            error!("Failed to toggle screen: {}", e);
+                        // Get the target state from toolbar
+                        let screen_on = self.toolbar.get_screen_state();
+
+                        // Send SetDisplayPower command
+                        // This only turns off the backlight, not lock the device
+                        if let Err(e) = sender.send_set_display_power(screen_on) {
+                            error!("Failed to set screen power: {}", e);
                         } else {
-                            info!("Screen power toggled (like pressing power button)");
+                            info!("Screen backlight: {}", if screen_on { "ON" } else { "OFF" });
                         }
                     }
                 }

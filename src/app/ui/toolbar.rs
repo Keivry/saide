@@ -24,7 +24,7 @@ struct ToolbarButton {
 }
 
 lazy_static! {
-    static ref TOOLBAR_BUTTONS: [ToolbarButton; 3] = [
+    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 2] = [
         ToolbarButton {
             lable: "⟳",
             tooltip: "Rotate Video",
@@ -35,28 +35,33 @@ lazy_static! {
             tooltip: "Configure Mappings",
             event: ToolbarEvent::ConfigureMappings,
         },
-        ToolbarButton {
-            lable: "💡",
-            tooltip: "Toggle Screen Power",
-            event: ToolbarEvent::ToggleScreenPower,
-        },
     ];
 }
 
-pub struct Toolbar {}
+pub struct Toolbar {
+    screen_is_on: bool, // Track screen power state
+}
 
 impl Default for Toolbar {
     fn default() -> Self { Self::new() }
 }
 
 impl Toolbar {
-    pub fn new() -> Self { Self {} }
+    pub fn new() -> Self {
+        Self {
+            screen_is_on: true, // Default: screen is on
+        }
+    }
+
+    pub fn get_screen_state(&self) -> bool { self.screen_is_on }
+
+    pub fn toggle_screen_state(&mut self) { self.screen_is_on = !self.screen_is_on; }
 
     pub fn width() -> f32 { TOOLBAR_WIDTH }
 
     /// Draw the toolbar, return the event if any button is clicked
-    pub fn draw(&self, ui: &mut egui::Ui) -> ToolbarEvent {
-        let count = TOOLBAR_BUTTONS.len();
+    pub fn draw(&mut self, ui: &mut egui::Ui) -> ToolbarEvent {
+        let count = TOOLBAR_BUTTONS_BASE.len() + 1; // +1 for dynamic screen power button
         if count == 0 {
             return ToolbarEvent::None;
         }
@@ -74,10 +79,35 @@ impl Toolbar {
             ui.add_space(top_padding);
 
             ui.add_space(TOOLBAR_BTN_SPACING);
-            for btn in TOOLBAR_BUTTONS.iter() {
+
+            // Draw base buttons
+            for btn in TOOLBAR_BUTTONS_BASE.iter() {
                 if self.draw_button(btn, ui) {
                     result = btn.event;
                 }
+            }
+
+            // Draw dynamic screen power button
+            let (icon, tooltip) = if self.screen_is_on {
+                ("💡", "Turn Off Screen (backlight only)")
+            } else {
+                ("🌙", "Turn On Screen")
+            };
+
+            if ui
+                .add_sized(
+                    TOOLBAR_BTN_SIZE,
+                    Button::new(
+                        RichText::new(icon)
+                            .color(TOOLBAR_FG_COLOR)
+                            .size(TOOLBAR_FONT_SIZE),
+                    ),
+                )
+                .on_hover_text(tooltip)
+                .clicked()
+            {
+                self.screen_is_on = !self.screen_is_on;
+                result = ToolbarEvent::ToggleScreenPower;
             }
         });
 

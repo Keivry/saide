@@ -99,19 +99,12 @@ impl ControlSender {
         Ok(())
     }
 
-    /// Set display power (turn screen on/off)
+    /// Set display power (turn screen backlight on/off)
+    /// Note: This only controls the backlight (POWER_MODE_OFF/NORMAL), NOT lock the device
+    /// The device remains unlocked and can still mirror/control
     pub fn send_set_display_power(&self, on: bool) -> Result<()> {
         let msg = ControlMessage::SetDisplayPower { on };
         self.send_message(&msg)
-    }
-
-    /// Toggle screen power intelligently (turn on if off, turn off if on)
-    /// Uses BACK_OR_SCREEN_ON message which checks screen state automatically
-    pub fn send_toggle_screen(&self) -> Result<()> {
-        // Send POWER keycode to toggle screen
-        // ACTION_DOWN: will turn on screen if off, turn off if on
-        // This mimics pressing the physical power button
-        self.send_key_press(26, 0) // KEYCODE_POWER = 26
     }
 
     /// Send text injection
