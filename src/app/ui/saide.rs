@@ -7,12 +7,7 @@ use {
                 InitEvent,
                 start_initialization,
             },
-            utils::{
-                CoordinatesTransformParams,
-                find_nearest_mapping,
-                screen_to_device_coords,
-                screen_to_video_coords,
-            },
+            utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_video_coords},
         },
         indicator::Indicator,
         mapping::{MappingConfigEvent, MappingConfigWindow},
@@ -399,39 +394,53 @@ impl SAideApp {
             }
             MappingConfigEvent::RequestAddMapping(screen_pos) => {
                 // Convert screen position to percentage coordinates (0-1)
-                if let Some(device_px) =
-                    screen_to_device_coords(&screen_pos, &self.coodinates_transform_params())
+                // Percentage is relative to VIDEO coordinates, not device physical size
+                let video_rect = self.player.video_rect();
+                let video_rotation = self.player.rotation();
+
+                if let Some((video_x, video_y, video_w, video_h)) =
+                    screen_to_video_coords(&screen_pos, &video_rect, video_rotation)
                 {
-                    // Convert device pixels to percentage (0-1)
-                    let device_size = self.device_physical_size;
-                    let device_pos = (
-                        device_px.0 as f32 / device_size.0 as f32,
-                        device_px.1 as f32 / device_size.1 as f32,
+                    // Convert video pixels to percentage (0.0-1.0)
+                    let percent_pos = (
+                        video_x as f32 / video_w as f32,
+                        video_y as f32 / video_h as f32,
                     );
+
                     info!(
-                        "Requesting to add mapping at percentage pos: ({:.4}, {:.4})",
-                        device_pos.0, device_pos.1
+                        "Requesting to add mapping: screen=({:.1},{:.1}) -> video=({},{}) in {}x{} -> percent=({:.6},{:.6})",
+                        screen_pos.x,
+                        screen_pos.y,
+                        video_x,
+                        video_y,
+                        video_w,
+                        video_h,
+                        percent_pos.0,
+                        percent_pos.1
                     );
-                    self.mapping_config_window.request_input_dialog(device_pos);
+
+                    self.mapping_config_window.request_input_dialog(percent_pos);
                 }
             }
             MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
                 // Find nearest mapping to delete
-                if let Some(device_px) =
-                    screen_to_device_coords(&screen_pos, &self.coodinates_transform_params())
+                let video_rect = self.player.video_rect();
+                let video_rotation = self.player.rotation();
+
+                if let Some((video_x, video_y, video_w, video_h)) =
+                    screen_to_video_coords(&screen_pos, &video_rect, video_rotation)
                 {
-                    // Convert device pixels to percentage (0-1) for find_nearest_mapping
-                    let device_size = self.device_physical_size;
-                    let device_percent = (
-                        device_px.0 as f32 / device_size.0 as f32,
-                        device_px.1 as f32 / device_size.1 as f32,
+                    // Convert to percentage
+                    let percent_pos = (
+                        video_x as f32 / video_w as f32,
+                        video_y as f32 / video_h as f32,
                     );
 
                     if let Some((nearest_key, nearest_pos)) =
-                        find_nearest_mapping(device_percent, &mappings)
+                        find_nearest_mapping(percent_pos, &mappings)
                     {
                         info!(
-                            "Requesting to delete mapping: {:?} at ({:.4}, {:.4})",
+                            "Requesting to delete mapping: {:?} at ({:.6}, {:.6})",
                             nearest_key, nearest_pos.0, nearest_pos.1
                         );
                         self.mapping_config_window

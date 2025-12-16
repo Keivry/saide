@@ -8,8 +8,11 @@ use {
 pub struct CoordinatesTransformParams {
     pub video_rect: egui::Rect,
     pub video_rotation: u32,
+    #[allow(dead_code)]
     pub device_physical_size: (u32, u32),
+    #[allow(dead_code)]
     pub device_orientation: u32,
+    #[allow(dead_code)]
     pub capture_orientation: u32,
 }
 
@@ -25,6 +28,9 @@ pub struct CoordinatesTransformParams {
 /// - When device rotates, video resolution changes to match
 /// - So video coords = device current coords (just need scaling)
 /// - ADB expects coords relative to device's current display orientation
+///
+/// DEPRECATED: No longer used, mapping config now uses video coordinates directly
+#[allow(dead_code)]
 pub fn screen_to_device_coords(
     pos: &egui::Pos2,
     trans_params: &CoordinatesTransformParams,
@@ -128,40 +134,18 @@ pub fn screen_to_device_coords(
     Some((device_x as u32, device_y as u32))
 }
 
-/// Convert device percentage coordinates (0.0-1.0) to screen coordinates in video rect
+/// Convert video percentage coordinates (0.0-1.0) to screen coordinates in video rect
 ///
 /// This function accepts percentage coordinates from config/profile (0.0-1.0 range)
-/// and converts them to screen coordinates for display purposes
+/// and converts them to screen coordinates for display purposes.
+///
+/// Percentage is relative to VIDEO coordinates, not device physical size.
 pub fn device_to_screen_coords(
-    device_percent: (f32, f32),
+    video_percent: (f32, f32),
     transform_params: &CoordinatesTransformParams,
 ) -> Option<Pos2> {
-    let (video_rect, video_rotation, device_physical_size, device_orientation, capture_orientation) = (
-        &transform_params.video_rect,
-        transform_params.video_rotation,
-        transform_params.device_physical_size,
-        transform_params.device_orientation,
-        transform_params.capture_orientation,
-    );
-    // This is the inverse of coordinate_transform
-    //
-    // coordinate_transform does:
-    // 1. Screen -> Video coords (inverse user rotation)
-    // 2. Video -> Device coords (apply total_rotation)
-    //
-    // We need to do:
-    // 1. Device percentage -> Device pixels (scale by physical size)
-    // 2. Device -> Video coords (inverse total_rotation)
-    // 3. Video -> Screen coords (apply user rotation)
-
-    let total_rotation = (capture_orientation + device_orientation) % 4;
-
-    // Calculate device logical size at current orientation
-    let (device_w, device_h) = if device_orientation & 1 == 0 {
-        (device_physical_size.0 as f32, device_physical_size.1 as f32)
-    } else {
-        (device_physical_size.1 as f32, device_physical_size.0 as f32)
-    };
+    let video_rect = &transform_params.video_rect;
+    let video_rotation = transform_params.video_rotation;
 
     let video_width = video_rect.width();
     let video_height = video_rect.height();
@@ -174,43 +158,11 @@ pub fn device_to_screen_coords(
         (video_height, video_width)
     };
 
-    // Convert percentage to device pixels
-    let device_x = device_percent.0 * device_w;
-    let device_y = device_percent.1 * device_h;
+    // Convert percentage to video original coordinates
+    let video_x = video_percent.0 * video_w;
+    let video_y = video_percent.1 * video_h;
 
-    // Step 1: Inverse total rotation to get video original coordinates
-    let (video_x, video_y) = match total_rotation {
-        // 0 degrees
-        0 => {
-            let scale_x = video_w / device_w;
-            let scale_y = video_h / device_h;
-            (device_x * scale_x, device_y * scale_y)
-        }
-        // 90 degrees clockwise - inverse transform
-        1 => {
-            let scale_x = video_h / device_w;
-            let scale_y = video_w / device_h;
-            ((device_h - device_y) * scale_y, device_x * scale_x)
-        }
-        // 180 degrees
-        2 => {
-            let scale_x = video_w / device_w;
-            let scale_y = video_h / device_h;
-            (
-                (device_w - device_x) * scale_x,
-                (device_h - device_y) * scale_y,
-            )
-        }
-        // 270 degrees clockwise
-        3 => {
-            let scale_x = video_h / device_w;
-            let scale_y = video_w / device_h;
-            (device_y * scale_y, (device_w - device_x) * scale_x)
-        }
-        _ => return None,
-    };
-
-    // Step 2: Apply user rotation to transform from video original coords to display coords
+    // Apply user rotation to transform from video original coords to display coords
     let (rel_x, rel_y) = match video_rotation % 4 {
         // 0 degrees - no rotation
         0 => (video_x, video_y),

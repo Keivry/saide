@@ -657,6 +657,13 @@ fn stream_worker_with_streams(
 
                     // Real error (not timeout)
                     consecutive_read_errors += 1;
+                    if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
+                        debug!(
+                            "Failed to read video packet {} times consecutively",
+                            consecutive_read_errors
+                        );
+                        return Err(e);
+                    }
 
                     let is_shutdown = e
                         .downcast_ref::<std::io::Error>()
@@ -674,14 +681,13 @@ fn stream_worker_with_streams(
                             "Video packet read error ({}/{}): {} - skipping",
                             consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
                         );
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    } else if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                        error!(
-                            "Failed to read video packet {} times consecutively",
-                            consecutive_read_errors
+                    } else {
+                        warn!(
+                            "Video packet read error ({}/{}): {} - skipping",
+                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
                         );
-                        return Err(e);
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
             };
@@ -901,7 +907,7 @@ fn stream_worker_with_streams(
             let err_msg = e.to_string();
 
             // Only send Failed event for connection errors (not normal shutdown)
-            // Connection errors: "Failed to read", "timeout", "broken pipe", etc.
+            // Connection errors: "timeout", "broken pipe", etc.
             let is_connection_error = err_msg.contains("timeout")
                 || err_msg.contains("Broken pipe")
                 || err_msg.contains("Connection reset");
@@ -911,7 +917,7 @@ fn stream_worker_with_streams(
                 let _ = event_tx.send(PlayerEvent::Failed(format!("Connection lost: {}", err_msg)));
             } else {
                 // Decoder error or normal shutdown
-                error!("Video decode error: {}", err_msg);
+                debug!("Video decode error: {}", err_msg);
             }
 
             Err(e)
@@ -1091,7 +1097,6 @@ fn stream_worker(
 
                     // Real error (not timeout)
                     consecutive_read_errors += 1;
-
                     if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
                         error!(
                             "Failed to read video packet {} times consecutively",
