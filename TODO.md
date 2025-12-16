@@ -647,3 +647,30 @@ cargo run
 # 查看右上角音频图标为绿色 🔊，悬停查看音频信息
 ```
 
+
+## 已完成 ✅ (2025-12-16)
+
+### 键盘映射坐标系与 capture-orientation 锁定兼容性
+
+**问题**：
+- NVDEC 模式 capture-orientation=@0 锁定视频为竖屏
+- 设备旋转到横屏时 Profile rotation=1 被激活
+- Profile 坐标基于横屏坐标系，视频坐标系固定为竖屏
+- 坐标系不匹配导致映射位置错误
+
+**解决方案**：
+- 添加 capture_orientation_locked 标志传递链
+- 实现坐标旋转变换矩阵
+- rotation=1: (x, y) → (1-y, x)
+- rotation=2: (x, y) → (1-x, 1-y)  
+- rotation=3: (x, y) → (y, 1-x)
+
+**代码清理**：
+- 删除废弃的 v4l2 模块（-914 行代码）
+- 删除外部 scrcpy 进程管理代码
+- 统一使用 StreamPlayer 内部实现
+
+**测试**：✅ capture_orientation=@0 实际设备验证通过
+
+**文档**：docs/pitfalls.md #13
+
