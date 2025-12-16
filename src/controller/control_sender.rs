@@ -105,6 +105,15 @@ impl ControlSender {
         self.send_message(&msg)
     }
 
+    /// Toggle screen power intelligently (turn on if off, turn off if on)
+    /// Uses BACK_OR_SCREEN_ON message which checks screen state automatically
+    pub fn send_toggle_screen(&self) -> Result<()> {
+        // Send POWER keycode to toggle screen
+        // ACTION_DOWN: will turn on screen if off, turn off if on
+        // This mimics pressing the physical power button
+        self.send_key_press(26, 0) // KEYCODE_POWER = 26
+    }
+
     /// Send text injection
     pub fn send_text(&self, text: &str) -> Result<()> {
         let msg = ControlMessage::InjectText {
