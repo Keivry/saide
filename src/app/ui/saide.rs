@@ -591,6 +591,16 @@ impl SAideApp {
             return;
         };
 
+        debug!(
+            "Converted screen ({:.1}, {:.1}) -> video ({}, {}) in {}x{} (resolution)",
+            pos.x,
+            pos.y,
+            video_x,
+            video_y,
+            self.player.video_resolution().0,
+            self.player.video_resolution().1
+        );
+
         // Get actual video resolution (not display size) for screenSize field
         let (video_w, video_h) = self.player.video_resolution();
 
