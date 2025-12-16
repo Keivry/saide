@@ -863,6 +863,22 @@ impl SAideApp {
                 ToolbarEvent::ConfigureMappings => {
                     self.toggle_mapping_config(ctx);
                 }
+                ToolbarEvent::ToggleScreenPower => {
+                    debug!("Toggling screen power from toolbar");
+                    if let Some(sender) = &self.control_sender {
+                        // Send OFF command (user can press again to turn ON)
+                        // We toggle between ON and OFF with each click
+                        static mut SCREEN_STATE: bool = true;
+                        unsafe {
+                            SCREEN_STATE = !SCREEN_STATE;
+                            if let Err(e) = sender.send_set_display_power(SCREEN_STATE) {
+                                error!("Failed to toggle screen power: {}", e);
+                            } else {
+                                info!("Screen power: {}", if SCREEN_STATE { "ON" } else { "OFF" });
+                            }
+                        }
+                    }
+                }
                 ToolbarEvent::None => {}
             });
     }

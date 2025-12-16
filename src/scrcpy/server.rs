@@ -80,6 +80,12 @@ pub struct ServerParams {
     /// When set, prevents resolution changes on device rotation
     /// Useful for hardware decoders (NVDEC) that can't handle dynamic resolution
     pub capture_orientation: Option<String>,
+
+    /// Keep device awake (prevent auto-sleep)
+    pub stay_awake: bool,
+
+    /// Turn off screen timeout in milliseconds (-1 = immediately, 0 = no timeout)
+    pub screen_off_timeout: Option<i32>,
 }
 
 impl Default for ServerParams {
@@ -109,6 +115,8 @@ impl Default for ServerParams {
             // 详见: docs/VIDEO_CODEC_OPTIONS_COMPATIBILITY.md
             video_codec_options: None,
             capture_orientation: None, // Auto (follows device rotation)
+            stay_awake: true,          // Keep device awake by default
+            screen_off_timeout: None,  // Don't turn off screen by default
         }
     }
 }

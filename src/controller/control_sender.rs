@@ -99,6 +99,12 @@ impl ControlSender {
         Ok(())
     }
 
+    /// Set display power (turn screen on/off)
+    pub fn send_set_display_power(&self, on: bool) -> Result<()> {
+        let msg = ControlMessage::SetDisplayPower { on };
+        self.send_message(&msg)
+    }
+
     /// Send text injection
     pub fn send_text(&self, text: &str) -> Result<()> {
         let msg = ControlMessage::InjectText {

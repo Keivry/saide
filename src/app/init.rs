@@ -185,6 +185,14 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
             params.send_codec_meta = true;
             params.send_frame_meta = true;
 
+            // Apply screen control options
+            params.stay_awake = conn_config.scrcpy.options.stay_awake;
+            params.screen_off_timeout = if conn_config.scrcpy.options.turn_screen_off {
+                Some(-1) // Turn off immediately
+            } else {
+                None
+            };
+
             // 🔒 NVDEC Optimization: Lock capture orientation to prevent resolution changes
             // Benefits:
             // - Avoid decoder rebuild overhead (~200ms + black screen)

@@ -14,6 +14,7 @@ pub enum ToolbarEvent {
     None,
     RotateVideo,
     ConfigureMappings,
+    ToggleScreenPower,
 }
 
 struct ToolbarButton {
@@ -23,7 +24,7 @@ struct ToolbarButton {
 }
 
 lazy_static! {
-    static ref TOOLBAR_BUTTONS: [ToolbarButton; 2] = [
+    static ref TOOLBAR_BUTTONS: [ToolbarButton; 3] = [
         ToolbarButton {
             lable: "⟳",
             tooltip: "Rotate Video",
@@ -33,6 +34,11 @@ lazy_static! {
             lable: "⚙",
             tooltip: "Configure Mappings",
             event: ToolbarEvent::ConfigureMappings,
+        },
+        ToolbarButton {
+            lable: "💡",
+            tooltip: "Toggle Screen Power",
+            event: ToolbarEvent::ToggleScreenPower,
         },
     ];
 }
