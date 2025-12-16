@@ -864,25 +864,13 @@ impl SAideApp {
                     self.toggle_mapping_config(ctx);
                 }
                 ToolbarEvent::ToggleScreenPower => {
-                    debug!("Toggling screen power from toolbar");
+                    debug!("Turning off screen from toolbar");
                     if let Some(sender) = &self.control_sender {
-                        // Get the target state from toolbar
-                        let screen_on = self.toolbar.get_screen_state();
-
-                        if screen_on {
-                            // Turn ON: Restore brightness via adb
-                            if let Err(e) = sender.send_screen_on_with_brightness_restore() {
-                                error!("Failed to wake screen and restore brightness: {}", e);
-                            } else {
-                                info!("Screen ON with brightness restored");
-                            }
+                        // Only turn OFF screen, wake up with physical power button
+                        if let Err(e) = sender.send_set_display_power(false) {
+                            error!("Failed to turn off screen: {}", e);
                         } else {
-                            // Turn OFF: Save brightness first, then turn off
-                            if let Err(e) = sender.send_screen_off_with_brightness_save() {
-                                error!("Failed to save brightness and turn off screen: {}", e);
-                            } else {
-                                info!("Screen OFF (brightness saved)");
-                            }
+                            info!("Screen OFF (press physical power button to wake up)");
                         }
                     }
                 }
