@@ -274,10 +274,20 @@ impl NvdecDecoder {
 impl Drop for NvdecDecoder {
     fn drop(&mut self) {
         unsafe {
+            // Explicit cleanup order to prevent CUDA errors:
+            // 1. Flush decoder to release pending frames
+            let _ = self.flush();
+
+            // 2. Give CUDA time to finish async operations
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
+            // 3. Release hardware device context
             if !self.hw_device_ctx.is_null() {
                 ffmpeg::sys::av_buffer_unref(&mut self.hw_device_ctx);
+                self.hw_device_ctx = std::ptr::null_mut();
             }
         }
+        tracing::trace!("NVDEC decoder dropped");
     }
 }
 

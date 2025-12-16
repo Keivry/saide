@@ -307,40 +307,78 @@ impl ScrcpyConnection {
         }
     }
 
-    /// Gracefully shutdown connection
+    /// Gracefully shutdown connection (non-blocking, detach cleanup if slow)
     pub fn shutdown(&mut self) -> Result<()> {
-        debug!("Shutting down connection");
+        debug!("Shutting down connection (non-blocking)");
 
-        // Step 1: Remove reverse tunnel first (so server can't reconnect)
-        remove_reverse_tunnel(&self.serial, &get_socket_name(self.scid)).ok();
-
-        // Step 2: Close sockets (triggers server to exit)
+        // Step 1: Close sockets FIRST (triggers server to exit via broken pipe)
         self.video_stream.take();
         self.audio_stream.take();
         self.control_stream.take();
+        debug!("Sockets closed");
 
-        // Step 3: Wait for server process to exit gracefully (with timeout)
+        // Step 2: Fast-path check for quick exit (50ms)
         if let Some(mut process) = self.server_process.take() {
-            // Try to wait with timeout (non-blocking)
-            for _ in 0..5 {
-                // 5 * 200ms = 1 second max
-                if process.try_wait().ok().flatten().is_some() {
-                    debug!("Server process exited gracefully");
+            const FAST_CHECK_MS: u64 = 50;
+            let start = std::time::Instant::now();
+
+            // Quick check if process exited immediately
+            while start.elapsed().as_millis() < FAST_CHECK_MS as u128 {
+                if let Ok(Some(status)) = process.try_wait() {
+                    debug!("Server process exited quickly with status: {:?}", status);
+                    remove_reverse_tunnel(&self.serial, &get_socket_name(self.scid)).ok();
+                    info!("Connection closed (fast path)");
                     return Ok(());
                 }
-                std::thread::sleep(std::time::Duration::from_millis(200));
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
 
-            // Force kill if still running
-            debug!("Force killing server process (timeout)");
-            process.kill().ok();
+            // Slow path: detach cleanup thread (non-blocking)
+            debug!("Server process still running, detaching cleanup thread");
+            let serial = self.serial.clone();
+            let scid = self.scid;
 
-            // Final wait with very short timeout
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            let _ = process.try_wait();
+            std::thread::spawn(move || {
+                const MAX_WAIT_MS: u64 = 3000;
+                const POLL_INTERVAL_MS: u64 = 100;
+
+                let start = std::time::Instant::now();
+                let mut exited_gracefully = false;
+
+                while start.elapsed().as_millis() < MAX_WAIT_MS as u128 {
+                    if let Ok(Some(status)) = process.try_wait() {
+                        debug!(
+                            "Server process exited gracefully in background with status: {:?}",
+                            status
+                        );
+                        exited_gracefully = true;
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+                }
+
+                // Force kill if stuck
+                if !exited_gracefully {
+                    debug!(
+                        "Server process timeout ({}ms), force terminating",
+                        MAX_WAIT_MS
+                    );
+                    let _ = process.kill();
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    let _ = process.try_wait();
+                }
+
+                // Cleanup tunnel
+                let socket_name = crate::scrcpy::server::get_socket_name(scid);
+                remove_reverse_tunnel(&serial, &socket_name).ok();
+                debug!("Background cleanup completed");
+            });
+        } else {
+            // No server process, just remove tunnel
+            remove_reverse_tunnel(&self.serial, &get_socket_name(self.scid)).ok();
         }
 
-        info!("Connection closed");
+        info!("Connection closed (cleanup detached)");
         Ok(())
     }
 }

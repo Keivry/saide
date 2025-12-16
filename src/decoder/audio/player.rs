@@ -265,6 +265,10 @@ fn audio_callback(
 impl Drop for AudioPlayer {
     fn drop(&mut self) {
         self.stop();
+
+        // Give audio stream time to finish current callback
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
         debug!("Audio player stopped");
     }
 }

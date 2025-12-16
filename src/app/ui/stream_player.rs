@@ -523,17 +523,33 @@ fn stream_worker_with_streams(
                             continue;
                         }
 
-                        // Real error
+                        // Real error (check if shutdown-related)
                         consecutive_read_errors += 1;
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
                             return Err(e.into());
                         }
 
-                        warn!(
-                            "Audio header read error ({}/{}): {} - skipping",
-                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                        // Log at DEBUG if likely shutdown (connection closed/broken pipe)
+                        let is_shutdown = matches!(
+                            e.kind(),
+                            std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::BrokenPipe
+                                | std::io::ErrorKind::UnexpectedEof
                         );
+
+                        if is_shutdown {
+                            debug!(
+                                "Audio header read error ({}/{}): {} (shutdown)",
+                                consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                            );
+                        } else {
+                            warn!(
+                                "Audio header read error ({}/{}): {} - skipping",
+                                consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                            );
+                        }
+
                         std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }
@@ -565,10 +581,25 @@ fn stream_worker_with_streams(
                             return Err(e.into());
                         }
 
-                        warn!(
-                            "Audio payload read error ({}/{}): {} - skipping",
-                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                        let is_shutdown = matches!(
+                            e.kind(),
+                            std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::BrokenPipe
+                                | std::io::ErrorKind::UnexpectedEof
                         );
+
+                        if is_shutdown {
+                            debug!(
+                                "Audio payload read error ({}/{}): {} (shutdown)",
+                                consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                            );
+                        } else {
+                            warn!(
+                                "Audio payload read error ({}/{}): {} - skipping",
+                                consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                            );
+                        }
+
                         std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }
@@ -635,11 +666,29 @@ fn stream_worker_with_streams(
                         return Err(e);
                     }
 
-                    warn!(
-                        "Video packet read error ({}/{}): {} - skipping",
-                        consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    let is_shutdown = e
+                        .downcast_ref::<std::io::Error>()
+                        .map(|io_err| {
+                            matches!(
+                                io_err.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::BrokenPipe
+                                    | std::io::ErrorKind::UnexpectedEof
+                            )
+                        })
+                        .unwrap_or(false);
+                    if is_shutdown {
+                        debug!(
+                            "Video packet read error ({}/{}): {} - skipping",
+                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    } else {
+                        warn!(
+                            "Video packet read error ({}/{}): {} - skipping",
+                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                        );
+                    }
                     continue;
                 }
             };
@@ -1059,10 +1108,29 @@ fn stream_worker(
                         return Err(e);
                     }
 
-                    warn!(
-                        "Video packet read error ({}/{}): {} - skipping",
-                        consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
-                    );
+                    let is_shutdown = e
+                        .downcast_ref::<std::io::Error>()
+                        .map(|io_err| {
+                            matches!(
+                                io_err.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::BrokenPipe
+                                    | std::io::ErrorKind::UnexpectedEof
+                            )
+                        })
+                        .unwrap_or(false);
+
+                    if is_shutdown {
+                        debug!(
+                            "Video packet read error ({}/{}): {} - skipping",
+                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                        );
+                    } else {
+                        warn!(
+                            "Video packet read error ({}/{}): {} - skipping",
+                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                        );
+                    }
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
