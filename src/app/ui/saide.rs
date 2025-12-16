@@ -401,20 +401,46 @@ impl SAideApp {
                 if let Some((video_x, video_y, video_w, video_h)) =
                     screen_to_video_coords(&screen_pos, &video_rect, video_rotation)
                 {
-                    // Convert video pixels to percentage (0.0-1.0)
-                    let percent_pos = (
-                        video_x as f32 / video_w as f32,
-                        video_y as f32 / video_h as f32,
-                    );
+                    // Video coords are in portrait orientation (capture_orientation=@0)
+                    // Need to convert to device coords considering device_orientation
+
+                    // Step 1: Unscale from video to device portrait coords
+                    let scale_x = self.device_physical_size.0 as f32 / video_w as f32;
+                    let scale_y = self.device_physical_size.1 as f32 / video_h as f32;
+                    let portrait_x = video_x as f32 * scale_x;
+                    let portrait_y = video_y as f32 * scale_y;
+
+                    // Step 2: Apply device_orientation to get device logical coords
+                    let (device_w, device_h) = if self.device_orientation & 1 == 0 {
+                        self.device_physical_size // Portrait
+                    } else {
+                        (self.device_physical_size.1, self.device_physical_size.0) // Landscape
+                    };
+
+                    let (device_x, device_y) = match self.device_orientation % 4 {
+                        0 => (portrait_x, portrait_y),
+                        1 => (device_w as f32 - portrait_y, portrait_x),
+                        2 => (device_w as f32 - portrait_x, device_h as f32 - portrait_y),
+                        3 => (portrait_y, device_h as f32 - portrait_x),
+                        _ => (portrait_x, portrait_y),
+                    };
+
+                    // Step 3: Convert to percentage
+                    let percent_pos = (device_x / device_w as f32, device_y / device_h as f32);
 
                     info!(
-                        "Requesting to add mapping: screen=({:.1},{:.1}) -> video=({},{}) in {}x{} -> percent=({:.6},{:.6})",
+                        "Add mapping: screen=({:.1},{:.1}) -> video=({},{}) -> portrait=({:.1},{:.1}) -> device=({:.1},{:.1}) in {}x{} [orient={}] -> percent=({:.6},{:.6})",
                         screen_pos.x,
                         screen_pos.y,
                         video_x,
                         video_y,
-                        video_w,
-                        video_h,
+                        portrait_x,
+                        portrait_y,
+                        device_x,
+                        device_y,
+                        device_w,
+                        device_h,
+                        self.device_orientation,
                         percent_pos.0,
                         percent_pos.1
                     );
@@ -430,17 +456,33 @@ impl SAideApp {
                 if let Some((video_x, video_y, video_w, video_h)) =
                     screen_to_video_coords(&screen_pos, &video_rect, video_rotation)
                 {
-                    // Convert to percentage
-                    let percent_pos = (
-                        video_x as f32 / video_w as f32,
-                        video_y as f32 / video_h as f32,
-                    );
+                    // Same conversion as add mapping
+                    let scale_x = self.device_physical_size.0 as f32 / video_w as f32;
+                    let scale_y = self.device_physical_size.1 as f32 / video_h as f32;
+                    let portrait_x = video_x as f32 * scale_x;
+                    let portrait_y = video_y as f32 * scale_y;
+
+                    let (device_w, device_h) = if self.device_orientation & 1 == 0 {
+                        self.device_physical_size
+                    } else {
+                        (self.device_physical_size.1, self.device_physical_size.0)
+                    };
+
+                    let (device_x, device_y) = match self.device_orientation % 4 {
+                        0 => (portrait_x, portrait_y),
+                        1 => (device_w as f32 - portrait_y, portrait_x),
+                        2 => (device_w as f32 - portrait_x, device_h as f32 - portrait_y),
+                        3 => (portrait_y, device_h as f32 - portrait_x),
+                        _ => (portrait_x, portrait_y),
+                    };
+
+                    let percent_pos = (device_x / device_w as f32, device_y / device_h as f32);
 
                     if let Some((nearest_key, nearest_pos)) =
                         find_nearest_mapping(percent_pos, &mappings)
                     {
                         info!(
-                            "Requesting to delete mapping: {:?} at ({:.6}, {:.6})",
+                            "Delete mapping: {:?} at ({:.6}, {:.6})",
                             nearest_key, nearest_pos.0, nearest_pos.1
                         );
                         self.mapping_config_window
