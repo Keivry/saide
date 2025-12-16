@@ -110,14 +110,12 @@ impl MappingConfigWindow {
 
         let mut event = MappingConfigEvent::None;
 
-        // Draw semi-transparent overlay with interaction to consume events
+        // Draw semi-transparent overlay (non-interactive to not block toolbar)
         egui::Area::new(egui::Id::new("mapping_config_overlay"))
             .fixed_pos(video_rect.min)
-            .interactable(true)
+            .interactable(false) // Don't block other UI
+            .order(egui::Order::Middle)
             .show(ctx, |ui| {
-                // Create an invisible button covering the entire video rect to capture clicks
-                let response = ui.allocate_rect(video_rect, egui::Sense::click());
-
                 let painter = ui.painter();
 
                 // Draw semi-transparent background
@@ -176,45 +174,51 @@ impl MappingConfigWindow {
                         );
                     }
                 });
+            });
 
-                // Handle clicks on the overlay
-                if response.clicked() {
-                    // Left click - request to add mapping
-                    if let Some(click_pos) = response.interact_pointer_pos() {
-                        event = MappingConfigEvent::RequestAddMapping(click_pos);
+        // Handle clicks by reading input events directly (doesn't block toolbar)
+        ctx.input(|input| {
+            // Check for left click
+            if input.pointer.primary_clicked()
+                && let Some(click_pos) = input.pointer.interact_pos()
+                && video_rect.contains(click_pos)
+            {
+                event = MappingConfigEvent::RequestAddMapping(click_pos);
+            }
+
+            // Check for right click
+            if input.pointer.secondary_clicked()
+                && let Some(click_pos) = input.pointer.interact_pos()
+                && video_rect.contains(click_pos)
+            {
+                event = MappingConfigEvent::RequestDeleteMapping(click_pos);
+            }
+        });
+
+        // Check for ESC key to exit
+        if !self.any_dialog_open() {
+            ctx.input_mut(|input| {
+                for e in &input.events {
+                    if let egui::Event::Key {
+                        key,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } = e
+                        // Only capture ESC without modifiers
+                        && *key == egui::Key::Escape
+                        && modifiers.is_none()
+                    {
+                        event = MappingConfigEvent::Close;
+
+                        // Prevent further processing
+                        input.consume_key(Modifiers::NONE, egui::Key::Escape);
+                        break;
                     }
-                } else if response.secondary_clicked() {
-                    // Right click - request to delete nearest mapping
-                    if let Some(click_pos) = response.interact_pointer_pos() {
-                        event = MappingConfigEvent::RequestDeleteMapping(click_pos);
-                    }
-                }
-
-                // Check for ESC key to exit
-                if !self.any_dialog_open() {
-                    ui.input_mut(|input| {
-                        for e in &input.events {
-                            if let egui::Event::Key {
-                            key,
-                            pressed: true,
-                            repeat: false,
-                            modifiers,
-                            ..
-                        } = e
-                            // Only capture ESC without modifiers
-                            && *key == egui::Key::Escape
-                            && modifiers.is_none()
-                            {
-                                event = MappingConfigEvent::Close;
-
-                                // Prevent further processing
-                                input.consume_key(Modifiers::NONE, egui::Key::Escape);
-                                break;
-                            }
-                        }
-                    });
                 }
             });
+        }
 
         event
     }
