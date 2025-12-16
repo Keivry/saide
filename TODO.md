@@ -674,3 +674,33 @@ cargo run
 
 **文档**：docs/pitfalls.md #13
 
+
+## 已完成 ✅ (2025-12-16 深夜)
+
+### 实现关闭设备屏幕功能
+
+**功能**：
+- 启动时自动关闭设备屏幕（config: `turn_screen_off = true`）
+- 工具栏新增💡按钮，点击切换屏幕开/关
+- 使用 scrcpy `SetDisplayPower` 控制消息
+
+**实现**：
+- ServerParams 新增 `stay_awake` 和 `screen_off_timeout` 参数
+- ControlSender 新增 `send_set_display_power()` 方法
+- Toolbar 新增 `ToggleScreenPower` 事件
+
+**收益**：
+- 降低设备功耗
+- 可能降低编码延迟
+- 减少游戏时的设备干扰
+
+**配置**：
+```toml
+[scrcpy.options]
+turn_screen_off = true  # 默认启用
+stay_awake = true
+```
+
+**代码**: 5 个文件, +45 行
+
+**测试**: ✅ 编译通过，待实际设备验证
