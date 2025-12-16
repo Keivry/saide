@@ -677,26 +677,46 @@ cargo run
 
 ## 待修复 🐛 (2025-12-16)
 
-### 问题 3: 鼠标映射位置偏移 (调查中)
-**现象**: 点击位置映射到设备上总是偏上一点  
-**可能原因**: 
-1. 视频渲染区域的 padding 计算错误
-2. 窗口标题栏/工具栏占用空间未正确处理
-3. egui 坐标系统问题
+### 问题 1: 程序异常退出时偶发卡死
+**现象**: 
+- 关闭程序窗口时偶尔卡住不退出
+- USB 断开连接时程序卡住
 
-**调查进展**:
-- ✅ 添加了详细的坐标转换调试日志
-- ⏳ 需要实际设备测试观察日志输出
+**根本原因**: 
+- ✅ 视频解码线程阻塞在 `read_exact()` 上
+- ✅ 音频解码线程阻塞在 `read_exact()` 上
+- ✅ 设备监控线程 adb 调用超时（已修复：3 次失败后自动退出）
+
+**已完成修复**:
+- [x] 设备监控线程：3 次 adb 失败后停止
+- [x] 视频/音频线程：移除阻塞读取超时设置
+- [x] 静止画面不再误判为连接断开（移除 5 秒超时）
+- [x] 音频解码错误容忍：连续 5 次失败才停止
+- [x] Frame channel 改为 bounded(1) 防止发送端阻塞
+
+**待完成**:
+- [ ] 审查所有线程的退出路径
+- [ ] 确保 TcpStream 关闭能正确唤醒 read_exact()
+- [ ] 考虑为 TcpStream 设置合理的 SO_LINGER
+
+**优先级**: 高
+
+---
+
+### 问题 2: 鼠标映射位置偏移 (待测试)
+**现象**: 点击位置映射到设备上总是偏上一点  
+
+**调查方向**: 
+1. ✅ 移除视频区域 padding（已完成）
+2. ⏳ 实际设备测试验证是否修复
 
 **测试方法**:
 ```bash
 RUST_LOG=debug cargo run 2>&1 | grep "Converted screen"
-# 点击屏幕中央，观察输出：
-# Converted screen (288.0, 640.0) -> video (288, 640) in 576x1280
-# 检查 video 坐标是否正确对应屏幕点击位置
+# 点击屏幕不同位置，观察映射是否准确
 ```
 
-**优先级**: 高
+**优先级**: 中
 
 ---
 
@@ -709,12 +729,14 @@ RUST_LOG=debug cargo run 2>&1 | grep "Converted screen"
 - 使用 scrcpy `SetDisplayPower` 控制消息
 - 唤醒功能移除（让用户按物理电源键）
 - ✅ 修复配置文件参数未传递到 scrcpy-server 的问题
+- ✅ 初始化完成后自动关闭屏幕（如果配置开启）
 
 **实现**：
 - ServerParams 新增 `stay_awake` 和 `power_off_on_close` 参数
-- ControlSender 新增 `send_set_display_power()` 方法
+- ControlSender 新增 `send_screen_off_with_brightness_save()` 方法
 - Toolbar 新增 `TurnScreenOff` 按钮事件
 - build_server_args() 正确传递电源管理参数
+- SAideApp 初始化完成时检查 turn_screen_off 配置并执行
 
 **收益**：
 - 降低设备功耗
@@ -728,8 +750,33 @@ turn_screen_off = true  # ✅ 启动时关闭屏幕（已修复）
 stay_awake = true       # ✅ 防止休眠（已修复）
 ```
 
-**代码**: 6 个文件, +52 行
+**代码**: 7 个文件, +65 行
 
 **测试**: 
 - ✅ 手动点击按钮可以关闭屏幕
 - ✅ 配置文件参数正确传递到 server
+- ✅ 配置开启时启动后自动关闭屏幕
+
+---
+
+### UI 优化与问题修复
+
+**完成内容**：
+- [x] 移除视频渲染区域 padding，充满整个窗口
+- [x] 修复程序卡死问题：
+  - 静止画面不再误判为超时断开
+  - 音频/视频读取错误容忍机制
+  - 设备监控线程 3 次失败后自动停止
+- [x] 修复 egui 废弃 API 警告
+  - `screen_rect()` → `content_rect()`
+  - `allocate_ui_at_rect()` → `new_child()`
+- [x] 修复 clippy 警告（collapsible_if）
+
+**代码清理**：
+- ✅ 移除视频区域 PADDING 常量
+- ✅ 简化坐标转换逻辑
+- ✅ 统一错误处理路径
+
+**测试**: 
+- ✅ 编译零警告
+- ✅ 所有单元测试通过

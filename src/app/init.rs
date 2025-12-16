@@ -134,15 +134,14 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
             }
 
             // Poll input method state (skip if device is disconnected)
-            if consecutive_errors == 0 {
-                if let Ok(im_state) = AdbShell::get_ime_state()
-                    && event_tx
-                        .send(DeviceMonitorEvent::ImStateChanged(im_state))
-                        .is_err()
-                {
-                    debug!("IME event channel disconnected, stopping monitor");
-                    break;
-                }
+            if consecutive_errors == 0
+                && let Ok(im_state) = AdbShell::get_ime_state()
+                && event_tx
+                    .send(DeviceMonitorEvent::ImStateChanged(im_state))
+                    .is_err()
+            {
+                debug!("IME event channel disconnected, stopping monitor");
+                break;
             }
 
             thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
