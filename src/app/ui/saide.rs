@@ -870,18 +870,18 @@ impl SAideApp {
                         let screen_on = self.toolbar.get_screen_state();
 
                         if screen_on {
-                            // Turn ON: Use POWER key to wake up (restores brightness)
-                            if let Err(e) = sender.send_wake_screen() {
-                                error!("Failed to wake screen: {}", e);
+                            // Turn ON: Restore brightness via adb
+                            if let Err(e) = sender.send_screen_on_with_brightness_restore() {
+                                error!("Failed to wake screen and restore brightness: {}", e);
                             } else {
-                                info!("Screen woken up (KEYCODE_POWER)");
+                                info!("Screen ON with brightness restored");
                             }
                         } else {
-                            // Turn OFF: Use SetDisplayPower(false) to turn off backlight
-                            if let Err(e) = sender.send_set_display_power(false) {
-                                error!("Failed to turn off screen: {}", e);
+                            // Turn OFF: Save brightness first, then turn off
+                            if let Err(e) = sender.send_screen_off_with_brightness_save() {
+                                error!("Failed to save brightness and turn off screen: {}", e);
                             } else {
-                                info!("Screen backlight OFF");
+                                info!("Screen OFF (brightness saved)");
                             }
                         }
                     }

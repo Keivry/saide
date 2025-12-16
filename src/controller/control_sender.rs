@@ -4,11 +4,11 @@
 //! input events to Android device via scrcpy protocol.
 
 use {
-    crate::scrcpy::protocol::control::ControlMessage,
+    crate::{controller::adb::AdbShell, scrcpy::protocol::control::ControlMessage},
     anyhow::{Context, Result},
     parking_lot::Mutex,
     std::{io::Write, net::TcpStream, sync::Arc},
-    tracing::trace,
+    tracing::{debug, error, trace, warn},
 };
 
 /// Shared control channel sender
@@ -21,6 +21,8 @@ pub struct ControlSender {
     stream: Arc<Mutex<TcpStream>>,
     /// Current screen dimensions
     screen_size: Arc<Mutex<(u16, u16)>>,
+    /// Saved brightness before turning off screen
+    saved_brightness: Arc<Mutex<Option<u8>>>,
 }
 
 impl ControlSender {
@@ -29,6 +31,7 @@ impl ControlSender {
         Self {
             stream: Arc::new(Mutex::new(stream)),
             screen_size: Arc::new(Mutex::new((screen_width, screen_height))),
+            saved_brightness: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -107,15 +110,41 @@ impl ControlSender {
         self.send_message(&msg)
     }
 
-    /// Turn screen on by toggling power mode (workaround for brightness issue)
-    /// Some devices don't restore brightness with single SetDisplayPower(true)
-    /// Solution: Send OFF then ON to trigger full power cycle
-    pub fn send_wake_screen(&self) -> Result<()> {
-        // Workaround: Toggle power mode to restore brightness
-        // OFF -> ON transition triggers brightness restoration
-        self.send_set_display_power(false)?;
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    /// Turn screen off and save current brightness
+    pub fn send_screen_off_with_brightness_save(&self) -> Result<()> {
+        // Save current brightness before turning off
+        match AdbShell::get_screen_brightness() {
+            Ok(brightness) => {
+                debug!("Saved screen brightness: {}", brightness);
+                *self.saved_brightness.lock() = Some(brightness);
+            }
+            Err(e) => {
+                warn!("Failed to get screen brightness: {}, using default 128", e);
+                *self.saved_brightness.lock() = Some(128); // Default fallback
+            }
+        }
+
+        // Turn off screen
+        self.send_set_display_power(false)
+    }
+
+    /// Turn screen on and restore saved brightness
+    pub fn send_screen_on_with_brightness_restore(&self) -> Result<()> {
+        // Turn on screen first
         self.send_set_display_power(true)?;
+
+        // Restore brightness
+        let brightness = {
+            let saved = self.saved_brightness.lock();
+            saved.unwrap_or(128) // Default to 128 if not saved
+        };
+
+        debug!("Restoring screen brightness to: {}", brightness);
+        if let Err(e) = AdbShell::set_screen_brightness(brightness) {
+            error!("Failed to restore brightness: {}", e);
+            // Not fatal, screen is still on
+        }
+
         Ok(())
     }
 

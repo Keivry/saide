@@ -389,6 +389,42 @@ impl AdbShell {
         Ok(exit_status.success())
     }
 
+    /// Get screen brightness (0-255)
+    pub fn get_screen_brightness() -> Result<u8> {
+        let output = Command::new("adb")
+            .args(["shell", "settings", "get", "system", "screen_brightness"])
+            .output()
+            .context("Failed to execute adb shell settings get command")?;
+
+        let brightness_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        brightness_str
+            .parse::<u8>()
+            .with_context(|| format!("Failed to parse brightness value: {}", brightness_str))
+    }
+
+    /// Set screen brightness (0-255)
+    pub fn set_screen_brightness(brightness: u8) -> Result<()> {
+        let output = Command::new("adb")
+            .args([
+                "shell",
+                "settings",
+                "put",
+                "system",
+                "screen_brightness",
+                &brightness.to_string(),
+            ])
+            .output()
+            .context("Failed to execute adb shell settings put command")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to set brightness: {}", stderr);
+        }
+
+        Ok(())
+    }
+
     pub fn get_device_id() -> Result<String> {
         let output = Command::new("adb")
             .args(["get-serialno"])
