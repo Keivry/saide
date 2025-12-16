@@ -755,9 +755,23 @@ fn stream_worker_with_streams(
             Ok(())
         }
         Err(e) => {
-            error!("Video decode error: {}", e);
-            // Send Failed event to UI
-            let _ = event_tx.send(PlayerEvent::Failed(format!("Connection lost: {}", e)));
+            let err_msg = e.to_string();
+
+            // Only send Failed event for connection errors (not normal shutdown)
+            // Connection errors: "Failed to read", "timeout", "broken pipe", etc.
+            let is_connection_error = err_msg.contains("read")
+                || err_msg.contains("timeout")
+                || err_msg.contains("Broken pipe")
+                || err_msg.contains("Connection reset");
+
+            if is_connection_error {
+                error!("Connection error: {}", err_msg);
+                let _ = event_tx.send(PlayerEvent::Failed(format!("Connection lost: {}", err_msg)));
+            } else {
+                // Decoder error or normal shutdown
+                error!("Video decode error: {}", err_msg);
+            }
+
             Err(e)
         }
     }
