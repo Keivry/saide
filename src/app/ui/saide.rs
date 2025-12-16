@@ -972,6 +972,56 @@ impl eframe::App for SAideApp {
         // Render player in center panel
         egui::CentralPanel::default().show(ctx, |ui| {
             let _response = self.player.render(ui);
+
+            // Error overlay if stream failed
+            if let crate::app::ui::stream_player::PlayerState::Failed(err) = self.player.state() {
+                egui::Area::new(egui::Id::new("error_overlay"))
+                    .fixed_pos(egui::pos2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        let screen_rect = ctx.screen_rect();
+                        ui.allocate_ui_at_rect(screen_rect, |ui| {
+                            // Semi-transparent background
+                            ui.painter().rect_filled(
+                                screen_rect,
+                                0.0,
+                                egui::Color32::from_black_alpha(200),
+                            );
+
+                            // Center error message
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(screen_rect.height() / 3.0);
+
+                                ui.label(
+                                    egui::RichText::new("⚠️ Connection Lost")
+                                        .size(36.0)
+                                        .color(egui::Color32::from_rgb(255, 100, 100)),
+                                );
+
+                                ui.add_space(20.0);
+
+                                let msg = if err.contains("read") || err.contains("timeout") {
+                                    "USB disconnected or device offline"
+                                } else {
+                                    "Stream error occurred"
+                                };
+
+                                ui.label(
+                                    egui::RichText::new(msg)
+                                        .size(20.0)
+                                        .color(egui::Color32::WHITE),
+                                );
+
+                                ui.add_space(15.0);
+
+                                ui.label(
+                                    egui::RichText::new("Please restart the application")
+                                        .size(16.0)
+                                        .color(egui::Color32::GRAY),
+                                );
+                            });
+                        });
+                    });
+            }
         });
 
         // Draw indicator overlay on top of video

@@ -17,7 +17,7 @@ use {
         thread,
         time::{Duration, Instant},
     },
-    tracing::{debug, error, info},
+    tracing::{debug, error, info, warn},
 };
 
 pub const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
@@ -93,9 +93,14 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
 
         // Start rotation and im state monitoring
         let mut last_rotation = None;
+        let mut consecutive_errors = 0;
+        const MAX_CONSECUTIVE_ERRORS: u32 = 3; // Exit after 3 consecutive failures
+
         loop {
             match AdbShell::get_screen_orientation() {
                 Ok(current_rotation) => {
+                    consecutive_errors = 0; // Reset error counter on success
+
                     if Some(current_rotation) != last_rotation {
                         debug!(
                             "Rotation changed: {:?} -> {}",
@@ -112,22 +117,37 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
                     }
                 }
                 Err(e) => {
-                    error!("Failed to get screen orientation: {}", e);
+                    consecutive_errors += 1;
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        warn!(
+                            "Device disconnected (adb failed {} times): {}",
+                            consecutive_errors, e
+                        );
+                        break; // Exit monitoring thread
+                    }
+                    error!(
+                        "Failed to get screen orientation ({}/{}): {}",
+                        consecutive_errors, MAX_CONSECUTIVE_ERRORS, e
+                    );
                 }
             }
 
-            // Poll input method state
-            if let Ok(im_state) = AdbShell::get_ime_state()
-                && event_tx
-                    .send(DeviceMonitorEvent::ImStateChanged(im_state))
-                    .is_err()
-            {
-                debug!("IME event channel disconnected, stopping monitor");
-                break;
+            // Poll input method state (skip if device is disconnected)
+            if consecutive_errors == 0 {
+                if let Ok(im_state) = AdbShell::get_ime_state()
+                    && event_tx
+                        .send(DeviceMonitorEvent::ImStateChanged(im_state))
+                        .is_err()
+                {
+                    debug!("IME event channel disconnected, stopping monitor");
+                    break;
+                }
             }
 
             thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
         }
+
+        info!("Device monitor thread stopped");
 
         Ok(())
     });

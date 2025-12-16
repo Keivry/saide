@@ -162,4 +162,4 @@ x = 0.2529     # was 708 / 2800
 y = 0.846      # was 1066 / 1260
 
 [logging]
-level = "trace"
+level = "debug"
