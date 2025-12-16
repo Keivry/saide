@@ -6,141 +6,6 @@ use {
     std::{collections::HashMap, ops::Deref, sync::Arc},
 };
 
-/// Percentage coordinate (0.0-1.0)
-type Percent = f32;
-
-/// Raw action from config file (with percentage coordinates 0.0-1.0)
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "action")]
-enum RawInputAction {
-    Tap {
-        x: Percent,
-        y: Percent,
-    },
-    Swipe {
-        x1: Percent,
-        y1: Percent,
-        x2: Percent,
-        y2: Percent,
-        duration: u32,
-    },
-    TouchDown {
-        x: Percent,
-        y: Percent,
-    },
-    TouchMove {
-        x: Percent,
-        y: Percent,
-    },
-    TouchUp {
-        x: Percent,
-        y: Percent,
-    },
-    Scroll {
-        x: Percent,
-        y: Percent,
-        direction: WheelDirection,
-    },
-    Key {
-        keycode: u8,
-    },
-    KeyCombo {
-        modifiers: Modifiers,
-        keycode: u8,
-    },
-    Text {
-        text: String,
-    },
-    Back,
-    Home,
-    Menu,
-    Power,
-    Ignore,
-}
-
-impl RawInputAction {
-    /// Validate percentage values are in [0, 1] range
-    fn validate(&self) -> Result<(), String> {
-        let check_percent = |v: Percent, name: &str| -> Result<(), String> {
-            if v >= 2.0 {
-                Err(format!(
-                    "{} coordinate {} appears to be in legacy absolute format. \
-                    Please run: python scripts/convert_coords_to_percent.py",
-                    name, v
-                ))
-            } else if !(0.0..=1.0).contains(&v) {
-                Err(format!(
-                    "{} percentage {} must be in range [0.0, 1.0]",
-                    name, v
-                ))
-            } else {
-                Ok(())
-            }
-        };
-
-        match self {
-            Self::Tap { x, y }
-            | Self::TouchDown { x, y }
-            | Self::TouchMove { x, y }
-            | Self::TouchUp { x, y } => {
-                check_percent(*x, "x")?;
-                check_percent(*y, "y")?;
-            }
-            Self::Scroll { x, y, .. } => {
-                check_percent(*x, "x")?;
-                check_percent(*y, "y")?;
-            }
-            Self::Swipe { x1, y1, x2, y2, .. } => {
-                check_percent(*x1, "x1")?;
-                check_percent(*y1, "y1")?;
-                check_percent(*x2, "x2")?;
-                check_percent(*y2, "y2")?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// Convert to InputAction, keeping percentage coordinates
-    fn to_input_action(&self) -> InputAction {
-        match self {
-            Self::Tap { x, y } => InputAction::Tap { x: *x, y: *y },
-            Self::Swipe {
-                x1,
-                y1,
-                x2,
-                y2,
-                duration,
-            } => InputAction::Swipe {
-                x1: *x1,
-                y1: *y1,
-                x2: *x2,
-                y2: *y2,
-                duration: *duration,
-            },
-            Self::TouchDown { x, y } => InputAction::TouchDown { x: *x, y: *y },
-            Self::TouchMove { x, y } => InputAction::TouchMove { x: *x, y: *y },
-            Self::TouchUp { x, y } => InputAction::TouchUp { x: *x, y: *y },
-            Self::Scroll { x, y, direction } => InputAction::Scroll {
-                x: *x,
-                y: *y,
-                direction: direction.clone(),
-            },
-            Self::Key { keycode } => InputAction::Key { keycode: *keycode },
-            Self::KeyCombo { modifiers, keycode } => InputAction::KeyCombo {
-                modifiers: *modifiers,
-                keycode: *keycode,
-            },
-            Self::Text { text } => InputAction::Text { text: text.clone() },
-            Self::Back => InputAction::Back,
-            Self::Home => InputAction::Home,
-            Self::Menu => InputAction::Menu,
-            Self::Power => InputAction::Power,
-            Self::Ignore => InputAction::Ignore,
-        }
-    }
-}
-
 pub type Key = egui::Key;
 pub type Modifiers = egui::Modifiers;
 
@@ -169,11 +34,13 @@ impl From<PointerButton> for MouseButton {
     }
 }
 
-/// ADB input command types
+/// Percentage coordinate (0.0-1.0)
+type Percent = f32;
+
+/// Input action to be performed on the device
 ///
 /// Coordinates are stored as:
-/// - Percentage (0.0-1.0 f32) when loaded from config
-/// - Converted to pixels (u32) when profile is activated via convert_to_pixels()
+/// - Percentage (0.0-1.0 f32) for x and y positions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action")]
 pub enum InputAction {
@@ -226,6 +93,44 @@ pub enum InputAction {
     Ignore,
 }
 
+impl InputAction {
+    /// Validate percentage values are in [0, 1] range
+    fn validate(&self) -> Result<(), String> {
+        let check_percent = |v: Percent, name: &str| -> Result<(), String> {
+            if !(0.0..=1.0).contains(&v) {
+                Err(format!(
+                    "{} percentage {} must be in range [0.0, 1.0]",
+                    name, v
+                ))
+            } else {
+                Ok(())
+            }
+        };
+
+        match self {
+            Self::Tap { x, y }
+            | Self::TouchDown { x, y }
+            | Self::TouchMove { x, y }
+            | Self::TouchUp { x, y } => {
+                check_percent(*x, "x")?;
+                check_percent(*y, "y")?;
+            }
+            Self::Scroll { x, y, .. } => {
+                check_percent(*x, "x")?;
+                check_percent(*y, "y")?;
+            }
+            Self::Swipe { x1, y1, x2, y2, .. } => {
+                check_percent(*x1, "x1")?;
+                check_percent(*y1, "y1")?;
+                check_percent(*x2, "x2")?;
+                check_percent(*y2, "y2")?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct KeyMapping {
     inner: Arc<RwLock<HashMap<Key, InputAction>>>,
@@ -240,7 +145,7 @@ impl<'de> Deserialize<'de> for KeyMapping {
         struct RawMapping {
             key: Key,
             #[serde(flatten)]
-            action: RawInputAction,
+            action: InputAction,
         }
 
         let raw_mappings: Vec<RawMapping> = Deserialize::deserialize(deserializer)?;
@@ -250,11 +155,9 @@ impl<'de> Deserialize<'de> for KeyMapping {
             rm.action.validate().map_err(serde::de::Error::custom)?;
         }
 
-        // Keep percentage coordinates (0.0-1.0) as-is
-        // Will be converted to actual pixels in Profile::convert_to_pixels()
         let mut m = HashMap::new();
         raw_mappings.into_iter().for_each(|rm| {
-            m.insert(rm.key, rm.action.to_input_action());
+            m.insert(rm.key, rm.action);
         });
 
         Ok(KeyMapping {
