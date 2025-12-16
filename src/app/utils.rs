@@ -128,9 +128,12 @@ pub fn screen_to_device_coords(
     Some((device_x as u32, device_y as u32))
 }
 
-/// Convert device coordinates to screen coordinates in video rect
+/// Convert device percentage coordinates (0.0-1.0) to screen coordinates in video rect
+///
+/// This function accepts percentage coordinates from config/profile (0.0-1.0 range)
+/// and converts them to screen coordinates for display purposes
 pub fn device_to_screen_coords(
-    device_pos: (u32, u32),
+    device_percent: (f32, f32),
     transform_params: &CoordinatesTransformParams,
 ) -> Option<Pos2> {
     let (video_rect, video_rotation, device_physical_size, device_orientation, capture_orientation) = (
@@ -147,8 +150,9 @@ pub fn device_to_screen_coords(
     // 2. Video -> Device coords (apply total_rotation)
     //
     // We need to do:
-    // 1. Device -> Video coords (inverse total_rotation)
-    // 2. Video -> Screen coords (apply user rotation)
+    // 1. Device percentage -> Device pixels (scale by physical size)
+    // 2. Device -> Video coords (inverse total_rotation)
+    // 3. Video -> Screen coords (apply user rotation)
 
     let total_rotation = (capture_orientation + device_orientation) % 4;
 
@@ -170,8 +174,9 @@ pub fn device_to_screen_coords(
         (video_height, video_width)
     };
 
-    let device_x = device_pos.0 as f32;
-    let device_y = device_pos.1 as f32;
+    // Convert percentage to device pixels
+    let device_x = device_percent.0 * device_w;
+    let device_y = device_percent.1 * device_h;
 
     // Step 1: Inverse total rotation to get video original coordinates
     let (video_x, video_y) = match total_rotation {
@@ -233,16 +238,19 @@ pub fn device_to_screen_coords(
 }
 
 /// Find the nearest mapping to a given position
+///
+/// Note: Coordinates in mappings could be either percentage (0.0-1.0) or pixels (after
+/// convert_to_pixels) device_pos should be in the same coordinate space
 pub fn find_nearest_mapping(
-    device_pos: (u32, u32),
+    device_pos: (f32, f32),
     mappings: &KeyMapping,
-) -> Option<(Key, (u32, u32))> {
-    let mut nearest: Option<(Key, (u32, u32), f32)> = None;
+) -> Option<(Key, (f32, f32))> {
+    let mut nearest: Option<(Key, (f32, f32), f32)> = None;
 
     for (key, action) in mappings.read().iter() {
         if let Some((x, y)) = extract_position(action) {
-            let dx = device_pos.0 as f32 - x as f32;
-            let dy = device_pos.1 as f32 - y as f32;
+            let dx = device_pos.0 - x;
+            let dy = device_pos.1 - y;
             let distance = (dx * dx + dy * dy).sqrt();
 
             if let Some((_, _, min_dist)) = nearest {
@@ -258,8 +266,8 @@ pub fn find_nearest_mapping(
     nearest.map(|(key, pos, _)| (key, pos))
 }
 
-/// Extract position from AdbAction
-pub fn extract_position(action: &AdbAction) -> Option<(u32, u32)> {
+/// Extract position from AdbAction (as f32, could be percentage or pixels)
+pub fn extract_position(action: &AdbAction) -> Option<(f32, f32)> {
     match action {
         AdbAction::Tap { x, y } => Some((*x, *y)),
         AdbAction::TouchDown { x, y } => Some((*x, *y)),
@@ -369,6 +377,7 @@ pub fn screen_to_video_coords(
 /// 1. 设备坐标（考虑设备旋转） → 设备 portrait 坐标
 /// 2. 缩放（设备分辨率 → 视频分辨率）
 /// 3. 应用 capture_orientation（如果视频本身被旋转捕获）
+#[allow(dead_code)]
 pub fn device_to_video_coords(
     device_x: u32,
     device_y: u32,

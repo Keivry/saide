@@ -87,23 +87,13 @@ fn try_recover_decoder(
     // Strategy 2 DISABLED: Dimension swap doesn't work reliably
     // Reason: Network pipeline has delay, old frames still arriving
     // Swapping dimensions just causes ping-pong between wrong resolutions
-    warn!(
-        "❌ No SPS found in packet, cannot determine new resolution"
-    );
-    warn!(
-        "Device doesn't support prepend-sps-pps-to-idr-frames=1"
-    );
-    error!(
-        "NVDEC cannot handle resolution change without SPS. Suggestions:"
-    );
-    error!(
-        "  1. Use VAAPI or software decoder (set in config)"
-    );
-    error!(
-        "  2. Lock device rotation to prevent resolution changes"
-    );
-    
-    None  // Don't guess, just fail gracefully
+    warn!("❌ No SPS found in packet, cannot determine new resolution");
+    warn!("Device doesn't support prepend-sps-pps-to-idr-frames=1");
+    error!("NVDEC cannot handle resolution change without SPS. Suggestions:");
+    error!("  1. Use VAAPI or software decoder (set in config)");
+    error!("  2. Lock device rotation to prevent resolution changes");
+
+    None // Don't guess, just fail gracefully
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -475,12 +465,15 @@ fn stream_worker_with_streams(
     // Track last decoder rebuild time to prevent rapid rebuilds
     let mut last_decoder_rebuild: Option<std::time::Instant> = None;
     let mut frames_since_rebuild: u32 = 0;
-    let mut consecutive_rebuilds: u32 = 0;  // Track failed rebuilds
-    let mut waiting_for_keyframe_after_rebuild = false;  // Skip frames until keyframe
+    let mut consecutive_rebuilds: u32 = 0; // Track failed rebuilds
+    let mut waiting_for_keyframe_after_rebuild = false; // Skip frames until keyframe
 
     info!(
         "Decoders initialized: {} + Opus",
-        video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown")
+        video_decoder
+            .as_ref()
+            .map(|d| d.decoder_type())
+            .unwrap_or("Unknown")
     );
 
     // Shared state
@@ -555,9 +548,15 @@ fn stream_worker_with_streams(
                                 drop(old_decoder);
                                 video_decoder = Some(new_decoder);
                                 last_resolution = new_res;
-                        last_decoder_rebuild = Some(std::time::Instant::now());
-                        frames_since_rebuild = 0;
-                                info!("Decoder recreated: {}", video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown"));
+                                last_decoder_rebuild = Some(std::time::Instant::now());
+                                frames_since_rebuild = 0;
+                                info!(
+                                    "Decoder recreated: {}",
+                                    video_decoder
+                                        .as_ref()
+                                        .map(|d| d.decoder_type())
+                                        .unwrap_or("Unknown")
+                                );
 
                                 // Notify UI about resolution change
                                 let _ = event_tx.send(PlayerEvent::ResolutionChanged {
@@ -586,7 +585,11 @@ fn stream_worker_with_streams(
             }
 
             // Decode frame
-            let frame_opt = match video_decoder.as_mut().unwrap().decode(&video_packet.data, pts) {
+            let frame_opt = match video_decoder
+                .as_mut()
+                .unwrap()
+                .decode(&video_packet.data, pts)
+            {
                 Ok(frame) => frame,
                 Err(e) => {
                     // Max rebuilds: prevent infinite loop
@@ -601,21 +604,22 @@ fn stream_worker_with_streams(
                         error!("Solution: Use VAAPI or software decoder (see docs/pitfalls.md)");
                         error!("Stopping video decode thread...");
                         return Err(anyhow::anyhow!(
-                            "NVDEC decoder failed after {} rebuild attempts", 
+                            "NVDEC decoder failed after {} rebuild attempts",
                             MAX_CONSECUTIVE_REBUILDS
                         ));
                     }
-                    
+
                     // Cooldown period: prevent rapid decoder rebuilds (skip first rebuild)
                     if let Some(last_rebuild_time) = last_decoder_rebuild {
                         let elapsed_since_rebuild = last_rebuild_time.elapsed();
-                        const MIN_REBUILD_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+                        const MIN_REBUILD_INTERVAL: std::time::Duration =
+                            std::time::Duration::from_secs(2);
                         const MIN_FRAMES_BEFORE_REBUILD: u32 = 10;
-                        
+
                         // Only attempt recovery if enough time/frames have passed
                         let can_rebuild = elapsed_since_rebuild >= MIN_REBUILD_INTERVAL
                             || frames_since_rebuild >= MIN_FRAMES_BEFORE_REBUILD;
-                        
+
                         if !can_rebuild {
                             trace!(
                                 "Skipping decoder rebuild (cooldown: {:.1}s elapsed, {} frames since last rebuild)",
@@ -626,21 +630,24 @@ fn stream_worker_with_streams(
                             continue;
                         }
                     }
-                    
+
                     // Try to recover from NVDEC resolution change (for devices without SPS
                     // prepending)
-                    
+
                     // Increment rebuild counter BEFORE attempting recovery
                     consecutive_rebuilds += 1;
                     debug!("Rebuild attempt {}/3", consecutive_rebuilds);
-                    
+
                     // Flush old decoder before rebuilding to ensure clean state
-                    let decoder_type = video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown");
+                    let decoder_type = video_decoder
+                        .as_ref()
+                        .map(|d| d.decoder_type())
+                        .unwrap_or("Unknown");
                     if let Some(ref mut decoder) = video_decoder {
                         let _ = decoder.flush();
                     }
                     trace!("Flushed old decoder before rebuild");
-                    
+
                     if let Some(new_decoder) = try_recover_decoder(
                         &e.to_string(),
                         &video_packet.data,
@@ -651,23 +658,23 @@ fn stream_worker_with_streams(
                             AutoDecoder::Nvdec(d) => (d.width(), d.height()),
                             AutoDecoder::Vaapi(_) | AutoDecoder::Software(_) => last_resolution,
                         };
-                        
+
                         // Explicit lifecycle management for NVDEC:
                         // 1. Take old decoder out (triggers drop)
                         let old_decoder = video_decoder.take();
                         drop(old_decoder);
                         debug!("Old decoder dropped, waiting for CUDA cleanup...");
-                        
+
                         // 2. Brief pause to ensure CUDA context cleanup
                         std::thread::sleep(std::time::Duration::from_millis(50));
-                        
+
                         // 3. Install new decoder
                         video_decoder = Some(new_decoder);
                         debug!("New decoder installed");
                         last_resolution = new_res;
                         last_decoder_rebuild = Some(std::time::Instant::now());
                         frames_since_rebuild = 0;
-                        waiting_for_keyframe_after_rebuild = true;  // Wait for keyframe
+                        waiting_for_keyframe_after_rebuild = true; // Wait for keyframe
 
                         let _ = event_tx.send(PlayerEvent::ResolutionChanged {
                             width: new_res.0,
@@ -820,12 +827,15 @@ fn stream_worker(
     // Track last decoder rebuild time to prevent rapid rebuilds
     let mut last_decoder_rebuild: Option<std::time::Instant> = None;
     let mut frames_since_rebuild: u32 = 0;
-    let mut consecutive_rebuilds: u32 = 0;  // Track failed rebuilds
-    let mut waiting_for_keyframe_after_rebuild = false;  // Skip frames until keyframe
+    let mut consecutive_rebuilds: u32 = 0; // Track failed rebuilds
+    let mut waiting_for_keyframe_after_rebuild = false; // Skip frames until keyframe
 
     info!(
         "Decoders initialized: {} + Opus",
-        video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown")
+        video_decoder
+            .as_ref()
+            .map(|d| d.decoder_type())
+            .unwrap_or("Unknown")
     );
 
     // Shared state
@@ -896,9 +906,15 @@ fn stream_worker(
                                 drop(old_decoder);
                                 video_decoder = Some(new_decoder);
                                 last_resolution = new_res;
-                        last_decoder_rebuild = Some(std::time::Instant::now());
-                        frames_since_rebuild = 0;
-                                info!("Decoder recreated: {}", video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown"));
+                                last_decoder_rebuild = Some(std::time::Instant::now());
+                                frames_since_rebuild = 0;
+                                info!(
+                                    "Decoder recreated: {}",
+                                    video_decoder
+                                        .as_ref()
+                                        .map(|d| d.decoder_type())
+                                        .unwrap_or("Unknown")
+                                );
 
                                 // Notify UI about resolution change
                                 let _ = event_tx.send(PlayerEvent::ResolutionChanged {
@@ -927,7 +943,11 @@ fn stream_worker(
             }
 
             // Decode frame
-            let frame_opt = match video_decoder.as_mut().unwrap().decode(&video_packet.data, pts) {
+            let frame_opt = match video_decoder
+                .as_mut()
+                .unwrap()
+                .decode(&video_packet.data, pts)
+            {
                 Ok(frame) => frame,
                 Err(e) => {
                     // Max rebuilds: prevent infinite loop
@@ -942,21 +962,22 @@ fn stream_worker(
                         error!("Solution: Use VAAPI or software decoder (see docs/pitfalls.md)");
                         error!("Stopping video decode thread...");
                         return Err(anyhow::anyhow!(
-                            "NVDEC decoder failed after {} rebuild attempts", 
+                            "NVDEC decoder failed after {} rebuild attempts",
                             MAX_CONSECUTIVE_REBUILDS
                         ));
                     }
-                    
+
                     // Cooldown period: prevent rapid decoder rebuilds (skip first rebuild)
                     if let Some(last_rebuild_time) = last_decoder_rebuild {
                         let elapsed_since_rebuild = last_rebuild_time.elapsed();
-                        const MIN_REBUILD_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+                        const MIN_REBUILD_INTERVAL: std::time::Duration =
+                            std::time::Duration::from_secs(2);
                         const MIN_FRAMES_BEFORE_REBUILD: u32 = 10;
-                        
+
                         // Only attempt recovery if enough time/frames have passed
                         let can_rebuild = elapsed_since_rebuild >= MIN_REBUILD_INTERVAL
                             || frames_since_rebuild >= MIN_FRAMES_BEFORE_REBUILD;
-                        
+
                         if !can_rebuild {
                             trace!(
                                 "Skipping decoder rebuild (cooldown: {:.1}s elapsed, {} frames since last rebuild)",
@@ -967,21 +988,24 @@ fn stream_worker(
                             continue;
                         }
                     }
-                    
+
                     // Try to recover from NVDEC resolution change (for devices without SPS
                     // prepending)
-                    
+
                     // Increment rebuild counter BEFORE attempting recovery
                     consecutive_rebuilds += 1;
                     debug!("Rebuild attempt {}/3", consecutive_rebuilds);
-                    
+
                     // Flush old decoder before rebuilding to ensure clean state
-                    let decoder_type = video_decoder.as_ref().map(|d| d.decoder_type()).unwrap_or("Unknown");
+                    let decoder_type = video_decoder
+                        .as_ref()
+                        .map(|d| d.decoder_type())
+                        .unwrap_or("Unknown");
                     if let Some(ref mut decoder) = video_decoder {
                         let _ = decoder.flush();
                     }
                     trace!("Flushed old decoder before rebuild");
-                    
+
                     if let Some(new_decoder) = try_recover_decoder(
                         &e.to_string(),
                         &video_packet.data,
@@ -992,23 +1016,23 @@ fn stream_worker(
                             AutoDecoder::Nvdec(d) => (d.width(), d.height()),
                             AutoDecoder::Vaapi(_) | AutoDecoder::Software(_) => last_resolution,
                         };
-                        
+
                         // Explicit lifecycle management for NVDEC:
                         // 1. Take old decoder out (triggers drop)
                         let old_decoder = video_decoder.take();
                         drop(old_decoder);
                         debug!("Old decoder dropped, waiting for CUDA cleanup...");
-                        
+
                         // 2. Brief pause to ensure CUDA context cleanup
                         std::thread::sleep(std::time::Duration::from_millis(50));
-                        
+
                         // 3. Install new decoder
                         video_decoder = Some(new_decoder);
                         debug!("New decoder installed");
                         last_resolution = new_res;
                         last_decoder_rebuild = Some(std::time::Instant::now());
                         frames_since_rebuild = 0;
-                        waiting_for_keyframe_after_rebuild = true;  // Wait for keyframe
+                        waiting_for_keyframe_after_rebuild = true; // Wait for keyframe
 
                         let _ = event_tx.send(PlayerEvent::ResolutionChanged {
                             width: new_res.0,

@@ -381,13 +381,62 @@ cargo run --example render_avsync [device_serial]
 
 ## 进行中 🔄 (2025-12-15)
 
-### 鼠标拖动优化
-- [ ] 诊断鼠标拖动卡顿问题
-- [ ] 优化事件频率或坐标转换逻辑
-
 ---
 
 ## ✅ 已完成 (2025-12-15)
+
+### 键盘映射坐标系统重构：百分比架构优化
+ 
+**目标**：Profile 保持百分比坐标，KeyboardMapper 内部维护像素映射
+
+**架构设计**：
+```
+配置文件 (config.toml)
+  ↓ 反序列化
+Profile (百分比 0.0-1.0)  ←── 映射配置窗口直接读取
+  ↓ refresh_profiles
+KeyboardMapper.pixel_mappings (像素)  ←── 发送到设备时使用
+```
+
+**完成内容**：
+- [x] 重构 KeyboardMapper 架构
+  - 新增 pixel_mappings 字段存储转换后的像素坐标
+  - refresh_profiles 时调用 update_pixel_mappings 转换
+  - Profile 中始终保持百分比坐标不变
+  
+- [x] 删除 Profile::convert_to_pixels 方法
+  - 不再修改 Profile 内部坐标
+  - 转换逻辑移至 KeyboardMapper::update_pixel_mappings
+  
+- [x] 修复映射配置窗口显示
+  - 直接从 Profile 读取百分比坐标
+  - device_to_screen_coords 正确处理百分比输入
+  - 映射标记正确显示在屏幕上
+  
+- [x] 更新坐标转换流程
+  - 配置文件 → Profile：保持百分比
+  - Profile → KeyboardMapper：转换为像素（仅内部使用）
+  - 映射配置窗口：直接读取 Profile 百分比
+  - 对话框显示：百分比 * 100 → 0-100%
+
+**技术细节**：
+- Profile 坐标：始终为 0.0-1.0 百分比
+- pixel_mappings：百分比 * 视频尺寸 → 像素
+- 映射显示：百分比 → device_to_screen_coords → 屏幕坐标
+- 发送到设备：pixel_mappings 中的像素坐标
+
+**优势**：
+- ✅ Profile 可序列化保存（始终为百分比）
+- ✅ 映射配置窗口直接读取原始百分比
+- ✅ 无需反复转换，性能更好
+- ✅ 代码逻辑更清晰，职责分离
+
+**测试结果**：
+- ✅ 所有单元测试通过 (38/38)
+- ✅ 编译零警告（-D warnings）
+- ✅ 映射配置窗口正确显示已加载映射
+
+---
 
 ### 输入控制重构：使用 scrcpy 控制通道
 

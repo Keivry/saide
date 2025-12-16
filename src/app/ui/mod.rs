@@ -1,7 +1,6 @@
 mod dialog;
 mod indicator;
 mod mapping;
-mod player;
 mod saide;
 mod stream_player;
 mod toolbar;

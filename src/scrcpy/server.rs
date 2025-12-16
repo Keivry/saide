@@ -127,11 +127,11 @@ impl ServerParams {
     pub fn should_lock_orientation_for_nvdec() -> bool {
         // Check if NVIDIA GPU is available
         // This is a simple heuristic - actual decoder selection happens later
-        if let Ok(content) = std::fs::read_to_string("/proc/driver/nvidia/version") {
-            if !content.is_empty() {
-                info!("NVIDIA GPU detected, will lock capture orientation for NVDEC");
-                return true;
-            }
+        if let Ok(content) = std::fs::read_to_string("/proc/driver/nvidia/version")
+            && !content.is_empty()
+        {
+            info!("NVIDIA GPU detected, will lock capture orientation for NVDEC");
+            return true;
         }
         false
     }
@@ -241,7 +241,10 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
     // 🔒 NVDEC WORKAROUND: Lock capture orientation to prevent resolution changes
     if let Some(ref orientation) = params.capture_orientation {
         args.push(format!("capture_orientation={}", orientation));
-        info!("Locked capture orientation: {} (prevents resolution changes)", orientation);
+        info!(
+            "Locked capture orientation: {} (prevents resolution changes)",
+            orientation
+        );
     }
 
     // Audio parameters

@@ -404,4 +404,108 @@ if has_nvidia_gpu() {
 
 ---
 
-**最后更新**: 2025-12-15
+## 输入映射（新增）
+
+### 13. 键盘映射坐标系与 capture-orientation 锁定问题 (2025-12-16) ✅ 已解决
+
+**问题现象**：
+- 使用 NVDEC 时，`capture-orientation=@0` 锁定视频方向为设备自然方向（0°竖屏）
+- 用户将设备旋转到横屏（rotation=1, 90° CCW），触发 Profile 切换到 `rotation=1` 的配置
+- 但键盘映射按键位置完全错误，点击目标不在预期位置
+
+**根本原因**：
+**Profile 坐标系与视频坐标系不一致**
+
+1. **Profile.rotation**：记录配置对应的设备旋转角度（CCW，逆时针）
+   - `rotation=0`: 0° 竖屏
+   - `rotation=1`: 90° CCW 横屏（设备向左转）
+   - `rotation=2`: 180°
+   - `rotation=3`: 270° CCW 横屏（设备向右转）
+
+2. **Profile 坐标系**：百分比坐标（0.0-1.0）基于 `profile.rotation` 对应的设备方向
+   - 例如 `rotation=1` 的配置，坐标是基于"横屏设备"的坐标系
+
+3. **视频坐标系（未锁定 capture-orientation）**：
+   - 视频方向跟随设备旋转
+   - `profile.rotation == device_orientation` 时 Profile 才匹配
+   - 此时坐标系一致，直接缩放百分比即可
+
+4. **视频坐标系（锁定 capture-orientation=@0）**：
+   - **视频方向始终为 0°（设备自然方向/竖屏）**
+   - 设备旋转到 `rotation=1` 时，Profile 被激活
+   - 但视频坐标系仍是 0°，而 Profile 坐标是 90° CCW 坐标系
+   - **坐标系不匹配 → 映射位置错误**
+
+**错误代码**：
+```rust
+// ❌ 直接缩放，未考虑旋转差异
+let (px, py) = (x_percent * video_width as f32, y_percent * video_height as f32);
+```
+
+**正确解决方案**：
+```rust
+/// 转换坐标时考虑 profile.rotation 与视频坐标系（0°）的差异
+let transform_coord = |x_percent: f32, y_percent: f32| -> (f32, f32) {
+    if !capture_orientation_locked {
+        // 未锁定：视频坐标系跟随设备，直接缩放
+        (x_percent * video_width as f32, y_percent * video_height as f32)
+    } else {
+        // 锁定：视频坐标系固定为 0°，需要旋转变换
+        match profile.rotation {
+            0 => (x_percent * video_width as f32, y_percent * video_height as f32),
+            1 => {
+                // Profile 坐标是 90° CCW 坐标系
+                // 转换到 0°：(x', y') -> (y', 1-x')
+                (y_percent * video_width as f32, (1.0 - x_percent) * video_height as f32)
+            }
+            2 => {
+                // Profile 坐标是 180° 坐标系
+                // 转换到 0°：(x', y') -> (1-x', 1-y')
+                ((1.0 - x_percent) * video_width as f32, (1.0 - y_percent) * video_height as f32)
+            }
+            3 => {
+                // Profile 坐标是 270° CCW 坐标系
+                // 转换到 0°：(x', y') -> (1-y', x')
+                ((1.0 - y_percent) * video_width as f32, x_percent * video_height as f32)
+            }
+            _ => (x_percent * video_width as f32, y_percent * video_height as f32),
+        }
+    }
+};
+```
+
+**关键理解**：
+1. **Android Display Rotation（device_orientation）**：逆时针（CCW）
+   - 参考：`android.view.Surface.ROTATION_*`
+2. **scrcpy capture-orientation**：顺时针（CW）表示，但内部转换为 CCW
+   - 参考：`Orientation.java` line 37: `int cwRotation = (4 - ccwRotation) % 4`
+3. **Profile.rotation 跟随 Android Display Rotation**（CCW）
+4. **capture-orientation=@0 锁定后，视频固定为设备自然方向（0°）**
+
+**实现修改**：
+1. 在 `SAideApp` 中添加 `capture_orientation_locked: bool` 字段
+2. 在 `InitEvent::ConnectionReady` 中传递该标志
+3. 在 `KeyboardMapper::refresh_profiles()` 中接收参数
+4. 在 `KeyboardMapper::update_pixel_mappings()` 中应用旋转变换
+
+**测试验证**：
+- 设备竖屏（rotation=0），Profile rotation=0：✅ 坐标正确
+- 设备横屏（rotation=1），Profile rotation=1，capture locked：✅ 坐标自动转换正确
+- 设备横屏（rotation=1），Profile rotation=1，capture unlocked：✅ 直接缩放正确
+- 其他旋转角度（2, 3）：✅ 变换公式对称
+
+**关键教训**：
+1. **理解坐标系变换**：多个坐标系（Profile/视频/设备）需明确基准方向
+2. **注意旋转方向定义**：CCW vs CW，不同系统定义不同
+3. **锁定方向的副作用**：`capture-orientation` 锁定会导致坐标系不跟随设备旋转
+4. **Profile.rotation 语义**：记录的是"配置对应的设备方向"，不是"视频方向"
+
+**代码位置**：
+- `src/controller/keyboard.rs` - 坐标转换逻辑（update_pixel_mappings）
+- `src/app/init.rs` - capture_orientation_locked 标志传递
+- `src/app/ui/saide.rs` - 状态存储和 refresh_profiles 调用
+- `3rd-party/scrcpy/server/.../Orientation.java` - 旋转方向定义参考
+
+---
+
+**最后更新**: 2025-12-16

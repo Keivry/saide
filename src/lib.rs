@@ -5,7 +5,6 @@ pub mod decoder;
 pub mod scrcpy;
 pub mod sync;
 pub mod utils;
-pub mod v4l2;
 
 pub use {
     decoder::{

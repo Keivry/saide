@@ -14,7 +14,7 @@ const DRAG_THRESHOLD: f32 = 5.0;
 /// Long press duration threshold (in milliseconds)
 const LONG_PRESS_DURATION_MS: u128 = 300;
 /// Drag update interval (in milliseconds) - send every move event for smooth dragging
-const DRAG_UPDATE_INTERVAL_MS: u128 = 8;  // ~120fps, matches typical mouse polling rate
+const DRAG_UPDATE_INTERVAL_MS: u128 = 8; // ~120fps, matches typical mouse polling rate
 
 /// Mouse button state for tracking press/drag/long-press
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,7 +281,7 @@ impl MouseMapper {
                 if elapsed >= DRAG_UPDATE_INTERVAL_MS {
                     self.sender.send_touch_move(x, y)?;
                     trace!("Drag move to ({}, {}) [elapsed={}ms]", x, y, elapsed);
-                    
+
                     // Update state with new timestamp
                     self.update_button_state(MouseState::Dragging {
                         start_x,

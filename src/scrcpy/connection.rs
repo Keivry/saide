@@ -71,7 +71,7 @@ impl ScrcpyConnection {
 
         // Step 0: Check Android version and disable audio if unsupported
         let mut audio_disabled_reason = None;
-        
+
         if params.audio {
             let android_version = super::server::get_android_version(serial)
                 .context("Failed to get Android version")?;

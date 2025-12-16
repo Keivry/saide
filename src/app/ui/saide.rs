@@ -9,7 +9,6 @@ use {
             },
             utils::{
                 CoordinatesTransformParams,
-                device_to_video_coords,
                 find_nearest_mapping,
                 screen_to_device_coords,
                 screen_to_video_coords,
@@ -90,6 +89,9 @@ pub struct SAideApp {
     /// Device orientation (0-3), clockwise
     device_orientation: u32,
 
+    /// Whether capture-orientation is locked (NVDEC mode)
+    capture_orientation_locked: bool,
+
     /// Audio disabled warning message (if audio was requested but unavailable)
     audio_warning: Option<String>,
 
@@ -160,6 +162,8 @@ impl SAideApp {
 
             device_orientation: 0,
 
+            capture_orientation_locked: false,
+
             audio_warning: None,
 
             window_initialized: false,
@@ -214,11 +218,18 @@ impl SAideApp {
                         video_resolution,
                         device_name,
                         audio_disabled_reason,
+                        capture_orientation_locked,
                     } => {
                         info!(
-                            "ScrcpyConnection ready: {}x{}, device: {:?}",
-                            video_resolution.0, video_resolution.1, device_name
+                            "ScrcpyConnection ready: {}x{}, device: {:?}, capture_orientation_locked: {}",
+                            video_resolution.0,
+                            video_resolution.1,
+                            device_name,
+                            capture_orientation_locked
                         );
+
+                        // Store capture orientation lock state
+                        self.capture_orientation_locked = capture_orientation_locked;
 
                         // Store audio warning if present
                         self.audio_warning = audio_disabled_reason;
@@ -375,26 +386,45 @@ impl SAideApp {
                 self.mapping_config_window.hide();
             }
             MappingConfigEvent::RequestAddMapping(screen_pos) => {
-                // Convert screen position to device coordinates
-                if let Some(device_pos) =
+                // Convert screen position to percentage coordinates (0-1)
+                if let Some(device_px) =
                     screen_to_device_coords(&screen_pos, &self.coodinates_transform_params())
                 {
-                    info!("Requesting to add mapping at device pos: {:?}", device_pos);
+                    // Convert device pixels to percentage (0-1)
+                    let device_size = self.device_physical_size;
+                    let device_pos = (
+                        device_px.0 as f32 / device_size.0 as f32,
+                        device_px.1 as f32 / device_size.1 as f32,
+                    );
+                    info!(
+                        "Requesting to add mapping at percentage pos: ({:.4}, {:.4})",
+                        device_pos.0, device_pos.1
+                    );
                     self.mapping_config_window.request_input_dialog(device_pos);
                 }
             }
             MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
                 // Find nearest mapping to delete
-                if let Some((nearest_key, nearest_pos)) =
+                if let Some(device_px) =
                     screen_to_device_coords(&screen_pos, &self.coodinates_transform_params())
-                        .and_then(|device_pos| find_nearest_mapping(device_pos, &mappings))
                 {
-                    info!(
-                        "Requesting to delete mapping: {:?} at {:?}",
-                        nearest_key, nearest_pos
+                    // Convert device pixels to percentage (0-1) for find_nearest_mapping
+                    let device_size = self.device_physical_size;
+                    let device_percent = (
+                        device_px.0 as f32 / device_size.0 as f32,
+                        device_px.1 as f32 / device_size.1 as f32,
                     );
-                    self.mapping_config_window
-                        .request_delete_dialog(nearest_key, nearest_pos);
+
+                    if let Some((nearest_key, nearest_pos)) =
+                        find_nearest_mapping(device_percent, &mappings)
+                    {
+                        info!(
+                            "Requesting to delete mapping: {:?} at ({:.4}, {:.4})",
+                            nearest_key, nearest_pos.0, nearest_pos.1
+                        );
+                        self.mapping_config_window
+                            .request_delete_dialog(nearest_key, nearest_pos);
+                    }
                 }
             }
             MappingConfigEvent::None => {}
@@ -436,9 +466,12 @@ impl SAideApp {
         }
     }
 
-    /// Add a new mapping
-    fn add_mapping(&mut self, key: Key, device_pos: (u32, u32)) {
-        info!("Adding mapping: {:?} -> {:?}", key, device_pos);
+    /// Add a new mapping (expects percentage coordinates 0.0-1.0)
+    fn add_mapping(&mut self, key: Key, device_pos: (f32, f32)) {
+        info!(
+            "Adding mapping: {:?} -> ({:.4}, {:.4})",
+            key, device_pos.0, device_pos.1
+        );
 
         let Some(keyboard_mapper) = &self.keyboard_mapper else {
             error!("Keyboard mapper not initialized");
@@ -446,7 +479,7 @@ impl SAideApp {
         };
 
         if let Some(profile) = keyboard_mapper.get_active_profile() {
-            // Create new profile with added mapping
+            // Create new action with percentage coordinates
             let action = AdbAction::Tap {
                 x: device_pos.0,
                 y: device_pos.1,
@@ -796,7 +829,11 @@ impl SAideApp {
                 }
             };
 
-        match keyboard_mapper.refresh_profiles(device_id, self.device_orientation) {
+        match keyboard_mapper.refresh_profiles(
+            device_id,
+            self.device_orientation,
+            self.capture_orientation_locked,
+        ) {
             Ok(_) => {
                 let avail_profile_names = keyboard_mapper.get_avail_profiles();
                 let active_profile_name = keyboard_mapper.get_active_profile_name();
@@ -938,20 +975,27 @@ impl eframe::App for SAideApp {
             egui::Area::new(egui::Id::new("audio_warning"))
                 .fixed_pos(egui::pos2(10.0, 10.0))
                 .show(ctx, |ui| {
-                    egui::Frame::none()
+                    egui::Frame::new()
                         .fill(egui::Color32::from_rgba_unmultiplied(40, 40, 40, 220))
-                        .rounding(5.0)
+                        .corner_radius(5.0)
                         .inner_margin(10.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("⚠").color(egui::Color32::YELLOW).size(20.0));
+                                ui.label(
+                                    egui::RichText::new("⚠")
+                                        .color(egui::Color32::YELLOW)
+                                        .size(20.0),
+                                );
                                 ui.vertical(|ui| {
                                     ui.label(
                                         egui::RichText::new("Audio Not Available")
                                             .color(egui::Color32::YELLOW)
-                                            .strong()
+                                            .strong(),
                                     );
-                                    ui.label(egui::RichText::new(&warning).color(egui::Color32::LIGHT_GRAY));
+                                    ui.label(
+                                        egui::RichText::new(&warning)
+                                            .color(egui::Color32::LIGHT_GRAY),
+                                    );
                                 });
                                 if ui.button("✖").clicked() {
                                     close_clicked = true;

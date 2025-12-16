@@ -43,6 +43,7 @@ pub enum InitEvent {
         video_resolution: (u32, u32),
         device_name: Option<String>,
         audio_disabled_reason: Option<String>,
+        capture_orientation_locked: bool,
     },
     KeyboardMapper(KeyboardMapper),
     MouseMapper(MouseMapper),
@@ -116,14 +117,13 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
             }
 
             // Poll input method state
-            if let Ok(im_state) = AdbShell::get_ime_state() {
-                if event_tx
+            if let Ok(im_state) = AdbShell::get_ime_state()
+                && event_tx
                     .send(DeviceMonitorEvent::ImStateChanged(im_state))
                     .is_err()
-                {
-                    debug!("IME event channel disconnected, stopping monitor");
-                    break;
-                }
+            {
+                debug!("IME event channel disconnected, stopping monitor");
+                break;
             }
 
             thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
@@ -146,11 +146,13 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         let serial = AdbShell::get_device_id()?;
         debug!("Connecting to device: {}", serial);
 
+        // 检测是否需要锁定 capture_orientation（需要在 async 闭包之前）
+        use crate::scrcpy::server::ServerParams;
+        let capture_orientation_locked = ServerParams::should_lock_orientation_for_nvdec();
+
         // Establish ScrcpyConnection (blocking)
         let runtime = tokio::runtime::Runtime::new()?;
         let mut connection = runtime.block_on(async {
-            use crate::scrcpy::server::ServerParams;
-
             let server_jar_path = "3rd-party/scrcpy-server-v3.3.3";
 
             // Create server params from config
@@ -188,16 +190,12 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
             // - Avoid decoder rebuild overhead (~200ms + black screen)
             // - No need for prepend-sps-pps-to-idr-frames=1 (compatibility)
             // - More stable, works on all devices
-            if ServerParams::should_lock_orientation_for_nvdec() {
+            if capture_orientation_locked {
                 // Lock to current device orientation (absolute)
                 // @0 = lock to 0° (portrait), follows device's natural orientation
                 params.capture_orientation = Some("@0".to_string());
-                info!(
-                    "🔒 Locked capture orientation for NVDEC (prevents resolution changes)"
-                );
-                info!(
-                    "Video orientation fixed, decoder never needs rebuilding"
-                );
+                info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
+                info!("Video orientation fixed, decoder never needs rebuilding");
             }
 
             ScrcpyConnection::connect(&serial, server_jar_path, params)
@@ -239,8 +237,8 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         );
 
         info!(
-            "ControlSender created with resolution {}x{}",
-            video_resolution.0, video_resolution.1
+            "ControlSender created with resolution {}x{}, capture_orientation_locked={}",
+            video_resolution.0, video_resolution.1, capture_orientation_locked
         );
 
         // Put the original control_stream back into connection to keep it alive
@@ -255,6 +253,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
             video_resolution,
             device_name,
             audio_disabled_reason,
+            capture_orientation_locked,
         })?;
 
         // Now create keyboard mapper (if enabled)
