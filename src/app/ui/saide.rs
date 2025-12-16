@@ -869,12 +869,20 @@ impl SAideApp {
                         // Get the target state from toolbar
                         let screen_on = self.toolbar.get_screen_state();
 
-                        // Send SetDisplayPower command
-                        // This only turns off the backlight, not lock the device
-                        if let Err(e) = sender.send_set_display_power(screen_on) {
-                            error!("Failed to set screen power: {}", e);
+                        if screen_on {
+                            // Turn ON: Use POWER key to wake up (restores brightness)
+                            if let Err(e) = sender.send_wake_screen() {
+                                error!("Failed to wake screen: {}", e);
+                            } else {
+                                info!("Screen woken up (KEYCODE_POWER)");
+                            }
                         } else {
-                            info!("Screen backlight: {}", if screen_on { "ON" } else { "OFF" });
+                            // Turn OFF: Use SetDisplayPower(false) to turn off backlight
+                            if let Err(e) = sender.send_set_display_power(false) {
+                                error!("Failed to turn off screen: {}", e);
+                            } else {
+                                info!("Screen backlight OFF");
+                            }
                         }
                     }
                 }

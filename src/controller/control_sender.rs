@@ -107,6 +107,14 @@ impl ControlSender {
         self.send_message(&msg)
     }
 
+    /// Turn screen on by pressing POWER key (recommended for waking up)
+    /// This is more reliable than SetDisplayPower(true) as it also restores brightness
+    pub fn send_wake_screen(&self) -> Result<()> {
+        // Use KEYCODE_POWER to wake up the screen
+        // This also restores the brightness automatically
+        self.send_key_press(26, 0) // KEYCODE_POWER = 26
+    }
+
     /// Send text injection
     pub fn send_text(&self, text: &str) -> Result<()> {
         let msg = ControlMessage::InjectText {
