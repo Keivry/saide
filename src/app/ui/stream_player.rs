@@ -31,11 +31,10 @@ use {
     tracing::{debug, error, info, trace, warn},
 };
 
-// Low latency mode: keep only 1 frame in buffer
-// Older frames are dropped to minimize latency
-// Use 2 frame buffer to avoid blocking decoder when UI is slow
-// Too large buffer increases latency, too small blocks decoder
-const FRAME_BUFFER_SIZE: usize = 2;
+// Ultra-low latency mode: single frame buffer
+// Decoder uses try_send(), drops frame if UI is slow (non-blocking)
+// This ensures absolute minimal latency for real-time screen mirroring
+const FRAME_BUFFER_SIZE: usize = 1;
 const STATS_BUFFER_SIZE: usize = 100;
 
 use crate::decoder::extract_resolution_from_stream;
