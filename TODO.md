@@ -675,19 +675,41 @@ cargo run
 **文档**：docs/pitfalls.md #13
 
 
+## 待修复 🐛 (2025-12-16)
+
+### 问题 1: 配置文件 turn_screen_off 未生效
+**现象**: `config.toml` 中 `turn_screen_off = true` 不起作用  
+**原因**: 待排查是否正确读取并传递到 scrcpy-server  
+**优先级**: 高
+
+### 问题 2: 配置文件 stay_awake 未生效
+**现象**: `config.toml` 中 `stay_awake = true` 不起作用  
+**原因**: 待排查是否正确读取并传递到 scrcpy-server  
+**优先级**: 中
+
+### 问题 3: 鼠标映射位置偏移
+**现象**: 点击位置映射到设备上总是偏上一点  
+**原因**: 可能与视频渲染区域的 padding 有关  
+  - 重构前：视频画面填满整个窗口  
+  - 重构后：视频区域周围有空白边距  
+**影响**: 点击精度下降，游戏操作不准确  
+**优先级**: 高
+
+---
+
 ## 已完成 ✅ (2025-12-16 深夜)
 
-### 实现关闭设备屏幕功能
+### 关闭设备屏幕功能实现
 
 **功能**：
-- 启动时自动关闭设备屏幕（config: `turn_screen_off = true`）
-- 工具栏新增💡按钮，点击切换屏幕开/关
+- 工具栏新增💡按钮，点击关闭设备屏幕
 - 使用 scrcpy `SetDisplayPower` 控制消息
+- 唤醒功能移除（让用户按物理电源键）
 
 **实现**：
-- ServerParams 新增 `stay_awake` 和 `screen_off_timeout` 参数
+- ServerParams 新增 `stay_awake` 和 `power_off_on_close` 参数
 - ControlSender 新增 `send_set_display_power()` 方法
-- Toolbar 新增 `ToggleScreenPower` 事件
+- Toolbar 新增 `TurnScreenOff` 按钮事件
 
 **收益**：
 - 降低设备功耗
@@ -697,10 +719,10 @@ cargo run
 **配置**：
 ```toml
 [scrcpy.options]
-turn_screen_off = true  # 默认启用
-stay_awake = true
+turn_screen_off = true  # 启动时关闭屏幕（待修复）
+stay_awake = true       # 防止休眠（待修复）
 ```
 
 **代码**: 5 个文件, +45 行
 
-**测试**: ✅ 编译通过，待实际设备验证
+**测试**: ✅ 手动点击按钮可以关闭屏幕

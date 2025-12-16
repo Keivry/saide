@@ -297,6 +297,14 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
         args.push("send_device_meta=false".to_string());
     }
 
+    // Power management options
+    if params.stay_awake {
+        args.push("stay_awake=true".to_string());
+    }
+    if let Some(timeout) = params.screen_off_timeout {
+        args.push(format!("power_off_on_close={}", timeout));
+    }
+
     args
 }
 
