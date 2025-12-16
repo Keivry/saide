@@ -505,9 +505,29 @@ fn stream_worker_with_streams(
         let stats_audio = stats.clone();
         Some(thread::spawn(move || {
             match (|| -> Result<()> {
+                let mut consecutive_read_errors = 0u32;
+                const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
+
                 loop {
+                    // Read header with error tolerance
                     let mut header = [0u8; 12];
-                    audio_stream.read_exact(&mut header)?;
+                    if let Err(e) = audio_stream.read_exact(&mut header) {
+                        consecutive_read_errors += 1;
+
+                        if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
+                            return Err(e.into());
+                        }
+
+                        warn!(
+                            "Audio header read error ({}/{}): {} - skipping",
+                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    }
+
+                    consecutive_read_errors = 0; // Reset on success
+
                     let packet_size =
                         u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
                     let pts = i64::from_be_bytes([
@@ -515,8 +535,22 @@ fn stream_worker_with_streams(
                         header[6], header[7],
                     ]);
 
+                    // Read payload with error tolerance
                     let mut payload = vec![0u8; packet_size];
-                    audio_stream.read_exact(&mut payload)?;
+                    if let Err(e) = audio_stream.read_exact(&mut payload) {
+                        consecutive_read_errors += 1;
+
+                        if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
+                            return Err(e.into());
+                        }
+
+                        warn!(
+                            "Audio payload read error ({}/{}): {} - skipping",
+                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    }
 
                     {
                         let mut s = stats_audio.lock().unwrap();
