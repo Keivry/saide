@@ -107,12 +107,16 @@ impl ControlSender {
         self.send_message(&msg)
     }
 
-    /// Turn screen on by pressing POWER key (recommended for waking up)
-    /// This is more reliable than SetDisplayPower(true) as it also restores brightness
+    /// Turn screen on by toggling power mode (workaround for brightness issue)
+    /// Some devices don't restore brightness with single SetDisplayPower(true)
+    /// Solution: Send OFF then ON to trigger full power cycle
     pub fn send_wake_screen(&self) -> Result<()> {
-        // Use KEYCODE_POWER to wake up the screen
-        // This also restores the brightness automatically
-        self.send_key_press(26, 0) // KEYCODE_POWER = 26
+        // Workaround: Toggle power mode to restore brightness
+        // OFF -> ON transition triggers brightness restoration
+        self.send_set_display_power(false)?;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        self.send_set_display_power(true)?;
+        Ok(())
     }
 
     /// Send text injection
