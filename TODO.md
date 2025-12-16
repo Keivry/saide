@@ -677,39 +677,44 @@ cargo run
 
 ## 待修复 🐛 (2025-12-16)
 
-### 问题 1: 配置文件 turn_screen_off 未生效
-**现象**: `config.toml` 中 `turn_screen_off = true` 不起作用  
-**原因**: 待排查是否正确读取并传递到 scrcpy-server  
-**优先级**: 高
-
-### 问题 2: 配置文件 stay_awake 未生效
-**现象**: `config.toml` 中 `stay_awake = true` 不起作用  
-**原因**: 待排查是否正确读取并传递到 scrcpy-server  
-**优先级**: 中
-
-### 问题 3: 鼠标映射位置偏移
+### 问题 3: 鼠标映射位置偏移 (调查中)
 **现象**: 点击位置映射到设备上总是偏上一点  
-**原因**: 可能与视频渲染区域的 padding 有关  
-  - 重构前：视频画面填满整个窗口  
-  - 重构后：视频区域周围有空白边距  
-**影响**: 点击精度下降，游戏操作不准确  
+**可能原因**: 
+1. 视频渲染区域的 padding 计算错误
+2. 窗口标题栏/工具栏占用空间未正确处理
+3. egui 坐标系统问题
+
+**调查进展**:
+- ✅ 添加了详细的坐标转换调试日志
+- ⏳ 需要实际设备测试观察日志输出
+
+**测试方法**:
+```bash
+RUST_LOG=debug cargo run 2>&1 | grep "Converted screen"
+# 点击屏幕中央，观察输出：
+# Converted screen (288.0, 640.0) -> video (288, 640) in 576x1280
+# 检查 video 坐标是否正确对应屏幕点击位置
+```
+
 **优先级**: 高
 
 ---
 
 ## 已完成 ✅ (2025-12-16 深夜)
 
-### 关闭设备屏幕功能实现
+### 关闭设备屏幕功能
 
 **功能**：
 - 工具栏新增💡按钮，点击关闭设备屏幕
 - 使用 scrcpy `SetDisplayPower` 控制消息
 - 唤醒功能移除（让用户按物理电源键）
+- ✅ 修复配置文件参数未传递到 scrcpy-server 的问题
 
 **实现**：
 - ServerParams 新增 `stay_awake` 和 `power_off_on_close` 参数
 - ControlSender 新增 `send_set_display_power()` 方法
 - Toolbar 新增 `TurnScreenOff` 按钮事件
+- build_server_args() 正确传递电源管理参数
 
 **收益**：
 - 降低设备功耗
@@ -719,10 +724,12 @@ cargo run
 **配置**：
 ```toml
 [scrcpy.options]
-turn_screen_off = true  # 启动时关闭屏幕（待修复）
-stay_awake = true       # 防止休眠（待修复）
+turn_screen_off = true  # ✅ 启动时关闭屏幕（已修复）
+stay_awake = true       # ✅ 防止休眠（已修复）
 ```
 
-**代码**: 5 个文件, +45 行
+**代码**: 6 个文件, +52 行
 
-**测试**: ✅ 手动点击按钮可以关闭屏幕
+**测试**: 
+- ✅ 手动点击按钮可以关闭屏幕
+- ✅ 配置文件参数正确传递到 server
