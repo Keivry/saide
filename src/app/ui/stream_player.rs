@@ -750,11 +750,17 @@ fn stream_worker_with_streams(
     })();
 
     match decode_result {
-        Ok(_) => info!("Video decode loop completed normally"),
-        Err(e) => error!("Video decode error: {}", e),
+        Ok(_) => {
+            info!("Video decode loop completed normally");
+            Ok(())
+        }
+        Err(e) => {
+            error!("Video decode error: {}", e);
+            // Send Failed event to UI
+            let _ = event_tx.send(PlayerEvent::Failed(format!("Connection lost: {}", e)));
+            Err(e)
+        }
     }
-
-    Ok(())
 }
 
 /// Worker function that establishes connection internally (legacy for examples)
