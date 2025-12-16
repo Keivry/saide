@@ -924,6 +924,21 @@ impl SAideApp {
     }
 }
 
+impl Drop for SAideApp {
+    fn drop(&mut self) {
+        debug!("SAideApp dropping, cleaning up connection");
+
+        // Explicitly shutdown connection to ensure server process is killed
+        if let Some(mut conn) = self.connection.take()
+            && let Err(e) = conn.shutdown()
+        {
+            debug!("Failed to shutdown connection: {}", e);
+        }
+
+        debug!("SAideApp cleanup completed");
+    }
+}
+
 impl eframe::App for SAideApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Draw base UI (toolbar) - always visible
