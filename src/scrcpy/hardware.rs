@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn test_encoder_priority() {
         // Verify ordering is correct
-        let encoders = vec!["c2.android.avc.encoder", "OMX.qcom.video.encoder.avc"];
+        let encoders = ["c2.android.avc.encoder", "OMX.qcom.video.encoder.avc"];
         assert_eq!(encoders[0], "c2.android.avc.encoder");
     }
 }

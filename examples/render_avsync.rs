@@ -236,7 +236,6 @@ fn av_worker(
     let stats = Arc::new(std::sync::Mutex::new(AVStats::default()));
 
     // Spawn audio thread
-    let av_sync_audio = av_sync.clone();
     let stats_audio = stats.clone();
     let audio_thread = thread::spawn(move || {
         info!("Audio thread spawned, entering read loop...");
@@ -309,7 +308,7 @@ fn av_worker(
 
         if let Ok(Some(frame)) = video_decoder.decode(&video_packet.data, pts) {
             // Update stats
-            let mut current_stats = {
+            let current_stats = {
                 let mut s = stats.lock().unwrap();
                 s.video_frames += 1;
                 s.last_video_pts = frame.pts;
@@ -320,14 +319,16 @@ fn av_worker(
             {
                 let sync = av_sync.lock().unwrap();
                 if sync.should_drop_video(frame.pts) {
-                    current_stats.dropped_frames += 1;
+                    let mut stats_guard = stats.lock().unwrap();
+                    stats_guard.dropped_frames += 1;
                     continue;
                 }
             }
 
             // Send frame to UI
             if frame_tx.try_send(Arc::new(frame)).is_err() {
-                current_stats.dropped_frames += 1;
+                let mut stats_guard = stats.lock().unwrap();
+                stats_guard.dropped_frames += 1;
             }
 
             // Send stats update

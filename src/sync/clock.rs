@@ -177,7 +177,7 @@ mod tests {
 
         let estimated_pts = clock.current_pts();
         // Should be approximately 50ms = 50000µs
-        assert!(estimated_pts >= 45_000 && estimated_pts <= 55_000);
+        assert!((45_000..=55_000).contains(&estimated_pts));
     }
 
     #[test]

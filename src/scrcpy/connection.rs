@@ -510,7 +510,7 @@ mod tests {
     #[test]
     fn test_find_available_port() {
         let port = find_available_port(27183, 27199).unwrap();
-        assert!(port >= 27183 && port <= 27199);
+        assert!((27183..=27199).contains(&port));
     }
 
     #[test]
