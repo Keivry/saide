@@ -335,6 +335,9 @@ impl StreamPlayer {
 
     /// Render video frame
     pub fn render(&mut self, ui: &mut egui::Ui) -> egui::Response {
+        // Update state first (process events)
+        self.update();
+
         let available_rect = ui.available_rect_before_wrap();
 
         if let Some(ref frame) = self.current_frame {
