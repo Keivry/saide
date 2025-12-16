@@ -23,7 +23,7 @@ use {
         config::{
             ConfigManager,
             SAideConfig,
-            mapping::{AdbAction, Key, MouseButton, WheelDirection},
+            mapping::{InputAction, Key, MouseButton, WheelDirection},
         },
         controller::{
             keyboard::KeyboardMapper,
@@ -438,7 +438,7 @@ impl SAideApp {
                 .show_key_input_dialog(ctx, pending_pos)
         {
             if let Some(action) = self.get_mapping(&key)
-                && let AdbAction::Tap { x, y } = action
+                && let InputAction::Tap { x, y } = action
             {
                 self.mapping_config_window
                     .request_override_dialog(key, (x, y), pending_pos);
@@ -480,7 +480,7 @@ impl SAideApp {
 
         if let Some(profile) = keyboard_mapper.get_active_profile() {
             // Create new action with percentage coordinates
-            let action = AdbAction::Tap {
+            let action = InputAction::Tap {
                 x: device_pos.0,
                 y: device_pos.1,
             };
@@ -518,7 +518,7 @@ impl SAideApp {
         }
     }
 
-    fn get_mapping(&self, key: &Key) -> Option<AdbAction> {
+    fn get_mapping(&self, key: &Key) -> Option<InputAction> {
         let Some(keyboard_mapper) = &self.keyboard_mapper else {
             return None;
         };

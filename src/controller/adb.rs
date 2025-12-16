@@ -1,5 +1,5 @@
 use {
-    crate::config::mapping::{AdbAction, WheelDirection},
+    crate::config::mapping::{InputAction, WheelDirection},
     anyhow::{Context, Result, anyhow},
     parking_lot::Mutex,
     std::{
@@ -216,15 +216,15 @@ impl AdbShell {
     }
 
     /// Send input command to Android device
-    pub fn send_input(&self, command: &AdbAction) -> Result<()> {
+    pub fn send_input(&self, command: &InputAction) -> Result<()> {
         let cmd_str = match command {
-            AdbAction::Tap { x, y } => {
+            InputAction::Tap { x, y } => {
                 format!(
                     "input motionevent DOWN {} {} && input motionevent UP {} {}\n",
                     x, y, x, y
                 )
             }
-            AdbAction::Swipe {
+            InputAction::Swipe {
                 x1,
                 y1,
                 x2,
@@ -233,25 +233,25 @@ impl AdbShell {
             } => {
                 format!("input swipe {} {} {} {} {}\n", x1, y1, x2, y2, duration)
             }
-            AdbAction::TouchDown { x, y } => {
+            InputAction::TouchDown { x, y } => {
                 format!("input motionevent DOWN {} {}\n", x, y)
             }
-            AdbAction::TouchMove { x, y } => {
+            InputAction::TouchMove { x, y } => {
                 format!("input motionevent MOVE {} {}\n", x, y)
             }
-            AdbAction::TouchUp { x, y } => {
+            InputAction::TouchUp { x, y } => {
                 format!("input motionevent UP {} {}\n", x, y)
             }
-            AdbAction::Scroll { x, y, direction } => match direction {
+            InputAction::Scroll { x, y, direction } => match direction {
                 WheelDirection::Up => format!("input mouse scroll {} {} --axis VSCROLL,-5\n", x, y),
                 WheelDirection::Down => {
                     format!("input mouse scroll {} {} --axis VSCROLL,5\n", x, y)
                 }
             },
-            AdbAction::Key { keycode } => {
+            InputAction::Key { keycode } => {
                 format!("input keyevent {}\n", keycode)
             }
-            AdbAction::KeyCombo { modifiers, keycode } => {
+            InputAction::KeyCombo { modifiers, keycode } => {
                 // Build key combination command
                 let mut cmd = String::with_capacity(64);
                 cmd.push_str("input keycombination ");
@@ -267,14 +267,14 @@ impl AdbShell {
                 cmd.push_str(&format!("{}\n", keycode));
                 cmd
             }
-            AdbAction::Text { text } => {
+            InputAction::Text { text } => {
                 format!("input text {}\n", text)
             }
-            AdbAction::Back => "input keyevent BACK\n".to_string(),
-            AdbAction::Home => "input keyevent HOME\n".to_string(),
-            AdbAction::Menu => "input keyevent MENU\n".to_string(),
-            AdbAction::Power => "input keyevent POWER\n".to_string(),
-            AdbAction::Ignore => {
+            InputAction::Back => "input keyevent BACK\n".to_string(),
+            InputAction::Home => "input keyevent HOME\n".to_string(),
+            InputAction::Menu => "input keyevent MENU\n".to_string(),
+            InputAction::Power => "input keyevent POWER\n".to_string(),
+            InputAction::Ignore => {
                 return Ok(());
             }
         };

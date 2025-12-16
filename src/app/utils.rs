@@ -1,6 +1,6 @@
 /// Utility functions for coordinate transformations and mapping lookups
 use {
-    crate::config::mapping::{AdbAction, Key, KeyMapping},
+    crate::config::mapping::{InputAction, Key, KeyMapping},
     eframe::egui::{Pos2, Rect},
     tracing::trace,
 };
@@ -266,11 +266,11 @@ pub fn find_nearest_mapping(
     nearest.map(|(key, pos, _)| (key, pos))
 }
 
-/// Extract position from AdbAction (as f32, could be percentage or pixels)
-pub fn extract_position(action: &AdbAction) -> Option<(f32, f32)> {
+/// Extract position from InputAction (as f32, could be percentage or pixels)
+pub fn extract_position(action: &InputAction) -> Option<(f32, f32)> {
     match action {
-        AdbAction::Tap { x, y } => Some((*x, *y)),
-        AdbAction::TouchDown { x, y } => Some((*x, *y)),
+        InputAction::Tap { x, y } => Some((*x, *y)),
+        InputAction::TouchDown { x, y } => Some((*x, *y)),
         _ => None,
     }
 }

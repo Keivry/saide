@@ -12,7 +12,7 @@ type Percent = f32;
 /// Raw action from config file (with percentage coordinates 0.0-1.0)
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "action")]
-enum RawAdbAction {
+enum RawInputAction {
     Tap {
         x: Percent,
         y: Percent,
@@ -58,7 +58,7 @@ enum RawAdbAction {
     Ignore,
 }
 
-impl RawAdbAction {
+impl RawInputAction {
     /// Validate percentage values are in [0, 1] range
     fn validate(&self) -> Result<(), String> {
         let check_percent = |v: Percent, name: &str| -> Result<(), String> {
@@ -101,42 +101,42 @@ impl RawAdbAction {
         Ok(())
     }
 
-    /// Convert to AdbAction, keeping percentage coordinates
-    fn to_adb_action(&self) -> AdbAction {
+    /// Convert to InputAction, keeping percentage coordinates
+    fn to_input_action(&self) -> InputAction {
         match self {
-            Self::Tap { x, y } => AdbAction::Tap { x: *x, y: *y },
+            Self::Tap { x, y } => InputAction::Tap { x: *x, y: *y },
             Self::Swipe {
                 x1,
                 y1,
                 x2,
                 y2,
                 duration,
-            } => AdbAction::Swipe {
+            } => InputAction::Swipe {
                 x1: *x1,
                 y1: *y1,
                 x2: *x2,
                 y2: *y2,
                 duration: *duration,
             },
-            Self::TouchDown { x, y } => AdbAction::TouchDown { x: *x, y: *y },
-            Self::TouchMove { x, y } => AdbAction::TouchMove { x: *x, y: *y },
-            Self::TouchUp { x, y } => AdbAction::TouchUp { x: *x, y: *y },
-            Self::Scroll { x, y, direction } => AdbAction::Scroll {
+            Self::TouchDown { x, y } => InputAction::TouchDown { x: *x, y: *y },
+            Self::TouchMove { x, y } => InputAction::TouchMove { x: *x, y: *y },
+            Self::TouchUp { x, y } => InputAction::TouchUp { x: *x, y: *y },
+            Self::Scroll { x, y, direction } => InputAction::Scroll {
                 x: *x,
                 y: *y,
                 direction: direction.clone(),
             },
-            Self::Key { keycode } => AdbAction::Key { keycode: *keycode },
-            Self::KeyCombo { modifiers, keycode } => AdbAction::KeyCombo {
+            Self::Key { keycode } => InputAction::Key { keycode: *keycode },
+            Self::KeyCombo { modifiers, keycode } => InputAction::KeyCombo {
                 modifiers: *modifiers,
                 keycode: *keycode,
             },
-            Self::Text { text } => AdbAction::Text { text: text.clone() },
-            Self::Back => AdbAction::Back,
-            Self::Home => AdbAction::Home,
-            Self::Menu => AdbAction::Menu,
-            Self::Power => AdbAction::Power,
-            Self::Ignore => AdbAction::Ignore,
+            Self::Text { text } => InputAction::Text { text: text.clone() },
+            Self::Back => InputAction::Back,
+            Self::Home => InputAction::Home,
+            Self::Menu => InputAction::Menu,
+            Self::Power => InputAction::Power,
+            Self::Ignore => InputAction::Ignore,
         }
     }
 }
@@ -176,7 +176,7 @@ impl From<PointerButton> for MouseButton {
 /// - Converted to pixels (u32) when profile is activated via convert_to_pixels()
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action")]
-pub enum AdbAction {
+pub enum InputAction {
     Tap {
         x: Percent,
         y: Percent,
@@ -228,7 +228,7 @@ pub enum AdbAction {
 
 #[derive(Debug, Default)]
 pub struct KeyMapping {
-    inner: Arc<RwLock<HashMap<Key, AdbAction>>>,
+    inner: Arc<RwLock<HashMap<Key, InputAction>>>,
 }
 
 impl<'de> Deserialize<'de> for KeyMapping {
@@ -240,7 +240,7 @@ impl<'de> Deserialize<'de> for KeyMapping {
         struct RawMapping {
             key: Key,
             #[serde(flatten)]
-            action: RawAdbAction,
+            action: RawInputAction,
         }
 
         let raw_mappings: Vec<RawMapping> = Deserialize::deserialize(deserializer)?;
@@ -254,7 +254,7 @@ impl<'de> Deserialize<'de> for KeyMapping {
         // Will be converted to actual pixels in Profile::convert_to_pixels()
         let mut m = HashMap::new();
         raw_mappings.into_iter().for_each(|rm| {
-            m.insert(rm.key, rm.action.to_adb_action());
+            m.insert(rm.key, rm.action.to_input_action());
         });
 
         Ok(KeyMapping {
@@ -272,7 +272,7 @@ impl Serialize for KeyMapping {
         struct RawMapping<'a> {
             key: &'a Key,
             #[serde(flatten)]
-            action: &'a AdbAction,
+            action: &'a InputAction,
         }
 
         let mappings = self.inner.read();
@@ -285,7 +285,7 @@ impl Serialize for KeyMapping {
 }
 
 impl Deref for KeyMapping {
-    type Target = Arc<RwLock<HashMap<Key, AdbAction>>>;
+    type Target = Arc<RwLock<HashMap<Key, InputAction>>>;
 
     fn deref(&self) -> &Self::Target { &self.inner }
 }
@@ -307,7 +307,7 @@ pub struct Profile {
 
 impl Profile {
     /// Add a mapping to the profile, returning a new profile
-    pub fn add_mapping(&self, key: Key, action: AdbAction) -> &Self {
+    pub fn add_mapping(&self, key: Key, action: InputAction) -> &Self {
         self.mappings.inner.write().insert(key, action);
         self
     }
@@ -324,7 +324,7 @@ impl Profile {
     }
 
     /// Get the ADB action for a given key, if it exists
-    pub fn get_mapping(&self, key: &Key) -> Option<AdbAction> {
+    pub fn get_mapping(&self, key: &Key) -> Option<InputAction> {
         self.mappings.inner.read().get(key).cloned()
     }
 

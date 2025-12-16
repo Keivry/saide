@@ -31,7 +31,9 @@ use {
     tracing::{debug, error, info, trace, warn},
 };
 
-const FRAME_BUFFER_SIZE: usize = 3;
+// Low latency mode: keep only 1 frame in buffer
+// Older frames are dropped to minimize latency
+const FRAME_BUFFER_SIZE: usize = 1;
 const STATS_BUFFER_SIZE: usize = 100;
 
 use crate::decoder::extract_resolution_from_stream;

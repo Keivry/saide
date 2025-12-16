@@ -106,7 +106,7 @@ pub struct KeyboardMapper {
     avail_profiles: RwLock<Vec<Arc<Profile>>>,
     active_profile: ArcSwap<Option<Arc<Profile>>>,
     /// Pixel-converted mappings for active profile (百分比 → 像素)
-    pixel_mappings: RwLock<HashMap<Key, crate::config::mapping::AdbAction>>,
+    pixel_mappings: RwLock<HashMap<Key, crate::config::mapping::InputAction>>,
 }
 
 impl KeyboardMapper {
@@ -200,7 +200,7 @@ impl KeyboardMapper {
         video_height: u32,
         capture_orientation_locked: bool,
     ) {
-        use crate::config::mapping::AdbAction;
+        use crate::config::mapping::InputAction;
 
         let mut pixel_map = HashMap::new();
 
@@ -303,31 +303,31 @@ impl KeyboardMapper {
 
         for (key, action) in profile.mappings.read().iter() {
             let pixel_action = match action {
-                AdbAction::Tap { x, y } => {
+                InputAction::Tap { x, y } => {
                     let (px, py) = transform_coord(*x, *y);
-                    AdbAction::Tap { x: px, y: py }
+                    InputAction::Tap { x: px, y: py }
                 }
-                AdbAction::TouchDown { x, y } => {
+                InputAction::TouchDown { x, y } => {
                     let (px, py) = transform_coord(*x, *y);
-                    AdbAction::TouchDown { x: px, y: py }
+                    InputAction::TouchDown { x: px, y: py }
                 }
-                AdbAction::TouchMove { x, y } => {
+                InputAction::TouchMove { x, y } => {
                     let (px, py) = transform_coord(*x, *y);
-                    AdbAction::TouchMove { x: px, y: py }
+                    InputAction::TouchMove { x: px, y: py }
                 }
-                AdbAction::TouchUp { x, y } => {
+                InputAction::TouchUp { x, y } => {
                     let (px, py) = transform_coord(*x, *y);
-                    AdbAction::TouchUp { x: px, y: py }
+                    InputAction::TouchUp { x: px, y: py }
                 }
-                AdbAction::Scroll { x, y, direction } => {
+                InputAction::Scroll { x, y, direction } => {
                     let (px, py) = transform_coord(*x, *y);
-                    AdbAction::Scroll {
+                    InputAction::Scroll {
                         x: px,
                         y: py,
                         direction: direction.clone(),
                     }
                 }
-                AdbAction::Swipe {
+                InputAction::Swipe {
                     x1,
                     y1,
                     x2,
@@ -336,7 +336,7 @@ impl KeyboardMapper {
                 } => {
                     let (px1, py1) = transform_coord(*x1, *y1);
                     let (px2, py2) = transform_coord(*x2, *y2);
-                    AdbAction::Swipe {
+                    InputAction::Swipe {
                         x1: px1,
                         y1: py1,
                         x2: px2,
@@ -480,21 +480,21 @@ impl KeyboardMapper {
                 "Handling custom key mapping event: {:?} -> {:?}",
                 key, action
             );
-            self.send_adb_action(action)?;
+            self.send_input_action(action)?;
             return Ok(true);
         }
         Ok(false)
     }
 
-    /// Convert AdbAction to control messages (temporary bridge)
-    fn send_adb_action(&self, action: &crate::config::mapping::AdbAction) -> Result<()> {
-        use crate::config::mapping::AdbAction;
+    /// Convert InputAction to control messages (temporary bridge)
+    fn send_input_action(&self, action: &crate::config::mapping::InputAction) -> Result<()> {
+        use crate::config::mapping::InputAction;
 
         match action {
-            AdbAction::Key { keycode } => {
+            InputAction::Key { keycode } => {
                 self.sender.send_key_press(*keycode as u32, 0)?;
             }
-            AdbAction::KeyCombo { modifiers, keycode } => {
+            InputAction::KeyCombo { modifiers, keycode } => {
                 let mut metastate = 0u32;
                 if modifiers.shift {
                     metastate |= 1;
@@ -507,35 +507,35 @@ impl KeyboardMapper {
                 }
                 self.sender.send_key_press(*keycode as u32, metastate)?;
             }
-            AdbAction::Text { text } => {
+            InputAction::Text { text } => {
                 self.sender.send_text(text)?;
             }
-            AdbAction::Back => {
+            InputAction::Back => {
                 self.sender.send_key_press(4, 0)?; // KEYCODE_BACK
             }
-            AdbAction::Home => {
+            InputAction::Home => {
                 self.sender.send_key_press(3, 0)?; // KEYCODE_HOME
             }
-            AdbAction::Menu => {
+            InputAction::Menu => {
                 self.sender.send_key_press(82, 0)?; // KEYCODE_MENU
             }
-            AdbAction::Power => {
+            InputAction::Power => {
                 self.sender.send_key_press(26, 0)?; // KEYCODE_POWER
             }
-            AdbAction::Tap { x, y } => {
+            InputAction::Tap { x, y } => {
                 self.sender.send_touch_down(*x as u32, *y as u32)?;
                 self.sender.send_touch_up(*x as u32, *y as u32)?;
             }
-            AdbAction::TouchDown { x, y } => {
+            InputAction::TouchDown { x, y } => {
                 self.sender.send_touch_down(*x as u32, *y as u32)?;
             }
-            AdbAction::TouchMove { x, y } => {
+            InputAction::TouchMove { x, y } => {
                 self.sender.send_touch_move(*x as u32, *y as u32)?;
             }
-            AdbAction::TouchUp { x, y } => {
+            InputAction::TouchUp { x, y } => {
                 self.sender.send_touch_up(*x as u32, *y as u32)?;
             }
-            AdbAction::Scroll { x, y, direction } => {
+            InputAction::Scroll { x, y, direction } => {
                 use crate::config::mapping::WheelDirection;
                 let (h, v) = match direction {
                     WheelDirection::Up => (0.0, -5.0),
@@ -543,13 +543,13 @@ impl KeyboardMapper {
                 };
                 self.sender.send_scroll(*x as u32, *y as u32, h, v)?;
             }
-            AdbAction::Swipe { x1, y1, x2, y2, .. } => {
+            InputAction::Swipe { x1, y1, x2, y2, .. } => {
                 // Simulate swipe with touch down + move + up
                 self.sender.send_touch_down(*x1 as u32, *y1 as u32)?;
                 self.sender.send_touch_move(*x2 as u32, *y2 as u32)?;
                 self.sender.send_touch_up(*x2 as u32, *y2 as u32)?;
             }
-            AdbAction::Ignore => {}
+            InputAction::Ignore => {}
         }
         Ok(())
     }
