@@ -21,7 +21,8 @@ use {
 };
 
 pub const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
-pub const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 1;
+// Allow buffering 3 rotation events to avoid blocking monitor thread
+pub const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 3;
 
 pub enum DeviceMonitorEvent {
     /// Device rotated event with new orientation (0-3), clockwise

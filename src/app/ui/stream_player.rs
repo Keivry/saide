@@ -33,7 +33,9 @@ use {
 
 // Low latency mode: keep only 1 frame in buffer
 // Older frames are dropped to minimize latency
-const FRAME_BUFFER_SIZE: usize = 1;
+// Use 2 frame buffer to avoid blocking decoder when UI is slow
+// Too large buffer increases latency, too small blocks decoder
+const FRAME_BUFFER_SIZE: usize = 2;
 const STATS_BUFFER_SIZE: usize = 100;
 
 use crate::decoder::extract_resolution_from_stream;
@@ -596,10 +598,10 @@ fn stream_worker_with_streams(
     let decode_result = (|| -> Result<()> {
         let mut consecutive_read_errors = 0u32;
         const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
-        
+
         loop {
             use crate::scrcpy::protocol::video::VideoPacket;
-            
+
             // Try to read packet with timeout tolerance
             let video_packet = match VideoPacket::read_from(&mut video_stream) {
                 Ok(packet) => {
@@ -608,28 +610,32 @@ fn stream_worker_with_streams(
                 }
                 Err(e) => {
                     // Check if this is a timeout (screen static/locked) or real error
-                    let is_timeout = e.downcast_ref::<std::io::Error>()
+                    let is_timeout = e
+                        .downcast_ref::<std::io::Error>()
                         .map(|io_err| {
                             io_err.kind() == std::io::ErrorKind::WouldBlock
                                 || io_err.kind() == std::io::ErrorKind::TimedOut
                         })
                         .unwrap_or(false);
-                    
+
                     if is_timeout {
                         // Timeout is normal: screen static, locked, or no changes
                         trace!("Video read timeout (screen may be static/locked) - retrying");
                         consecutive_read_errors = 0; // Reset counter for timeouts
                         continue;
                     }
-                    
+
                     // Real error (not timeout)
                     consecutive_read_errors += 1;
-                    
+
                     if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                        error!("Failed to read video packet {} times consecutively", consecutive_read_errors);
+                        error!(
+                            "Failed to read video packet {} times consecutively",
+                            consecutive_read_errors
+                        );
                         return Err(e);
                     }
-                    
+
                     warn!(
                         "Video packet read error ({}/{}): {} - skipping",
                         consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
@@ -638,7 +644,7 @@ fn stream_worker_with_streams(
                     continue;
                 }
             };
-            
+
             let pts = video_packet.pts_us as i64;
 
             // Check for resolution change in keyframes (SPS embedded)
@@ -1016,10 +1022,10 @@ fn stream_worker(
     let decode_result = (|| -> Result<()> {
         let mut consecutive_read_errors = 0u32;
         const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
-        
+
         loop {
             use crate::scrcpy::protocol::video::VideoPacket;
-            
+
             // Try to read packet with timeout tolerance
             let video_packet = match VideoPacket::read_from(&mut video_stream) {
                 Ok(packet) => {
@@ -1028,28 +1034,32 @@ fn stream_worker(
                 }
                 Err(e) => {
                     // Check if this is a timeout (screen static/locked) or real error
-                    let is_timeout = e.downcast_ref::<std::io::Error>()
+                    let is_timeout = e
+                        .downcast_ref::<std::io::Error>()
                         .map(|io_err| {
                             io_err.kind() == std::io::ErrorKind::WouldBlock
                                 || io_err.kind() == std::io::ErrorKind::TimedOut
                         })
                         .unwrap_or(false);
-                    
+
                     if is_timeout {
                         // Timeout is normal: screen static, locked, or no changes
                         trace!("Video read timeout (screen may be static/locked) - retrying");
                         consecutive_read_errors = 0; // Reset counter for timeouts
                         continue;
                     }
-                    
+
                     // Real error (not timeout)
                     consecutive_read_errors += 1;
-                    
+
                     if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                        error!("Failed to read video packet {} times consecutively", consecutive_read_errors);
+                        error!(
+                            "Failed to read video packet {} times consecutively",
+                            consecutive_read_errors
+                        );
                         return Err(e);
                     }
-                    
+
                     warn!(
                         "Video packet read error ({}/{}): {} - skipping",
                         consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
@@ -1058,7 +1068,7 @@ fn stream_worker(
                     continue;
                 }
             };
-            
+
             let pts = video_packet.pts_us as i64;
 
             // Check for resolution change in keyframes (SPS embedded)

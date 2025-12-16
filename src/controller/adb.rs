@@ -335,13 +335,32 @@ impl AdbShell {
         Ok((width, height))
     }
 
-    /// Get Android device screen orientation using separate adb command
+    /// Get Android device screen orientation using separate adb command (with 3s timeout)
     pub fn get_screen_orientation() -> Result<u32> {
-        // Use separate adb command to get screen orientation, not through shell session
-        let output = Command::new("adb")
+        use std::{sync::mpsc, time::Duration};
+
+        let child = Command::new("adb")
             .args(["shell", "dumpsys window displays | grep mCurrentRotation"])
-            .output()
-            .context("Failed to execute adb shell dumpsys window displays command")?;
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("Failed to spawn adb command")?;
+
+        // Wait with 3 second timeout
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(child.wait_with_output());
+        });
+
+        let output = match rx.recv_timeout(Duration::from_secs(3)) {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => anyhow::bail!("adb command failed: {}", e),
+            Err(_) => anyhow::bail!("adb command timed out after 3 seconds"),
+        };
+
+        if !output.status.success() {
+            anyhow::bail!("adb command failed with status: {}", output.status);
+        }
 
         let output_str = String::from_utf8_lossy(&output.stdout);
         trace!(
@@ -375,18 +394,33 @@ impl AdbShell {
         })
     }
 
-    /// Get android device input method state
+    /// Get android device input method state (with 3s timeout)
     pub fn get_ime_state() -> Result<bool> {
-        let exit_status = Command::new("adb")
+        use std::{sync::mpsc, time::Duration};
+
+        let child = Command::new("adb")
             .args([
                 "shell",
                 "dumpsys window InputMethod | grep 'isVisible=true'",
             ])
             .stdout(Stdio::null())
-            .status()
-            .context("Failed to execute adb shell dumpsys window InputMethod command")?;
+            .stderr(Stdio::null())
+            .spawn()
+            .context("Failed to spawn adb command")?;
 
-        Ok(exit_status.success())
+        // Wait with 3 second timeout
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(child.wait_with_output());
+        });
+
+        let output = match rx.recv_timeout(Duration::from_secs(3)) {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => anyhow::bail!("adb command failed: {}", e),
+            Err(_) => anyhow::bail!("adb command timed out after 3 seconds"),
+        };
+
+        Ok(output.status.success())
     }
 
     /// Get screen brightness (0-255)
