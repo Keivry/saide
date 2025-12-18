@@ -189,6 +189,7 @@ impl MappingConfigWindow {
         ctx.input(|input| {
             // Check for left click
             if input.pointer.primary_clicked()
+                && !self.any_dialog_open()
                 && let Some(click_pos) = input.pointer.interact_pos()
                 && video_rect.contains(click_pos)
             {
@@ -197,6 +198,7 @@ impl MappingConfigWindow {
 
             // Check for right click
             if input.pointer.secondary_clicked()
+                && !self.any_dialog_open()
                 && let Some(click_pos) = input.pointer.interact_pos()
                 && video_rect.contains(click_pos)
             {
