@@ -441,10 +441,6 @@ impl SAideApp {
             .map(|profile| profile.mappings.clone())
             .unwrap_or_default();
 
-        // TODO: Check if needed?
-        // Update VisualCoordSys before drawing (video rect might have changed)
-        // self.update_visual_coords();
-
         // Draw the config window and handle events
         let video_rect = self.player.video_rect();
         let event = self.mapping_config_window.draw(

@@ -1,5 +1,6 @@
 use {
     crate::{
+        app::coords::{MappingCoordSys, ScrcpyCoordSys},
         config::mapping::{Mappings, Modifiers, Profile},
         controller::control_sender::ControlSender,
     },
@@ -174,24 +175,15 @@ impl KeyboardMapper {
         Ok(())
     }
 
-    /// Convert profile percentage coordinates to pixel mappings
+    /// Convert profile percentage coordinates to pixel mappings using coordinate systems
     ///
-    /// 坐标转换说明：
-    /// 1. Profile 坐标：百分比 (0.0-1.0)，基于 profile.rotation 对应的设备方向
-    /// 2. 视频坐标：像素，基于当前视频分辨率
-    ///
-    /// 当 capture-orientation 未锁定时：
-    /// - 视频坐标系跟随设备旋转，profile.rotation == device_orientation
-    /// - 直接乘以视频尺寸即可
-    ///
-    /// 当 capture-orientation=@0 锁定时（NVDEC 模式）：
-    /// - 视频坐标系固定为 0°（设备自然方向）
-    /// - Profile 坐标是基于 profile.rotation 的坐标系
-    /// - 需要将坐标从 profile.rotation 转换到 0° 坐标系
+    /// 使用新的三坐标系统：
+    /// - MappingCoordSys: Profile 坐标（百分比 0.0-1.0，绑定 profile.rotation）
+    /// - ScrcpyCoordSys: 视频像素坐标（考虑 capture_orientation 锁定）
     ///
     /// # Parameters
     /// - `profile`: 配置文件（rotation 字段记录坐标系方向）
-    /// - `video_width/height`: 视频分辨率（锁定时为设备自然方向分辨率）
+    /// - `video_width/height`: 视频分辨率
     /// - `capture_orientation_locked`: 是否锁定 capture-orientation
     fn update_pixel_mappings(
         &self,
@@ -204,101 +196,20 @@ impl KeyboardMapper {
 
         let mut pixel_map = HashMap::new();
 
-        // Helper: 转换单个坐标点
+        // 创建坐标系
+        let mapping_sys = MappingCoordSys::new(profile.rotation);
+        let capture_orientation = if capture_orientation_locked {
+            Some(0) // 锁定到 portrait
+        } else {
+            None
+        };
+        let scrcpy_sys =
+            ScrcpyCoordSys::new(video_width as u16, video_height as u16, capture_orientation);
+
+        // Helper: 使用坐标系转换单个坐标点
         let transform_coord = |x_percent: f32, y_percent: f32| -> (f32, f32) {
-            if !capture_orientation_locked {
-                // 未锁定：视频坐标系跟随设备，直接缩放
-                (
-                    x_percent * video_width as f32,
-                    y_percent * video_height as f32,
-                )
-            } else {
-                // 锁定：需要旋转变换
-                // Profile.rotation 是 CCW (Android Display Rotation)
-                // rotation=0: 0°, rotation=1: 90° CCW, rotation=2: 180°, rotation=3: 270° CCW
-                //
-                // 视频坐标系固定为 0°（竖屏），需要将 profile 坐标转换到 0°
-                match profile.rotation {
-                    0 => {
-                        // Profile 坐标已经是 0°，直接缩放
-                        (
-                            x_percent * video_width as f32,
-                            y_percent * video_height as f32,
-                        )
-                    }
-                    1 => {
-                        // Profile 坐标是 rotation=1（设备横屏，90° CCW）
-                        // 视频坐标是 rotation=0（竖屏，capture locked）
-                        //
-                        // Profile 坐标系：横屏 W_profile x H_profile（如 2800x1260）
-                        // 视频坐标系：竖屏 W_video x H_video（如 576x1280，注意 video 是竖屏所以 W
-                        // < H）
-                        //
-                        // 变换逻辑：
-                        // rotation=1 设备横屏时，屏幕内容也是横屏的
-                        // capture=@0 时，视频捕获的是竖屏画面
-                        // scrcpy-server 会自动旋转画面，使得设备横屏内容在竖屏视频中正确显示
-                        //
-                        // 但坐标需要转换：
-                        // - Profile 的 (x%, y%) 是基于横屏坐标系
-                        // - 需要转换到竖屏坐标系
-                        //
-                        // 设备从竖屏（0°）逆时针转90°到横屏（rotation=1）
-                        // 坐标系变换：竖屏的 X 轴 → 横屏的 Y 轴（反向）
-                        //            竖屏的 Y 轴 → 横屏的 X 轴
-                        // 反向变换：横屏的 (x, y) → 竖屏的 (1-y, x)
-                        // 不对，让我从物理位置推导...
-                        //
-                        // 横屏左上角 (0, 0) → 竖屏的哪里？
-                        // 设备逆时针转90°，左上角移到了物理上的右上角
-                        // 但竖屏坐标系，右上角是 (W-1, 0)
-                        //
-                        // 让我用百分比：
-                        // 横屏 (0%, 0%) → 竖屏 (100%, 0%)？不对...
-                        //
-                        // 简单推导：
-                        // rotation=1: X轴2800向右，Y轴1260向下
-                        // rotation=0: X轴1080向右，Y轴2400向下
-                        // rotation=1 的 X 方向对应 rotation=0 的 Y 方向
-                        // rotation=1 的 Y 方向对应 rotation=0 的 -X 方向（反向）
-                        //
-                        // 所以：(x_r1, y_r1) → (1 - y_r1, x_r1)
-                        (
-                            (1.0 - y_percent) * video_width as f32,
-                            x_percent * video_height as f32,
-                        )
-                    }
-                    2 => {
-                        // Profile 坐标是 180°
-                        // 转换到 0°：(x', y') -> (1-x', 1-y')
-                        (
-                            (1.0 - x_percent) * video_width as f32,
-                            (1.0 - y_percent) * video_height as f32,
-                        )
-                    }
-                    3 => {
-                        // Profile 坐标是 270° CCW（横屏，设备向右转）
-                        // rotation=3: 横屏 2800x1260, rotation=0: 竖屏 1080x2400
-                        // rotation=3 的 X 对应 rotation=0 的 Y
-                        // rotation=3 的 Y 对应 rotation=0 的 X（反向）
-                        // 转换：(x_r3, y_r3) -> (1-y_r3, x_r3)
-                        (
-                            (1.0 - y_percent) * video_width as f32,
-                            x_percent * video_height as f32,
-                        )
-                    }
-                    _ => {
-                        trace!(
-                            "Invalid rotation {}, fallback to no transform",
-                            profile.rotation
-                        );
-                        (
-                            x_percent * video_width as f32,
-                            y_percent * video_height as f32,
-                        )
-                    }
-                }
-            }
+            let (px, py) = mapping_sys.to_scrcpy((x_percent, y_percent), &scrcpy_sys);
+            (px as f32, py as f32)
         };
 
         for (key, action) in profile.mappings.read().iter() {
