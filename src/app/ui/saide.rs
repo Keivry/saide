@@ -79,14 +79,8 @@ pub struct SAideApp {
     /// Device ID
     device_id: Option<String>,
 
-    /// Device physical screen size (kept for compatibility, may remove later)
-    device_physical_size: (u32, u32),
-
     /// Device orientation (0-3), clockwise
     device_orientation: u32,
-
-    /// Whether capture-orientation is locked (NVDEC mode)
-    capture_orientation_locked: bool,
 
     /// Coordinate systems
     mapping_coords: MappingCoordSys,
@@ -159,11 +153,7 @@ impl SAideApp {
 
             device_id: None,
 
-            device_physical_size: (0, 0),
-
             device_orientation: 0,
-
-            capture_orientation_locked: false,
 
             audio_warning: None,
 
@@ -213,6 +203,8 @@ impl SAideApp {
 
     /// Check initialization progress and update state
     fn check_init_stage(&mut self, _ctx: &egui::Context) {
+        let mut capture_locked = None;
+
         if let Some(rx) = &self.init_rx {
             while let Ok(result) = rx.try_recv() {
                 match result {
@@ -227,15 +219,12 @@ impl SAideApp {
                         capture_orientation_locked,
                     } => {
                         info!(
-                            "ScrcpyConnection ready: {}x{}, device: {:?}, capture_orientation_locked: {}",
+                            "ScrcpyConnection ready: {}x{}, device: {:?}, capture_locked: {}",
                             video_resolution.0,
                             video_resolution.1,
                             device_name,
                             capture_orientation_locked
                         );
-
-                        // Store capture orientation lock state
-                        self.capture_orientation_locked = capture_orientation_locked;
 
                         // Store audio warning if present
                         self.audio_warning = audio_disabled_reason;
@@ -254,6 +243,9 @@ impl SAideApp {
                             video_resolution,
                             (*config.scrcpy).clone(),
                         );
+
+                        // Save capture_locked for later use (after borrow ends)
+                        capture_locked = Some(capture_orientation_locked);
                     }
                     InitEvent::KeyboardMapper(keyboard_mapper) => {
                         self.keyboard_mapper = Some(keyboard_mapper);
@@ -267,7 +259,6 @@ impl SAideApp {
                     InitEvent::DeviceId(device_id) => {
                         self.device_id = Some(device_id);
                     }
-                    InitEvent::PhysicalSize(size) => self.device_physical_size = size,
                     InitEvent::Error(e) => {
                         error!("Initialization error: {}", e);
                         self.init_state = InitState::Failed(e.to_string());
@@ -275,7 +266,14 @@ impl SAideApp {
                     }
                 }
             }
+        }
 
+        // Initialize ScrcpyCoordSys after event processing (to avoid borrow conflicts)
+        if let Some(locked) = capture_locked {
+            self.update_scrcpy_coords(locked);
+        }
+
+        if let Some(_rx) = &self.init_rx {
             // Check if all components are initialized AND video stream is ready with valid
             // dimensions
             let video_rect = self.player.video_rect();
@@ -290,8 +288,8 @@ impl SAideApp {
 
                 // Initialize coordinate systems now that video is ready
                 self.update_mapping_coords(); // Device orientation known
-                self.update_scrcpy_coords(); // Video resolution available
                 self.update_visual_coords(); // Video rotation available
+                // ScrcpyCoordSys already initialized above
 
                 // Apply turn_screen_off setting if enabled
                 let config = self.config();
@@ -326,10 +324,13 @@ impl SAideApp {
         );
     }
 
+    /// Check if capture orientation is locked (NVDEC mode)
+    fn is_capture_locked(&self) -> bool { self.scrcpy_coords.capture_orientation.is_some() }
+
     /// Update ScrcpyCoordSys when video resolution or capture orientation changes
-    fn update_scrcpy_coords(&mut self) {
+    fn update_scrcpy_coords(&mut self, capture_orientation_locked: bool) {
         let video_resolution = self.player.video_resolution();
-        let capture_orientation = if self.capture_orientation_locked {
+        let capture_orientation = if capture_orientation_locked {
             Some(0) // Locked to portrait
         } else {
             None
@@ -896,6 +897,9 @@ impl SAideApp {
     }
 
     fn refresh_mapping_profiles(&mut self) {
+        let capture_locked = self.is_capture_locked();
+        let device_orientation = self.device_orientation;
+
         let (keyboard_mapper, device_id) =
             match (self.keyboard_mapper.as_mut(), self.device_id.as_ref()) {
                 (Some(km), Some(did)) => (km, did),
@@ -906,11 +910,7 @@ impl SAideApp {
                 }
             };
 
-        match keyboard_mapper.refresh_profiles(
-            device_id,
-            self.device_orientation,
-            self.capture_orientation_locked,
-        ) {
+        match keyboard_mapper.refresh_profiles(device_id, device_orientation, capture_locked) {
             Ok(_) => {
                 let avail_profile_names = keyboard_mapper.get_avail_profiles();
                 let active_profile_name = keyboard_mapper.get_active_profile_name();
@@ -1034,7 +1034,8 @@ impl eframe::App for SAideApp {
                     self.window_initialized = true;
 
                     // Update ScrcpyCoordSys (video resolution changed)
-                    self.update_scrcpy_coords();
+                    let capture_locked = self.is_capture_locked();
+                    self.update_scrcpy_coords(capture_locked);
                 }
 
                 // Process mapping configuration window

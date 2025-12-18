@@ -50,7 +50,6 @@ pub enum InitEvent {
     MouseMapper(MouseMapper),
     DeviceMonitor(Receiver<DeviceMonitorEvent>),
     DeviceId(String),
-    PhysicalSize((u32, u32)),
     Error(anyhow::Error),
 }
 
@@ -80,13 +79,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         debug!("Using device ID: {}", device_id);
         dm_tx.send(InitEvent::DeviceId(device_id))?;
 
-        // Get device physical screen size
-        let physical_size = AdbShell::get_physical_screen_size()?;
-        debug!(
-            "Device physical screen size: {}x{}",
-            physical_size.0, physical_size.1
-        );
-        dm_tx.send(InitEvent::PhysicalSize(physical_size))?;
+        // Note: device_physical_size removed - no longer needed with new coordinate system
 
         // Create channel for rotation events
         let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
