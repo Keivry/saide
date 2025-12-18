@@ -42,6 +42,7 @@ impl From<PointerButton> for MouseButton {
 /// Coordinates are stored as:
 /// - Percentage (0.0-1.0 f32) for x and y positions
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action")]
 pub enum MappingAction {
     Tap {
         #[serde(flatten)]
@@ -191,6 +192,7 @@ impl<'de> Deserialize<'de> for KeyMapping {
         #[derive(Deserialize)]
         struct RawMapping {
             key: Key,
+            #[serde(flatten)]
             action: MappingAction,
         }
 
@@ -215,6 +217,7 @@ impl Serialize for KeyMapping {
         #[derive(Serialize)]
         struct RawMapping<'a> {
             key: &'a Key,
+            #[serde(flatten)]
             action: &'a MappingAction,
         }
 
