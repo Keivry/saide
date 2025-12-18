@@ -31,7 +31,7 @@ pub fn extract_resolution_from_stream(data: &[u8]) -> Option<(u32, u32)> {
             tracing::debug!("Found SPS NAL unit, parsing resolution...");
             let res = parse_sps_resolution(nal);
             if let Some((w, h)) = res {
-                tracing::info!("📐 Parsed SPS resolution: {}x{}", w, h);
+                tracing::trace!("📐 Parsed SPS resolution: {}x{}", w, h);
             }
             return res;
         }
