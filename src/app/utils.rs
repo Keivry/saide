@@ -1,40 +1,38 @@
 /// Utility functions for mapping lookups
-use crate::config::mapping::{InputAction, Key, KeyMapping};
+use crate::app::coords::MappingPos;
+use crate::config::mapping::{Key, KeyMapping, MappingAction};
 
 /// Find the nearest mapping to a given position
-///
-/// Note: Coordinates in mappings could be either percentage (0.0-1.0) or pixels (after
-/// convert_to_pixels) device_pos should be in the same coordinate space
 pub fn find_nearest_mapping(
-    device_pos: (f32, f32),
+    source: &MappingPos,
     mappings: &KeyMapping,
-) -> Option<(Key, (f32, f32))> {
-    let mut nearest: Option<(Key, (f32, f32), f32)> = None;
+) -> Option<(Key, MappingPos)> {
+    let mut nearest: Option<(Key, MappingPos, f32)> = None;
 
     for (key, action) in mappings.read().iter() {
-        if let Some((x, y)) = extract_position(action) {
-            let dx = device_pos.0 - x;
-            let dy = device_pos.1 - y;
+        if let Some(p) = extract_position(action) {
+            let dx = source.x - p.x;
+            let dy = source.y - p.y;
             let distance = (dx * dx + dy * dy).sqrt();
 
             if let Some((_, _, min_dist)) = nearest {
                 if distance < min_dist {
-                    nearest = Some((*key, (x, y), distance));
+                    nearest = Some((*key, p, distance));
                 }
             } else {
-                nearest = Some((*key, (x, y), distance));
+                nearest = Some((*key, p, distance));
             }
         }
     }
 
-    nearest.map(|(key, pos, _)| (key, pos))
+    nearest.map(|(k, p, _)| (k, p))
 }
 
 /// Extract position from InputAction (as f32, could be percentage or pixels)
-pub fn extract_position(action: &InputAction) -> Option<(f32, f32)> {
+pub fn extract_position(action: &MappingAction) -> Option<MappingPos> {
     match action {
-        InputAction::Tap { x, y } => Some((*x, *y)),
-        InputAction::TouchDown { x, y } => Some((*x, *y)),
+        MappingAction::Tap { pos } => Some(*pos),
+        MappingAction::TouchDown { pos } => Some(*pos),
         _ => None,
     }
 }

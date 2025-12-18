@@ -12,11 +12,67 @@
 /// - Input events: VisualCoordSys → ScrcpyCoordSys (for control) or VisualCoordSys →
 ///   MappingCoordSys (for config editing)
 use eframe::egui::{Pos2, Rect};
+use serde::{Deserialize, Serialize};
+
+/// Mapping position in normalized (0.0-1.0) coordinate system
+///
+/// Used for storing mapping points in config files.
+/// Coordinates are clamped to 0.0-1.0 range.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct MappingPos {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl MappingPos {
+    pub fn new(x: f32, y: f32) -> Self {
+        Self {
+            x: x.clamp(0.0, 1.0),
+            y: y.clamp(0.0, 1.0),
+        }
+    }
+}
+
+impl From<(f32, f32)> for MappingPos {
+    fn from(pos: (f32, f32)) -> Self { Self::new(pos.0, pos.1) }
+}
+
+impl From<MappingPos> for (f32, f32) {
+    fn from(pos: MappingPos) -> Self { (pos.x, pos.y) }
+}
+
+/// Scrcpy position in pixel coordinate system
+///
+/// Used for sending control messages to scrcpy-server.
+/// Coordinates are in pixel units.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrcpyPos {
+    pub x: u32,
+    pub y: u32,
+}
+
+impl ScrcpyPos {
+    pub fn new(x: u32, y: u32) -> Self { Self { x, y } }
+}
+
+impl From<(u32, u32)> for ScrcpyPos {
+    fn from(pos: (u32, u32)) -> Self { Self::new(pos.0, pos.1) }
+}
+
+impl From<ScrcpyPos> for (u32, u32) {
+    fn from(pos: ScrcpyPos) -> Self { (pos.x, pos.y) }
+}
+
+/// Visual position in screen/UI coordinate system
+///
+/// Used for displaying positions in the egui window.
+/// Coordinates are in egui::Pos2 units.
+pub type VisualPos = Pos2;
 
 /// Mapping coordinate system (0.0-1.0 normalized, stored in config)
 ///
 /// Bound to device orientation at time of mapping creation.
-/// - device_orientation: 0=0°, 1=90°CCW, 2=180°, 3=270°CCW (Android Display Rotation)
+/// - device_orientation: 0=0°, 1=90°CW, 2=180°, 3=270°CW (Android Display Rotation)
 ///
 /// Coordinates are percentage values (0.0-1.0) relative to device screen at that orientation.
 ///
@@ -45,10 +101,8 @@ impl MappingCoordSys {
     ///   rotation transform needed
     /// - When capture_orientation is Some(orientation), video is locked to that orientation, must
     ///   rotate coords from device_orientation to capture_orientation
-    pub fn to_scrcpy(&self, pos: (f32, f32), target: &ScrcpyCoordSys) -> (u32, u32) {
-        let (x, y) = (pos.0.clamp(0.0, 1.0), pos.1.clamp(0.0, 1.0));
-
-        let (x_px, y_px) = if let Some(capture_orient) = target.capture_orientation {
+    pub fn to_scrcpy(&self, pos: &MappingPos, target: &ScrcpyCoordSys) -> ScrcpyPos {
+        let (px, py) = if let Some(capture_orient) = target.capture_orientation {
             // Capture orientation locked - need rotation transform
             // Different orientation - rotate coordinates
             // Transform from device_orientation to capture_orientation
@@ -62,31 +116,31 @@ impl MappingCoordSys {
                 0 => {
                     // No rotation
                     (
-                        x * target.video_width as f32,
-                        y * target.video_height as f32,
+                        pos.x * target.video_width as f32,
+                        pos.y * target.video_height as f32,
                     )
                 }
                 1 => {
                     // 90° CW: (x, y) -> (1-y, x)
                     // Swap dimensions
                     (
-                        (1.0 - y) * target.video_width as f32,
-                        x * target.video_height as f32,
+                        (1.0 - pos.y) * target.video_width as f32,
+                        pos.x * target.video_height as f32,
                     )
                 }
                 2 => {
                     // 180°: (x, y) -> (1-x, 1-y)
                     (
-                        (1.0 - x) * target.video_width as f32,
-                        (1.0 - y) * target.video_height as f32,
+                        (1.0 - pos.x) * target.video_width as f32,
+                        (1.0 - pos.y) * target.video_height as f32,
                     )
                 }
                 3 => {
                     // 270° CW = 90° CCW: (x, y) -> (y, 1-x)
                     // Swap dimensions
                     (
-                        y * target.video_width as f32,
-                        (1.0 - x) * target.video_height as f32,
+                        pos.y * target.video_width as f32,
+                        (1.0 - pos.x) * target.video_height as f32,
                     )
                 }
                 _ => unreachable!(),
@@ -95,12 +149,12 @@ impl MappingCoordSys {
             // Capture not locked - video follows device orientation
             // Video resolution already matches device orientation, direct scale
             (
-                x * target.video_width as f32,
-                y * target.video_height as f32,
+                pos.x * target.video_width as f32,
+                pos.y * target.video_height as f32,
             )
         };
 
-        (x_px as u32, y_px as u32)
+        ScrcpyPos::new(px as u32, py as u32)
     }
 
     /// Convert from ScrcpyCoordSys to mapping coordinate (0.0-1.0)
@@ -108,37 +162,37 @@ impl MappingCoordSys {
     /// # Parameters
     /// - `pos`: (x, y) pixel coordinates
     /// - `source`: Source ScrcpyCoordSys
-    pub fn from_scrcpy(&self, pos: (u32, u32), source: &ScrcpyCoordSys) -> (f32, f32) {
-        let percent_x = pos.0 as f32 / source.video_width as f32;
-        let percent_y = pos.1 as f32 / source.video_height as f32;
+    pub fn from_scrcpy(&self, pos: &ScrcpyPos, source: &ScrcpyCoordSys) -> MappingPos {
+        let px = pos.x as f32 / source.video_width as f32;
+        let py = pos.y as f32 / source.video_height as f32;
 
         let (x, y) = if let Some(capture_orient) = source.capture_orientation {
             let rotation = (self.device_orientation + capture_orient) % 4;
             match rotation {
                 0 => {
                     // No rotation
-                    (percent_x, percent_y)
+                    (px, py)
                 }
                 1 => {
                     // 90° CCW: (x, y) -> (y, 1-x)
-                    (percent_y, 1.0 - percent_x)
+                    (py, 1.0 - px)
                 }
                 2 => {
                     // 180°: (x, y) -> (1-x, 1-y)
-                    (1.0 - percent_x, 1.0 - percent_y)
+                    (1.0 - px, 1.0 - py)
                 }
                 3 => {
                     // 270° CCW: (x, y) -> (1-y, x)
-                    (1.0 - percent_y, percent_x)
+                    (1.0 - py, px)
                 }
                 _ => unreachable!(),
             }
         } else {
             // Capture not locked - video follows device
-            (percent_x, percent_y)
+            (px, py)
         };
 
-        (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0))
+        MappingPos::new(x, y)
     }
 }
 
@@ -171,9 +225,9 @@ impl ScrcpyCoordSys {
     /// Convert scrcpy coordinate to VisualCoordSys
     ///
     /// # Parameters
-    /// - `pos`: (x, y) pixel coordinates in video frame
+    /// - `pos`: ScrcpyPos (x, y) pixel coordinates
     /// - `target`: Target VisualCoordSys
-    pub fn to_visual(&self, pos: (u32, u32), rect: Rect, rotation: u32) -> Option<Pos2> {
+    pub fn to_visual(&self, pos: &ScrcpyPos, rect: &Rect, rotation: u32) -> VisualPos {
         // Video coords are in video frame space
         // Need to transform through user rotation to display space
 
@@ -185,8 +239,8 @@ impl ScrcpyCoordSys {
         };
 
         // Normalize to video frame coordinates
-        let x_norm = pos.0 as f32 / self.video_width as f32;
-        let y_norm = pos.1 as f32 / self.video_height as f32;
+        let x_norm = pos.x as f32 / self.video_width as f32;
+        let y_norm = pos.y as f32 / self.video_height as f32;
 
         // Apply user rotation (clockwise)
         let (rel_x, rel_y) = match rotation % 4 {
@@ -206,7 +260,7 @@ impl ScrcpyCoordSys {
             _ => unreachable!(),
         };
 
-        Some(Pos2::new(rect.left() + rel_x, rect.top() + rel_y))
+        VisualPos::new(rect.left() + rel_x, rect.top() + rel_y)
     }
 
     /// Convert from visual coordinates to scrcpy coordinate
@@ -215,9 +269,9 @@ impl ScrcpyCoordSys {
     /// - `pos`: Screen position (egui::Pos2)
     /// - `rect`: Video display rectangle
     /// - `rotation`: User manual rotation (0-3, clockwise 90°)
-    pub fn from_visual(&self, pos: Pos2, rect: Rect, rotation: u32) -> Option<(u32, u32)> {
+    pub fn from_visual(&self, pos: &VisualPos, rect: &Rect, rotation: u32) -> Option<ScrcpyPos> {
         // Check if position is within rect
-        if !rect.contains(pos) {
+        if !rect.contains(*pos) {
             return None;
         }
 
@@ -261,7 +315,7 @@ impl ScrcpyCoordSys {
         let x_norm = video_x / video_w;
         let y_norm = video_y / video_h;
 
-        Some((
+        Some(ScrcpyPos::new(
             (x_norm * self.video_width as f32) as u32,
             (y_norm * self.video_height as f32) as u32,
         ))
@@ -270,18 +324,18 @@ impl ScrcpyCoordSys {
     /// Convert to MappingCoordSys
     ///
     /// # Parameters
-    /// - `pos`: (x, y) pixel coordinates
+    /// - `pos`: ScrcpyPos (x, y) pixel coordinates
     /// - `target`: Target MappingCoordSys
-    pub fn to_mapping(&self, pos: (u32, u32), target: &MappingCoordSys) -> (f32, f32) {
+    pub fn to_mapping(&self, pos: &ScrcpyPos, target: &MappingCoordSys) -> MappingPos {
         target.from_scrcpy(pos, self)
     }
 
     /// Convert from MappingCoordSys
     ///
     /// # Parameters
-    /// - `pos`: (x, y) in 0.0-1.0 range
+    /// - `pos`: MappingPos (x, y) in 0.0-1.0 range
     /// - `source`: Source MappingCoordSys
-    pub fn from_mapping(&self, pos: (f32, f32), source: &MappingCoordSys) -> (u32, u32) {
+    pub fn from_mapping(&self, pos: &MappingPos, source: &MappingCoordSys) -> ScrcpyPos {
         source.to_scrcpy(pos, self)
     }
 }
@@ -308,62 +362,62 @@ impl VisualCoordSys {
     /// Convert visual coordinate to ScrcpyCoordSys
     ///
     /// # Parameters
-    /// - `pos`: Screen position (egui::Pos2)
+    /// - `pos`: Screen position (VisualPos)
     /// - `rect`: Video display rectangle (from player.video_rect())
     /// - `target`: Target ScrcpyCoordSys
-    pub fn to_scrcpy(&self, pos: Pos2, rect: Rect, target: &ScrcpyCoordSys) -> Option<(u32, u32)> {
+    pub fn to_scrcpy(
+        &self,
+        pos: &VisualPos,
+        rect: &Rect,
+        target: &ScrcpyCoordSys,
+    ) -> Option<ScrcpyPos> {
         target.from_visual(pos, rect, self.rotation)
     }
 
     /// Convert from ScrcpyCoordSys to visual coordinate
     ///
     /// # Parameters
-    /// - `pos`: (x, y) pixel coordinates
+    /// - `pos`: ScrcpyPos (x, y) pixel coordinates
     /// - `rect`: Video display rectangle (from player.video_rect())
     /// - `source`: Source ScrcpyCoordSys
-    pub fn from_scrcpy(
-        &self,
-        pos: (u32, u32),
-        rect: Rect,
-        source: &ScrcpyCoordSys,
-    ) -> Option<Pos2> {
+    pub fn from_scrcpy(&self, pos: &ScrcpyPos, rect: &Rect, source: &ScrcpyCoordSys) -> VisualPos {
         source.to_visual(pos, rect, self.rotation)
     }
 
     /// Convert to MappingCoordSys (via ScrcpyCoordSys)
     ///
     /// # Parameters
-    /// - `pos`: Screen position (egui::Pos2)
+    /// - `pos`: Screen position (VisualPos)
     /// - `rect`: Video display rectangle (from player.video_rect())
     /// - `scrcpy_sys`: Intermediate ScrcpyCoordSys
     /// - `target`: Target MappingCoordSys
     pub fn to_mapping(
         &self,
-        pos: Pos2,
-        rect: Rect,
+        pos: &VisualPos,
+        rect: &Rect,
         scrcpy_sys: &ScrcpyCoordSys,
         target: &MappingCoordSys,
-    ) -> Option<(f32, f32)> {
+    ) -> Option<MappingPos> {
         let scrcpy_pos = self.to_scrcpy(pos, rect, scrcpy_sys)?;
-        Some(target.from_scrcpy(scrcpy_pos, scrcpy_sys))
+        Some(target.from_scrcpy(&scrcpy_pos, scrcpy_sys))
     }
 
     /// Convert from MappingCoordSys to visual coordinate (via ScrcpyCoordSys)
     ///
     /// # Parameters
-    /// - `pos`: (x, y) in 0.0-1.0 range
+    /// - `pos`: MappingPos (x, y) in 0.0-1.0 range
     /// - `rect`: Video display rectangle (from player.video_rect())
     /// - `scrcpy_sys`: Intermediate ScrcpyCoordSys
     /// - `source`: Source MappingCoordSys
     pub fn from_mapping(
         &self,
-        pos: (f32, f32),
-        rect: Rect,
+        pos: &MappingPos,
+        rect: &Rect,
         scrcpy_sys: &ScrcpyCoordSys,
         source: &MappingCoordSys,
-    ) -> Option<Pos2> {
+    ) -> VisualPos {
         let scrcpy_pos = source.to_scrcpy(pos, scrcpy_sys);
-        self.from_scrcpy(scrcpy_pos, rect, scrcpy_sys)
+        self.from_scrcpy(&scrcpy_pos, rect, scrcpy_sys)
     }
 }
 
@@ -377,11 +431,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(0);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // Portrait device: direct scale
-        assert_eq!(scrcpy_pos.0, 216);
-        assert_eq!(scrcpy_pos.1, 960);
+        assert_eq!(scrcpy_pos.x, 216);
+        assert_eq!(scrcpy_pos.y, 960);
     }
 
     #[test]
@@ -390,11 +444,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(1);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // Landscape device: direct scale
-        assert_eq!(scrcpy_pos.0, 480);
-        assert_eq!(scrcpy_pos.1, 432);
+        assert_eq!(scrcpy_pos.x, 480);
+        assert_eq!(scrcpy_pos.y, 432);
     }
 
     #[test]
@@ -403,11 +457,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(2);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // Portrait upside-down device: direct scale
-        assert_eq!(scrcpy_pos.0, 216);
-        assert_eq!(scrcpy_pos.1, 960);
+        assert_eq!(scrcpy_pos.x, 216);
+        assert_eq!(scrcpy_pos.y, 960);
     }
 
     #[test]
@@ -416,11 +470,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(3);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // Landscape upside-down device: direct scale
-        assert_eq!(scrcpy_pos.0, 480);
-        assert_eq!(scrcpy_pos.1, 432);
+        assert_eq!(scrcpy_pos.x, 480);
+        assert_eq!(scrcpy_pos.y, 432);
     }
 
     #[test]
@@ -429,11 +483,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(0);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // No rotation: (0.2, 0.4) -> (0.2, 0.4)
-        assert_eq!(scrcpy_pos.0, 216); // 0.2 * 1080
-        assert_eq!(scrcpy_pos.1, 960); // 0.4 * 2400
+        assert_eq!(scrcpy_pos.x, 216); // 0.2 * 1080
+        assert_eq!(scrcpy_pos.y, 960); // 0.4 * 2400
     }
 
     #[test]
@@ -442,11 +496,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(1);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 90° CW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        assert_eq!(scrcpy_pos.0, 648); // 0.6 * 1080
-        assert_eq!(scrcpy_pos.1, 480); // 0.2 * 2400
+        assert_eq!(scrcpy_pos.x, 648); // 0.6 * 1080
+        assert_eq!(scrcpy_pos.y, 480); // 0.2 * 2400
     }
 
     #[test]
@@ -455,11 +509,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(2);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        assert_eq!(scrcpy_pos.0, 864); // 0.8 * 1080
-        assert_eq!(scrcpy_pos.1, 1440); // 0.6 * 2400
+        assert_eq!(scrcpy_pos.x, 864); // 0.8 * 1080
+        assert_eq!(scrcpy_pos.y, 1440); // 0.6 * 2400
     }
 
     #[test]
@@ -468,11 +522,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(3);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        assert_eq!(scrcpy_pos.0, 432); // 0.4 * 1080
-        assert_eq!(scrcpy_pos.1, 1920); // 0.8 * 2400
+        assert_eq!(scrcpy_pos.x, 432); // 0.4 * 1080
+        assert_eq!(scrcpy_pos.y, 1920); // 0.8 * 2400
     }
 
     #[test]
@@ -481,11 +535,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(0);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 90° CW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        assert_eq!(scrcpy_pos.0, 1440); // 0.6 * 2400
-        assert_eq!(scrcpy_pos.1, 216); // 0.2 * 1080
+        assert_eq!(scrcpy_pos.x, 1440); // 0.6 * 2400
+        assert_eq!(scrcpy_pos.y, 216); // 0.2 * 1080
     }
 
     #[test]
@@ -494,11 +548,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(1);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        assert_eq!(scrcpy_pos.0, 1920); // 0.8 * 2400
-        assert_eq!(scrcpy_pos.1, 648); // 0.6 * 1080
+        assert_eq!(scrcpy_pos.x, 1920); // 0.8 * 2400
+        assert_eq!(scrcpy_pos.y, 648); // 0.6 * 1080
     }
 
     #[test]
@@ -507,11 +561,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(2);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        assert_eq!(scrcpy_pos.0, 960); // 0.4 * 2400
-        assert_eq!(scrcpy_pos.1, 864); // 0.8 * 1080
+        assert_eq!(scrcpy_pos.x, 960); // 0.4 * 2400
+        assert_eq!(scrcpy_pos.y, 864); // 0.8 * 1080
     }
 
     #[test]
@@ -520,11 +574,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(3);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-        assert_eq!(scrcpy_pos.0, 480); // 0.2 * 2400
-        assert_eq!(scrcpy_pos.1, 432); // 0.4 * 1080
+        assert_eq!(scrcpy_pos.x, 480); // 0.2 * 2400
+        assert_eq!(scrcpy_pos.y, 432); // 0.4 * 1080
     }
 
     #[test]
@@ -533,11 +587,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(0);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        assert_eq!(scrcpy_pos.0, 864); // 0.7 * 1080
-        assert_eq!(scrcpy_pos.1, 1440); // 0.3 * 2400
+        assert_eq!(scrcpy_pos.x, 864); // 0.7 * 1080
+        assert_eq!(scrcpy_pos.y, 1440); // 0.3 * 2400
     }
 
     #[test]
@@ -546,11 +600,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(1);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        assert_eq!(scrcpy_pos.0, 432); // 0.4 * 1080
-        assert_eq!(scrcpy_pos.1, 1920); // 0.8 * 2400
+        assert_eq!(scrcpy_pos.x, 432); // 0.4 * 1080
+        assert_eq!(scrcpy_pos.y, 1920); // 0.8 * 2400
     }
 
     #[test]
@@ -559,11 +613,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(2);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-        assert_eq!(scrcpy_pos.0, 216); // 0.2 * 1080
-        assert_eq!(scrcpy_pos.1, 960); // 0.4 * 2400
+        assert_eq!(scrcpy_pos.x, 216); // 0.2 * 1080
+        assert_eq!(scrcpy_pos.y, 960); // 0.4 * 2400
     }
 
     #[test]
@@ -572,11 +626,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(3);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 90° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        assert_eq!(scrcpy_pos.0, 648); // 0.6 * 1080
-        assert_eq!(scrcpy_pos.1, 480); // 0.2 * 2400
+        assert_eq!(scrcpy_pos.x, 648); // 0.6 * 1080
+        assert_eq!(scrcpy_pos.y, 480); // 0.2 * 2400
     }
 
     #[test]
@@ -585,11 +639,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(0);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        assert_eq!(scrcpy_pos.0, 960); // 0.4 * 2400
-        assert_eq!(scrcpy_pos.1, 864); // 0.8 * 1080
+        assert_eq!(scrcpy_pos.x, 960); // 0.4 * 2400
+        assert_eq!(scrcpy_pos.y, 864); // 0.8 * 1080
     }
 
     #[test]
@@ -598,11 +652,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(1);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-        assert_eq!(scrcpy_pos.0, 480); // 0.2 * 2400
-        assert_eq!(scrcpy_pos.1, 432); // 0.4 * 1080
+        assert_eq!(scrcpy_pos.x, 480); // 0.2 * 2400
+        assert_eq!(scrcpy_pos.y, 432); // 0.4 * 1080
     }
 
     #[test]
@@ -611,11 +665,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(2);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 90° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        assert_eq!(scrcpy_pos.0, 1440); // 0.6 * 2400
-        assert_eq!(scrcpy_pos.1, 216); // 0.2 * 1080
+        assert_eq!(scrcpy_pos.x, 1440); // 0.6 * 2400
+        assert_eq!(scrcpy_pos.y, 216); // 0.2 * 1080
     }
 
     #[test]
@@ -624,11 +678,11 @@ mod tests {
         let mapping_sys = MappingCoordSys::new(3);
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
-        let scrcpy_pos = mapping_sys.to_scrcpy((0.2, 0.4), &scrcpy_sys);
+        let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
 
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        assert_eq!(scrcpy_pos.0, 1920); // 0.8 * 2400
-        assert_eq!(scrcpy_pos.1, 648); // 0.6 * 1080
+        assert_eq!(scrcpy_pos.x, 1920); // 0.8 * 2400
+        assert_eq!(scrcpy_pos.y, 648); // 0.6 * 1080
     }
 
     #[test]
@@ -638,11 +692,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // Portrait device: direct scale
-        assert!((mapping_pos.0 - 0.2).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.4).abs() < 0.001);
+        assert!((mapping_pos.x - 0.2).abs() < 0.001);
+        assert!((mapping_pos.y - 0.4).abs() < 0.001);
     }
 
     #[test]
@@ -652,11 +706,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // Landscape device: direct scale
-        assert!((mapping_pos.0 - 0.2).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.4).abs() < 0.001);
+        assert!((mapping_pos.x - 0.2).abs() < 0.001);
+        assert!((mapping_pos.y - 0.4).abs() < 0.001);
     }
 
     #[test]
@@ -666,11 +720,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // Portrait upside-down device: direct scale
-        assert!((mapping_pos.0 - 0.2).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.4).abs() < 0.001);
+        assert!((mapping_pos.x - 0.2).abs() < 0.001);
+        assert!((mapping_pos.y - 0.4).abs() < 0.001);
     }
 
     #[test]
@@ -680,11 +734,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // Landscape upside-down device: direct scale
-        assert!((mapping_pos.0 - 0.2).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.4).abs() < 0.001);
+        assert!((mapping_pos.x - 0.2).abs() < 0.001);
+        assert!((mapping_pos.y - 0.4).abs() < 0.001);
     }
 
     #[test]
@@ -694,11 +748,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // No rotation
-        assert!((mapping_pos.0 - 0.2).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.4).abs() < 0.001);
+        assert!((mapping_pos.x - 0.2).abs() < 0.001);
+        assert!((mapping_pos.y - 0.4).abs() < 0.001);
     }
 
     #[test]
@@ -708,11 +762,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        assert!((mapping_pos.0 - 0.4).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.8).abs() < 0.001);
+        assert!((mapping_pos.x - 0.4).abs() < 0.001);
+        assert!((mapping_pos.y - 0.8).abs() < 0.001);
     }
 
     #[test]
@@ -722,11 +776,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        assert!((mapping_pos.0 - 0.8).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.6).abs() < 0.001);
+        assert!((mapping_pos.x - 0.8).abs() < 0.001);
+        assert!((mapping_pos.y - 0.6).abs() < 0.001);
     }
 
     #[test]
@@ -736,11 +790,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        assert!((mapping_pos.0 - 0.6).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.2).abs() < 0.001);
+        assert!((mapping_pos.x - 0.6).abs() < 0.001);
+        assert!((mapping_pos.y - 0.2).abs() < 0.001);
     }
 
     #[test]
@@ -750,11 +804,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        assert!((mapping_pos.0 - 0.4).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.8).abs() < 0.001);
+        assert!((mapping_pos.x - 0.4).abs() < 0.001);
+        assert!((mapping_pos.y - 0.8).abs() < 0.001);
     }
 
     #[test]
@@ -764,11 +818,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        assert!((mapping_pos.0 - 0.8).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.6).abs() < 0.001);
+        assert!((mapping_pos.x - 0.8).abs() < 0.001);
+        assert!((mapping_pos.y - 0.6).abs() < 0.001);
     }
 
     #[test]
@@ -778,11 +832,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        assert!((mapping_pos.0 - 0.6).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.2).abs() < 0.001);
+        assert!((mapping_pos.x - 0.6).abs() < 0.001);
+        assert!((mapping_pos.y - 0.2).abs() < 0.001);
     }
 
     #[test]
@@ -792,11 +846,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-        assert!((mapping_pos.0 - 0.2).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.4).abs() < 0.001);
+        assert!((mapping_pos.x - 0.2).abs() < 0.001);
+        assert!((mapping_pos.y - 0.4).abs() < 0.001);
     }
 
     #[test]
@@ -806,11 +860,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        assert!((mapping_pos.0 - 0.8).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.6).abs() < 0.001);
+        assert!((mapping_pos.x - 0.8).abs() < 0.001);
+        assert!((mapping_pos.y - 0.6).abs() < 0.001);
     }
 
     #[test]
@@ -820,11 +874,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        assert!((mapping_pos.0 - 0.6).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.2).abs() < 0.001);
+        assert!((mapping_pos.x - 0.6).abs() < 0.001);
+        assert!((mapping_pos.y - 0.2).abs() < 0.001);
     }
 
     #[test]
@@ -834,11 +888,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-        assert!((mapping_pos.0 - 0.2).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.4).abs() < 0.001);
+        assert!((mapping_pos.x - 0.2).abs() < 0.001);
+        assert!((mapping_pos.y - 0.4).abs() < 0.001);
     }
 
     #[test]
@@ -848,11 +902,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((216, 960), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
 
         // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        assert!((mapping_pos.0 - 0.4).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.8).abs() < 0.001);
+        assert!((mapping_pos.x - 0.4).abs() < 0.001);
+        assert!((mapping_pos.y - 0.8).abs() < 0.001);
     }
 
     #[test]
@@ -862,11 +916,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        assert!((mapping_pos.0 - 0.6).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.2).abs() < 0.001);
+        assert!((mapping_pos.x - 0.6).abs() < 0.001);
+        assert!((mapping_pos.y - 0.2).abs() < 0.001);
     }
 
     #[test]
@@ -876,11 +930,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-        assert!((mapping_pos.0 - 0.2).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.4).abs() < 0.001);
+        assert!((mapping_pos.x - 0.2).abs() < 0.001);
+        assert!((mapping_pos.y - 0.4).abs() < 0.001);
     }
 
     #[test]
@@ -890,11 +944,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        assert!((mapping_pos.0 - 0.4).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.8).abs() < 0.001);
+        assert!((mapping_pos.x - 0.4).abs() < 0.001);
+        assert!((mapping_pos.y - 0.8).abs() < 0.001);
     }
 
     #[test]
@@ -904,11 +958,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
         // (0.2, 0.4) in scrcpy coords
-        let mapping_pos = mapping_sys.from_scrcpy((480, 432), &scrcpy_sys);
+        let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
 
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        assert!((mapping_pos.0 - 0.8).abs() < 0.001);
-        assert!((mapping_pos.1 - 0.6).abs() < 0.001);
+        assert!((mapping_pos.x - 0.8).abs() < 0.001);
+        assert!((mapping_pos.y - 0.6).abs() < 0.001);
     }
 
     #[test]
@@ -920,11 +974,11 @@ mod tests {
         // (0.2, 0.4) in visual coords
         // No rotation: (0.2, 0.4) -> (0.2, 0.4)
         let scrcpy_pos = visual_sys
-            .to_scrcpy(Pos2::new(216.0, 960.0), video_rect, &scrcpy_sys)
+            .to_scrcpy(&VisualPos::new(216.0, 960.0), &video_rect, &scrcpy_sys)
             .unwrap();
 
-        assert_eq!(scrcpy_pos.0, 216);
-        assert_eq!(scrcpy_pos.1, 960);
+        assert_eq!(scrcpy_pos.x, 216);
+        assert_eq!(scrcpy_pos.y, 960);
     }
 
     #[test]
@@ -936,10 +990,10 @@ mod tests {
         // (0.2, 0.4) in visual coords
         // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
         let scrcpy_pos = visual_sys
-            .to_scrcpy(Pos2::new(236.0, 990.0), video_rect, &scrcpy_sys)
+            .to_scrcpy(&VisualPos::new(236.0, 990.0), &video_rect, &scrcpy_sys)
             .unwrap();
-        assert_eq!(scrcpy_pos.0, 960);
-        assert_eq!(scrcpy_pos.1, 864);
+        assert_eq!(scrcpy_pos.x, 960);
+        assert_eq!(scrcpy_pos.y, 864);
     }
 
     #[test]
@@ -951,11 +1005,11 @@ mod tests {
         // (0.2, 0.4) in visual coords
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
         let scrcpy_pos = visual_sys
-            .to_scrcpy(Pos2::new(256.0, 1020.0), video_rect, &scrcpy_sys)
+            .to_scrcpy(&VisualPos::new(256.0, 1020.0), &video_rect, &scrcpy_sys)
             .unwrap();
 
-        assert_eq!(scrcpy_pos.0, 864);
-        assert_eq!(scrcpy_pos.1, 1440);
+        assert_eq!(scrcpy_pos.x, 864);
+        assert_eq!(scrcpy_pos.y, 1440);
     }
 
     #[test]
@@ -967,11 +1021,11 @@ mod tests {
         // (0.2, 0.4) in visual coords
         // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
         let scrcpy_pos = visual_sys
-            .to_scrcpy(Pos2::new(216.0, 960.0), video_rect, &scrcpy_sys)
+            .to_scrcpy(&VisualPos::new(216.0, 960.0), &video_rect, &scrcpy_sys)
             .unwrap();
 
-        assert_eq!(scrcpy_pos.0, 1440);
-        assert_eq!(scrcpy_pos.1, 216);
+        assert_eq!(scrcpy_pos.x, 1440);
+        assert_eq!(scrcpy_pos.y, 216);
     }
 
     #[test]
@@ -981,13 +1035,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
 
         // (0.2, 0.4) in scrcpy coords
-        let original_pos = (216, 960);
+        let original_pos = ScrcpyPos::new(216, 960);
 
         // Scrcpy -> Visual
         // No rotation: (0.2, 0.4) -> (0.2, 0.4)
-        let visual_pos = visual_sys
-            .from_scrcpy((original_pos.0, original_pos.1), video_rect, &scrcpy_sys)
-            .unwrap();
+        let visual_pos = visual_sys.from_scrcpy(&original_pos, &video_rect, &scrcpy_sys);
         assert!((visual_pos.x - 216.0 - 10.0).abs() < 1.0);
         assert!((visual_pos.y - 960.0 - 20.0).abs() < 1.0);
     }
@@ -999,13 +1051,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
         // (0.2, 0.4) in scrcpy coords
-        let original_pos = (480, 432);
+        let original_pos = ScrcpyPos::new(480, 432);
 
         // Scrcpy -> Visual
         // 90° CW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-        let visual_pos = visual_sys
-            .from_scrcpy((original_pos.0, original_pos.1), video_rect, &scrcpy_sys)
-            .unwrap();
+        let visual_pos = visual_sys.from_scrcpy(&original_pos, &video_rect, &scrcpy_sys);
         assert!((visual_pos.x - 648.0 - 20.0).abs() < 1.0);
         assert!((visual_pos.y - 480.0 - 30.0).abs() < 1.0);
     }
@@ -1017,13 +1067,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
         // (0.2, 0.4) in scrcpy coords
-        let original_pos = (216, 960);
+        let original_pos = ScrcpyPos::new(216, 960);
 
         // Scrcpy -> Visual
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-        let visual_pos = visual_sys
-            .from_scrcpy((original_pos.0, original_pos.1), video_rect, &scrcpy_sys)
-            .unwrap();
+        let visual_pos = visual_sys.from_scrcpy(&original_pos, &video_rect, &scrcpy_sys);
         assert!((visual_pos.x - 864.0 - 40.0).abs() < 1.0);
         assert!((visual_pos.y - 1440.0 - 60.0).abs() < 1.0);
     }
@@ -1035,13 +1083,11 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
         // (0.2, 0.4) in scrcpy coords
-        let original_pos = (480, 432);
+        let original_pos = ScrcpyPos::new(480, 432);
 
         // Scrcpy -> Visual
         // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-        let visual_pos = visual_sys
-            .from_scrcpy((original_pos.0, original_pos.1), video_rect, &scrcpy_sys)
-            .unwrap();
+        let visual_pos = visual_sys.from_scrcpy(&original_pos, &video_rect, &scrcpy_sys);
         assert!((visual_pos.x - 432.0).abs() < 1.0);
         assert!((visual_pos.y - 1920.0).abs() < 1.0);
     }
@@ -1053,15 +1099,14 @@ mod tests {
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
         let mapping_sys = MappingCoordSys::new(0);
 
-        let original_pos = Pos2::new(550.0, 1220.0);
+        let original_pos = VisualPos::new(550.0, 1220.0);
 
         // Visual -> Mapping -> Visual
         let mapping_pos = visual_sys
-            .to_mapping(original_pos, video_rect, &scrcpy_sys, &mapping_sys)
+            .to_mapping(&original_pos, &video_rect, &scrcpy_sys, &mapping_sys)
             .unwrap();
-        let result_pos = visual_sys
-            .from_mapping(mapping_pos, video_rect, &scrcpy_sys, &mapping_sys)
-            .unwrap();
+        let result_pos =
+            visual_sys.from_mapping(&mapping_pos, &video_rect, &scrcpy_sys, &mapping_sys);
 
         assert!((original_pos.x - result_pos.x).abs() < 1.0);
         assert!((original_pos.y - result_pos.y).abs() < 1.0);

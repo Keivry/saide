@@ -6,7 +6,10 @@ use {
         },
         dialog::{ModalDialog, ModalDialogResult},
     },
-    crate::config::mapping::{Key, KeyMapping},
+    crate::{
+        app::coords::MappingPos,
+        config::mapping::{Key, KeyMapping},
+    },
     eframe::egui::{self, Color32, FontId, Pos2, Stroke},
     egui::Modifiers,
 };
@@ -25,7 +28,7 @@ pub struct MappingConfigWindow {
     pub visible: bool,
 
     /// Pending key input position (percentage coordinates 0.0-1.0)
-    pos: Option<(f32, f32)>,
+    pos: Option<MappingPos>,
 
     /// Input dialog state
     key_input_dialog: ModalDialog,
@@ -34,13 +37,13 @@ pub struct MappingConfigWindow {
     /// Delete confirmation dialog state
     delete_mapping_dialog: ModalDialog,
     delete_target_key: Option<Key>,
-    delete_target_pos: Option<(f32, f32)>,
+    delete_target_pos: Option<MappingPos>,
 
     /// Override confirmation dialog state
     override_mapping_dialog: ModalDialog,
     override_key: Option<Key>,
-    override_pos: Option<(f32, f32)>,
-    override_new_pos: Option<(f32, f32)>,
+    override_pos: Option<MappingPos>,
+    override_new_pos: Option<MappingPos>,
 }
 
 impl MappingConfigWindow {
@@ -158,19 +161,18 @@ impl MappingConfigWindow {
                 });
 
                 // Draw existing mappings
-                // Note: Profile 中的坐标是百分比 (0.0-1.0)
                 mappings.read().iter().for_each(|(key, action)| {
-                    if let Some(percent_pos) = extract_position(action)
-                        && let Some(screen_pos) = visual_coords.from_mapping(
-                            percent_pos,
-                            video_rect,
+                    if let Some(percent_pos) = extract_position(action) {
+                        let screen_pos = visual_coords.from_mapping(
+                            &percent_pos,
+                            &video_rect,
                             scrcpy_coords,
                             mapping_coords,
-                        )
-                    {
+                        );
+
                         // Draw circle marker
-                        painter.circle_filled(screen_pos, 8.0, Color32::from_rgb(100, 200, 255));
-                        painter.circle_stroke(screen_pos, 8.0, Stroke::new(2.0, Color32::WHITE));
+                        painter.circle_filled(screen_pos, 12.0, Color32::from_rgb(100, 200, 255));
+                        painter.circle_stroke(screen_pos, 12.0, Stroke::new(2.0, Color32::WHITE));
 
                         // Draw key label
                         let key_text = format!("{:?}", key);
@@ -235,13 +237,7 @@ impl MappingConfigWindow {
     }
 
     /// Show key input dialog
-    ///
-    /// Displays position as percentage coordinates (0-100%)
-    pub fn show_key_input_dialog(
-        &mut self,
-        ctx: &egui::Context,
-        device_pos: (f32, f32),
-    ) -> Option<Key> {
+    pub fn show_key_input_dialog(&mut self, ctx: &egui::Context, pos: &MappingPos) -> Option<Key> {
         if !self.key_input_dialog.is_visible() {
             return None;
         }
@@ -249,15 +245,11 @@ impl MappingConfigWindow {
         let mut should_close = false;
         let mut captured_key = None;
 
-        // Display as percentage (0-100%)
-        let percent_x = device_pos.0 * 100.0;
-        let percent_y = device_pos.1 * 100.0;
-
         match self
             .key_input_dialog
             .set_message(&format!(
-                "\nPosition: ({:.2}%, {:.2}%)\n\nPress a key or ESC to cancel...\n",
-                percent_x, percent_y
+                "\nPosition: ({}, {}%)\n\nPress a key or ESC to cancel...\n",
+                pos.x, pos.y
             ))
             .show(ctx)
         {
@@ -278,13 +270,11 @@ impl MappingConfigWindow {
     }
 
     /// Show delete confirmation dialog
-    ///
-    /// Displays position as percentage coordinates (0-100%)
     pub fn show_delete_confirm_dialog(
         &mut self,
         ctx: &egui::Context,
         key: Key,
-        pos: (f32, f32),
+        pos: &MappingPos,
     ) -> Option<bool> {
         if !self.delete_mapping_dialog.is_visible() {
             return None;
@@ -293,16 +283,9 @@ impl MappingConfigWindow {
         let mut shoudl_close = false;
         let mut result = None;
 
-        // Display as percentage (0-100%)
-        let percent_x = pos.0 * 100.0;
-        let percent_y = pos.1 * 100.0;
-
         match self
             .delete_mapping_dialog
-            .set_message(&format!(
-                "\n{:?}: ({:.2}%, {:.2}%)?\n",
-                key, percent_x, percent_y
-            ))
+            .set_message(&format!("\n{:?}: ({}%, {}%)?\n", key, pos.x, pos.y))
             .show(ctx)
         {
             ModalDialogResult::Confirmed => {
@@ -323,14 +306,12 @@ impl MappingConfigWindow {
     }
 
     /// Show override confirmation dialog
-    ///
-    /// Displays positions as percentage coordinates (0-100%)
     pub fn show_override_confirm_dialog(
         &mut self,
         ctx: &egui::Context,
         key: Key,
-        pos: (f32, f32),
-        new_pos: (f32, f32),
+        pos: &MappingPos,
+        new_pos: &MappingPos,
     ) -> Option<bool> {
         if !self.override_mapping_dialog.is_visible() {
             return None;
@@ -339,17 +320,11 @@ impl MappingConfigWindow {
         let mut should_close = false;
         let mut result = None;
 
-        // Display as percentage (0-100%)
-        let percent_x = pos.0 * 100.0;
-        let percent_y = pos.1 * 100.0;
-        let new_percent_x = new_pos.0 * 100.0;
-        let new_percent_y = new_pos.1 * 100.0;
-
         match self
             .override_mapping_dialog
             .set_message(&format!(
                 "\n{:?}: ({:.2}%, {:.2}%) is already mapped.\n\nOverride to new position ({:.2}%, {:.2}%)?\n",
-                key, percent_x, percent_y, new_percent_x, new_percent_y
+                key, pos.x, pos.y, new_pos.x, new_pos.y
             ))
             .show(ctx)
         {
@@ -382,15 +357,15 @@ impl MappingConfigWindow {
 
     pub fn is_override_dialog_open(&self) -> bool { self.override_mapping_dialog.is_visible() }
 
-    pub fn get_pos(&self) -> Option<(f32, f32)> { self.pos }
+    pub fn get_pos(&self) -> Option<MappingPos> { self.pos }
 
-    pub fn get_delete_target(&self) -> Option<(Key, (f32, f32))> {
+    pub fn get_delete_target(&self) -> Option<(Key, MappingPos)> {
         self.delete_target_key
             .and_then(|key| self.delete_target_pos.map(|pos| (key, pos)).or(None))
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn get_override_target(&self) -> Option<(Key, (f32, f32), (f32, f32))> {
+    pub fn get_override_target(&self) -> Option<(Key, MappingPos, MappingPos)> {
         self.override_key.and_then(|key| {
             self.override_pos.and_then(|pos| {
                 self.override_new_pos
@@ -401,23 +376,23 @@ impl MappingConfigWindow {
     }
 
     /// Request to show input dialog (expects percentage coordinates 0.0-1.0)
-    pub fn request_input_dialog(&mut self, device_pos: (f32, f32)) {
-        self.pos = Some(device_pos);
+    pub fn request_input_dialog(&mut self, pos: &MappingPos) {
+        self.pos = Some(*pos);
         self.key_input_dialog.set_visible(true);
     }
 
     /// Request to show delete dialog (expects percentage coordinates 0.0-1.0)
-    pub fn request_delete_dialog(&mut self, key: Key, pos: (f32, f32)) {
+    pub fn request_delete_dialog(&mut self, key: Key, pos: &MappingPos) {
         self.delete_target_key = Some(key);
-        self.delete_target_pos = Some(pos);
+        self.delete_target_pos = Some(*pos);
         self.delete_mapping_dialog.set_visible(true);
     }
 
     /// Request to show override confirmation dialog (expects percentage coordinates 0.0-1.0)
-    pub fn request_override_dialog(&mut self, key: Key, pos: (f32, f32), new_pos: (f32, f32)) {
+    pub fn request_override_dialog(&mut self, key: Key, pos: &MappingPos, new_pos: &MappingPos) {
         self.override_key = Some(key);
-        self.override_pos = Some(pos);
-        self.override_new_pos = Some(new_pos);
+        self.override_pos = Some(*pos);
+        self.override_new_pos = Some(*new_pos);
         self.override_mapping_dialog.set_visible(true);
     }
 }

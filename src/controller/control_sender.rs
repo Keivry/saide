@@ -4,11 +4,11 @@
 //! input events to Android device via scrcpy protocol.
 
 use {
-    crate::{controller::adb::AdbShell, scrcpy::protocol::control::ControlMessage},
+    crate::scrcpy::protocol::control::ControlMessage,
     anyhow::{Context, Result},
     parking_lot::Mutex,
     std::{io::Write, net::TcpStream, sync::Arc},
-    tracing::{debug, error, trace, warn},
+    tracing::trace,
 };
 
 /// Shared control channel sender
@@ -21,8 +21,6 @@ pub struct ControlSender {
     stream: Arc<Mutex<TcpStream>>,
     /// Current screen dimensions
     screen_size: Arc<Mutex<(u16, u16)>>,
-    /// Saved brightness before turning off screen
-    saved_brightness: Arc<Mutex<Option<u8>>>,
 }
 
 impl ControlSender {
@@ -31,7 +29,6 @@ impl ControlSender {
         Self {
             stream: Arc::new(Mutex::new(stream)),
             screen_size: Arc::new(Mutex::new((screen_width, screen_height))),
-            saved_brightness: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -110,42 +107,9 @@ impl ControlSender {
         self.send_message(&msg)
     }
 
-    /// Turn screen off and save current brightness
+    /// Turn screen off
     pub fn send_screen_off_with_brightness_save(&self) -> Result<()> {
-        // Save current brightness before turning off
-        match AdbShell::get_screen_brightness() {
-            Ok(brightness) => {
-                debug!("Saved screen brightness: {}", brightness);
-                *self.saved_brightness.lock() = Some(brightness);
-            }
-            Err(e) => {
-                warn!("Failed to get screen brightness: {}, using default 128", e);
-                *self.saved_brightness.lock() = Some(128); // Default fallback
-            }
-        }
-
-        // Turn off screen
         self.send_set_display_power(false)
-    }
-
-    /// Turn screen on and restore saved brightness
-    pub fn send_screen_on_with_brightness_restore(&self) -> Result<()> {
-        // Turn on screen first
-        self.send_set_display_power(true)?;
-
-        // Restore brightness
-        let brightness = {
-            let saved = self.saved_brightness.lock();
-            saved.unwrap_or(128) // Default to 128 if not saved
-        };
-
-        debug!("Restoring screen brightness to: {}", brightness);
-        if let Err(e) = AdbShell::set_screen_brightness(brightness) {
-            error!("Failed to restore brightness: {}", e);
-            // Not fatal, screen is still on
-        }
-
-        Ok(())
     }
 
     /// Send text injection
@@ -161,18 +125,6 @@ impl ControlSender {
         let (width, height) = self.get_screen_size();
         let msg = ControlMessage::scroll(x, y, width, height, hscroll, vscroll);
         self.send_message(&msg)
-    }
-
-    /// Send back button (deprecated - use send_key_press with KEYCODE_BACK)
-    #[deprecated(note = "Use send_key_press(4, 0) instead")]
-    pub fn send_back(&self) -> Result<()> {
-        self.send_key_press(4, 0) // KEYCODE_BACK
-    }
-
-    /// Send home button (deprecated - use send_key_press with KEYCODE_HOME)
-    #[deprecated(note = "Use send_key_press(3, 0) instead")]
-    pub fn send_home(&self) -> Result<()> {
-        self.send_key_press(3, 0) // KEYCODE_HOME
     }
 
     /// Send custom control message (advanced usage)

@@ -1,7 +1,7 @@
 use {
     super::{
         super::{
-            coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
+            coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, VisualCoordSys, VisualPos},
             init::{
                 DeviceMonitorEvent,
                 INIT_RESULT_CHANNEL_CAPACITY,
@@ -19,7 +19,7 @@ use {
         config::{
             ConfigManager,
             SAideConfig,
-            mapping::{InputAction, Key, MouseButton, WheelDirection},
+            mapping::{Key, MappingAction, MouseButton, WheelDirection},
         },
         controller::{
             keyboard::KeyboardMapper,
@@ -108,7 +108,7 @@ pub struct SAideApp {
     mouse_enabled: bool,
 
     /// Last mouse pointer position in video rect
-    last_pointer_pos: egui::Pos2,
+    last_pointer_pos: VisualPos,
 
     /// Keyboard custom mapping switch
     keyboard_custom_mapping_enabled: bool,
@@ -177,7 +177,7 @@ impl SAideApp {
             keyboard_enabled,
             mouse_enabled,
 
-            last_pointer_pos: egui::Pos2::ZERO,
+            last_pointer_pos: VisualPos::ZERO,
 
             keyboard_custom_mapping_enabled,
 
@@ -382,7 +382,7 @@ impl SAideApp {
     }
 
     // Check if position is within video rectangle
-    fn is_in_video_rect(&self, pos: &egui::Pos2) -> bool {
+    fn is_in_video_rect(&self, pos: &VisualPos) -> bool {
         let video_rect = self.player.video_rect();
         pos.x >= video_rect.left()
             && pos.x <= video_rect.right()
@@ -461,8 +461,8 @@ impl SAideApp {
                 // Visual -> Scrcpy -> Mapping
                 let video_rect = self.player.video_rect();
                 if let Some(percent_pos) = self.visual_coords.to_mapping(
-                    screen_pos,
-                    video_rect,
+                    &screen_pos,
+                    &video_rect,
                     &self.scrcpy_coords,
                     &self.mapping_coords,
                 ) {
@@ -470,12 +470,13 @@ impl SAideApp {
                         "Add mapping: screen=({:.1},{:.1}) -> percent=({:.6},{:.6}) [device_orientation={}]",
                         screen_pos.x,
                         screen_pos.y,
-                        percent_pos.0,
-                        percent_pos.1,
+                        percent_pos.x,
+                        percent_pos.y,
                         self.device_orientation
                     );
 
-                    self.mapping_config_window.request_input_dialog(percent_pos);
+                    self.mapping_config_window
+                        .request_input_dialog(&percent_pos);
                 }
             }
             MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
@@ -483,19 +484,19 @@ impl SAideApp {
                 // Visual -> Scrcpy -> Mapping
                 let video_rect = self.player.video_rect();
                 if let Some(percent_pos) = self.visual_coords.to_mapping(
-                    screen_pos,
-                    video_rect,
+                    &screen_pos,
+                    &video_rect,
                     &self.scrcpy_coords,
                     &self.mapping_coords,
                 ) && let Some((nearest_key, nearest_pos)) =
-                    find_nearest_mapping(percent_pos, &mappings)
+                    find_nearest_mapping(&percent_pos, &mappings)
                 {
                     info!(
                         "Delete mapping: {:?} at ({:.6}, {:.6})",
-                        nearest_key, nearest_pos.0, nearest_pos.1
+                        nearest_key, nearest_pos.x, nearest_pos.y
                     );
                     self.mapping_config_window
-                        .request_delete_dialog(nearest_key, nearest_pos);
+                        .request_delete_dialog(nearest_key, &nearest_pos);
                 }
             }
             MappingConfigEvent::None => {}
@@ -506,22 +507,22 @@ impl SAideApp {
             && let Some(pending_pos) = self.mapping_config_window.get_pos()
             && let Some(key) = self
                 .mapping_config_window
-                .show_key_input_dialog(ctx, pending_pos)
+                .show_key_input_dialog(ctx, &pending_pos)
         {
             if let Some(action) = self.get_mapping(&key)
-                && let InputAction::Tap { x, y } = action
+                && let MappingAction::Tap { pos } = action
             {
                 self.mapping_config_window
-                    .request_override_dialog(key, (x, y), pending_pos);
+                    .request_override_dialog(key, &pos, &pending_pos);
             } else {
-                self.add_mapping(key, pending_pos);
+                self.add_mapping(key, &pending_pos);
             }
         }
         if self.mapping_config_window.is_delete_dialog_open()
             && let Some((key, pos)) = self.mapping_config_window.get_delete_target()
             && let Some(confirmed) = self
                 .mapping_config_window
-                .show_delete_confirm_dialog(ctx, key, pos)
+                .show_delete_confirm_dialog(ctx, key, &pos)
             && confirmed
         {
             self.delete_mapping(key);
@@ -530,19 +531,16 @@ impl SAideApp {
             && let Some((key, pos, new_pos)) = self.mapping_config_window.get_override_target()
             && let Some(confirmed) = self
                 .mapping_config_window
-                .show_override_confirm_dialog(ctx, key, pos, new_pos)
+                .show_override_confirm_dialog(ctx, key, &pos, &new_pos)
             && confirmed
         {
-            self.add_mapping(key, new_pos);
+            self.add_mapping(key, &new_pos);
         }
     }
 
     /// Add a new mapping (expects percentage coordinates 0.0-1.0)
-    fn add_mapping(&mut self, key: Key, device_pos: (f32, f32)) {
-        info!(
-            "Adding mapping: {:?} -> ({:.4}, {:.4})",
-            key, device_pos.0, device_pos.1
-        );
+    fn add_mapping(&mut self, key: Key, pos: &MappingPos) {
+        info!("Adding mapping: {:?} -> ({:.4}, {:.4})", key, pos.x, pos.y);
 
         let Some(keyboard_mapper) = &self.keyboard_mapper else {
             error!("Keyboard mapper not initialized");
@@ -551,10 +549,7 @@ impl SAideApp {
 
         if let Some(profile) = keyboard_mapper.get_active_profile() {
             // Create new action with percentage coordinates
-            let action = InputAction::Tap {
-                x: device_pos.0,
-                y: device_pos.1,
-            };
+            let action = MappingAction::Tap { pos: *pos };
 
             profile.add_mapping(key, action);
 
@@ -589,7 +584,7 @@ impl SAideApp {
         }
     }
 
-    fn get_mapping(&self, key: &Key) -> Option<InputAction> {
+    fn get_mapping(&self, key: &Key) -> Option<MappingAction> {
         let Some(keyboard_mapper) = &self.keyboard_mapper else {
             return None;
         };
@@ -646,7 +641,7 @@ impl SAideApp {
         mouse_mapper: &MouseMapper,
         button: egui::PointerButton,
         pressed: bool,
-        pos: &egui::Pos2,
+        pos: &VisualPos,
     ) {
         if !self.is_in_video_rect(pos) {
             return;
@@ -656,17 +651,17 @@ impl SAideApp {
 
         // Use video coordinates for scrcpy control channel
         let video_rect = self.player.video_rect();
-        let Some((video_x, video_y)) =
-            self.visual_coords
-                .to_scrcpy(*pos, video_rect, &self.scrcpy_coords)
+        let Some(scrcpy_pos) = self
+            .visual_coords
+            .to_scrcpy(pos, &video_rect, &self.scrcpy_coords)
         else {
             debug!("Failed to convert screen coords to video coords");
             return;
         };
 
         debug!(
-            "Converted screen ({:.1}, {:.1}) -> video ({}, {})",
-            pos.x, pos.y, video_x, video_y
+            "Converted screen ({:.1}, {:.1}) -> scrcpy video ({}, {})",
+            pos.x, pos.y, scrcpy_pos.x, scrcpy_pos.y
         );
 
         // Update ControlSender screen size
@@ -678,7 +673,9 @@ impl SAideApp {
         }
 
         let button = MouseButton::from(button);
-        if let Err(e) = mouse_mapper.handle_button_event(button, pressed, video_x, video_y) {
+        if let Err(e) =
+            mouse_mapper.handle_button_event(button, pressed, scrcpy_pos.x, scrcpy_pos.y)
+        {
             error!("Failed to handle mouse button event: {}", e);
         }
     }
@@ -687,16 +684,16 @@ impl SAideApp {
     fn process_mouse_move_event(
         &self,
         mouse_mapper: &MouseMapper,
-        pos: &egui::Pos2,
-        last_pointer_pos: &egui::Pos2,
-    ) -> Option<egui::Pos2> {
+        pos: &VisualPos,
+        last_pointer_pos: &VisualPos,
+    ) -> Option<VisualPos> {
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
             let video_rect = self.player.video_rect();
-            if let Some((video_x, video_y)) =
+            if let Some(scrcpy_pos) =
                 self.visual_coords
-                    .to_scrcpy(*pos, video_rect, &self.scrcpy_coords)
+                    .to_scrcpy(pos, &video_rect, &self.scrcpy_coords)
             {
                 // Update ControlSender screen size
                 if let Some(sender) = &self.control_sender {
@@ -706,7 +703,7 @@ impl SAideApp {
                     );
                 }
 
-                if let Err(e) = mouse_mapper.handle_move_event(video_x, video_y) {
+                if let Err(e) = mouse_mapper.handle_move_event(scrcpy_pos.x, scrcpy_pos.y) {
                     error!("Failed to handle mouse move event: {}", e);
                 }
             } else {
@@ -723,9 +720,9 @@ impl SAideApp {
             // If dragging and moved outside, send a button release
             let video_rect = self.player.video_rect();
             if mouse_mapper.get_button_state() != MouseState::Idle
-                && let Some((video_x, video_y)) =
+                && let Some(scrcpy_pos) =
                     self.visual_coords
-                        .to_scrcpy(*last_pointer_pos, video_rect, &self.scrcpy_coords)
+                        .to_scrcpy(last_pointer_pos, &video_rect, &self.scrcpy_coords)
             {
                 // Update ControlSender screen size
                 if let Some(sender) = &self.control_sender {
@@ -735,9 +732,12 @@ impl SAideApp {
                     );
                 }
 
-                if let Err(e) =
-                    mouse_mapper.handle_button_event(MouseButton::Left, false, video_x, video_y)
-                {
+                if let Err(e) = mouse_mapper.handle_button_event(
+                    MouseButton::Left,
+                    false,
+                    scrcpy_pos.x,
+                    scrcpy_pos.y,
+                ) {
                     error!("Failed to handle mouse button release event: {}", e);
                 }
             }
@@ -751,9 +751,9 @@ impl SAideApp {
         &self,
         mouse_mapper: &MouseMapper,
         delta: &egui::Vec2,
-        pointer_pos: egui::Pos2,
+        pointer_pos: &VisualPos,
     ) {
-        if !self.is_in_video_rect(&pointer_pos) {
+        if !self.is_in_video_rect(pointer_pos) {
             return;
         }
 
@@ -763,9 +763,9 @@ impl SAideApp {
         );
 
         let video_rect = self.player.video_rect();
-        let Some((video_x, video_y)) =
+        let Some(scrcpy_pos) =
             self.visual_coords
-                .to_scrcpy(pointer_pos, video_rect, &self.scrcpy_coords)
+                .to_scrcpy(pointer_pos, &video_rect, &self.scrcpy_coords)
         else {
             return;
         };
@@ -784,12 +784,12 @@ impl SAideApp {
             WheelDirection::Down
         };
 
-        if let Err(e) = mouse_mapper.handle_wheel_event(video_x, video_y, &dir) {
+        if let Err(e) = mouse_mapper.handle_wheel_event(scrcpy_pos.x, scrcpy_pos.y, &dir) {
             error!("Failed to handle wheel event: {}", e);
         } else {
             debug!(
-                "Mouse wheel event at video coords: ({}, {})",
-                video_x, video_y
+                "Mouse wheel event at scrcpy video coords: ({}, {})",
+                scrcpy_pos.x, scrcpy_pos.y
             );
         }
     }
@@ -884,7 +884,7 @@ impl SAideApp {
                     }
                     egui::Event::MouseWheel { delta, .. } => {
                         let pointer_pos = input.pointer.hover_pos().unwrap_or_default();
-                        self.process_mouse_wheel_event(mouse_mapper, delta, pointer_pos);
+                        self.process_mouse_wheel_event(mouse_mapper, delta, &pointer_pos);
                     }
                     _ => {}
                 }

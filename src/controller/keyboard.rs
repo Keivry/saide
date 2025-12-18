@@ -1,7 +1,7 @@
 use {
     crate::{
         app::coords::{MappingCoordSys, ScrcpyCoordSys},
-        config::mapping::{Mappings, Modifiers, Profile},
+        config::mapping::{Mappings, Modifiers, Profile, ScrcpyAction},
         controller::control_sender::ControlSender,
     },
     anyhow::{Result, anyhow},
@@ -106,8 +106,9 @@ pub struct KeyboardMapper {
     sender: ControlSender,
     avail_profiles: RwLock<Vec<Arc<Profile>>>,
     active_profile: ArcSwap<Option<Arc<Profile>>>,
-    /// Pixel-converted mappings for active profile (百分比 → 像素)
-    pixel_mappings: RwLock<HashMap<Key, crate::config::mapping::InputAction>>,
+
+    // Active mappings for runtime use, converted to scrcpy video coordinates
+    active_mappings: RwLock<HashMap<Key, ScrcpyAction>>,
 }
 
 impl KeyboardMapper {
@@ -118,18 +119,16 @@ impl KeyboardMapper {
             sender,
             avail_profiles: RwLock::new(Vec::new()),
             active_profile: ArcSwap::from_pointee(None),
-            pixel_mappings: RwLock::new(HashMap::new()),
+            active_mappings: RwLock::new(HashMap::new()),
         })
     }
 
     /// Refresh available profiles based on device ID and rotation
     ///
-    /// Profile 中保持百分比坐标不变，转换后的像素坐标存储在 pixel_mappings 中
-    ///
     /// # Parameters
-    /// - `device_id`: 设备 ID
-    /// - `device_rotation`: 当前设备旋转角度 (0-3, CCW)
-    /// - `capture_orientation_locked`: capture-orientation 是否被锁定 (NVDEC 模式)
+    /// - `device_id`: current device ID
+    /// - `device_rotation`: current device rotation (0, 1, 2, 3)
+    /// - `capture_orientation_locked`: whether capture-orientation is locked (NVDEC mode)
     pub fn refresh_profiles(
         &self,
         device_id: &str,
@@ -146,7 +145,7 @@ impl KeyboardMapper {
             info!("Disable custom key mappings for this device/rotation.");
 
             self.active_profile.store(Arc::new(None));
-            self.pixel_mappings.write().clear();
+            self.active_mappings.write().clear();
         } else {
             info!(
                 "Found {} matching profiles for device ID '{}' with rotation {}.",
@@ -162,7 +161,7 @@ impl KeyboardMapper {
 
             // Convert percentage to pixels for runtime use
             let (video_width, video_height) = self.sender.get_screen_size();
-            self.update_pixel_mappings(
+            self.generate_active_mappings(
                 &profile,
                 video_width as u32,
                 video_height as u32,
@@ -175,29 +174,24 @@ impl KeyboardMapper {
         Ok(())
     }
 
-    /// Convert profile percentage coordinates to pixel mappings using coordinate systems
-    ///
-    /// 使用新的三坐标系统：
-    /// - MappingCoordSys: Profile 坐标（百分比 0.0-1.0，绑定 profile.rotation）
-    /// - ScrcpyCoordSys: 视频像素坐标（考虑 capture_orientation 锁定）
+    /// Generate active mappings in pixel coordinates based on video size
     ///
     /// # Parameters
-    /// - `profile`: 配置文件（rotation 字段记录坐标系方向）
-    /// - `video_width/height`: 视频分辨率
-    /// - `capture_orientation_locked`: 是否锁定 capture-orientation
-    fn update_pixel_mappings(
+    /// - `active_profile`: 当前激活的配置文件
+    /// - `video_width`: scrcpy 视频宽度（像素）
+    /// - `video_height`: scrcpy 视频高度（像素）
+    /// - `capture_orientation_locked`: capture-orientation 是否被锁定 (NVDEC 模式)
+    fn generate_active_mappings(
         &self,
-        profile: &Profile,
+        active_profile: &Profile,
         video_width: u32,
         video_height: u32,
         capture_orientation_locked: bool,
     ) {
-        use crate::config::mapping::InputAction;
-
-        let mut pixel_map = HashMap::new();
+        let mut active_mappings = HashMap::new();
 
         // 创建坐标系
-        let mapping_sys = MappingCoordSys::new(profile.rotation);
+        let mapping_sys = MappingCoordSys::new(active_profile.rotation);
         let capture_orientation = if capture_orientation_locked {
             Some(0) // 锁定到 portrait
         } else {
@@ -206,78 +200,30 @@ impl KeyboardMapper {
         let scrcpy_sys =
             ScrcpyCoordSys::new(video_width as u16, video_height as u16, capture_orientation);
 
-        // Helper: 使用坐标系转换单个坐标点
-        let transform_coord = |x_percent: f32, y_percent: f32| -> (f32, f32) {
-            let (px, py) = mapping_sys.to_scrcpy((x_percent, y_percent), &scrcpy_sys);
-            (px as f32, py as f32)
-        };
-
-        for (key, action) in profile.mappings.read().iter() {
-            let pixel_action = match action {
-                InputAction::Tap { x, y } => {
-                    let (px, py) = transform_coord(*x, *y);
-                    InputAction::Tap { x: px, y: py }
-                }
-                InputAction::TouchDown { x, y } => {
-                    let (px, py) = transform_coord(*x, *y);
-                    InputAction::TouchDown { x: px, y: py }
-                }
-                InputAction::TouchMove { x, y } => {
-                    let (px, py) = transform_coord(*x, *y);
-                    InputAction::TouchMove { x: px, y: py }
-                }
-                InputAction::TouchUp { x, y } => {
-                    let (px, py) = transform_coord(*x, *y);
-                    InputAction::TouchUp { x: px, y: py }
-                }
-                InputAction::Scroll { x, y, direction } => {
-                    let (px, py) = transform_coord(*x, *y);
-                    InputAction::Scroll {
-                        x: px,
-                        y: py,
-                        direction: direction.clone(),
-                    }
-                }
-                InputAction::Swipe {
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    duration,
-                } => {
-                    let (px1, py1) = transform_coord(*x1, *y1);
-                    let (px2, py2) = transform_coord(*x2, *y2);
-                    InputAction::Swipe {
-                        x1: px1,
-                        y1: py1,
-                        x2: px2,
-                        y2: py2,
-                        duration: *duration,
-                    }
-                }
-                other => other.clone(),
-            };
-            pixel_map.insert(*key, pixel_action);
+        for (key, action) in active_profile.mappings.read().iter() {
+            let scrcpy_action =
+                ScrcpyAction::from_mapping_action(action, &scrcpy_sys, &mapping_sys);
+            active_mappings.insert(*key, scrcpy_action);
         }
 
         if capture_orientation_locked {
             trace!(
                 "Converted {} mappings from percentage (rotation={}) to {}x{} pixels (capture locked to 0°)",
-                pixel_map.len(),
-                profile.rotation,
+                active_mappings.len(),
+                active_profile.rotation,
                 video_width,
                 video_height
             );
         } else {
             trace!(
                 "Converted {} mappings from percentage to {}x{} pixels (no transform)",
-                pixel_map.len(),
+                active_mappings.len(),
                 video_width,
                 video_height
             );
         }
 
-        *self.pixel_mappings.write() = pixel_map;
+        *self.active_mappings.write() = active_mappings;
     }
 
     /// Load profile by name
@@ -386,7 +332,7 @@ impl KeyboardMapper {
     /// Uses pixel_mappings (converted from percentage) for actual control
     pub fn handle_custom_keymapping_event(&self, key: &Key) -> Result<bool> {
         // Use pixel-converted mappings for control
-        if let Some(action) = self.pixel_mappings.read().get(key) {
+        if let Some(action) = self.active_mappings.read().get(key) {
             trace!(
                 "Handling custom key mapping event: {:?} -> {:?}",
                 key, action
@@ -398,14 +344,12 @@ impl KeyboardMapper {
     }
 
     /// Convert InputAction to control messages (temporary bridge)
-    fn send_input_action(&self, action: &crate::config::mapping::InputAction) -> Result<()> {
-        use crate::config::mapping::InputAction;
-
+    fn send_input_action(&self, action: &ScrcpyAction) -> Result<()> {
         match action {
-            InputAction::Key { keycode } => {
+            ScrcpyAction::Key { keycode } => {
                 self.sender.send_key_press(*keycode as u32, 0)?;
             }
-            InputAction::KeyCombo { modifiers, keycode } => {
+            ScrcpyAction::KeyCombo { modifiers, keycode } => {
                 let mut metastate = 0u32;
                 if modifiers.shift {
                     metastate |= 1;
@@ -418,49 +362,49 @@ impl KeyboardMapper {
                 }
                 self.sender.send_key_press(*keycode as u32, metastate)?;
             }
-            InputAction::Text { text } => {
+            ScrcpyAction::Text { text } => {
                 self.sender.send_text(text)?;
             }
-            InputAction::Back => {
+            ScrcpyAction::Back => {
                 self.sender.send_key_press(4, 0)?; // KEYCODE_BACK
             }
-            InputAction::Home => {
+            ScrcpyAction::Home => {
                 self.sender.send_key_press(3, 0)?; // KEYCODE_HOME
             }
-            InputAction::Menu => {
+            ScrcpyAction::Menu => {
                 self.sender.send_key_press(82, 0)?; // KEYCODE_MENU
             }
-            InputAction::Power => {
+            ScrcpyAction::Power => {
                 self.sender.send_key_press(26, 0)?; // KEYCODE_POWER
             }
-            InputAction::Tap { x, y } => {
-                self.sender.send_touch_down(*x as u32, *y as u32)?;
-                self.sender.send_touch_up(*x as u32, *y as u32)?;
+            ScrcpyAction::Tap { pos } => {
+                self.sender.send_touch_down(pos.x, pos.y)?;
+                self.sender.send_touch_up(pos.x, pos.y)?;
             }
-            InputAction::TouchDown { x, y } => {
-                self.sender.send_touch_down(*x as u32, *y as u32)?;
+            ScrcpyAction::TouchDown { pos } => {
+                self.sender.send_touch_down(pos.x, pos.y)?;
             }
-            InputAction::TouchMove { x, y } => {
-                self.sender.send_touch_move(*x as u32, *y as u32)?;
+            ScrcpyAction::TouchMove { pos } => {
+                self.sender.send_touch_move(pos.x, pos.y)?;
             }
-            InputAction::TouchUp { x, y } => {
-                self.sender.send_touch_up(*x as u32, *y as u32)?;
+            ScrcpyAction::TouchUp { pos } => {
+                self.sender.send_touch_up(pos.x, pos.y)?;
             }
-            InputAction::Scroll { x, y, direction } => {
+            ScrcpyAction::Scroll { pos, direction } => {
                 use crate::config::mapping::WheelDirection;
                 let (h, v) = match direction {
                     WheelDirection::Up => (0.0, -5.0),
                     WheelDirection::Down => (0.0, 5.0),
                 };
-                self.sender.send_scroll(*x as u32, *y as u32, h, v)?;
+                self.sender.send_scroll(pos.x, pos.y, h, v)?;
             }
-            InputAction::Swipe { x1, y1, x2, y2, .. } => {
+            ScrcpyAction::Swipe { path, .. } => {
                 // Simulate swipe with touch down + move + up
-                self.sender.send_touch_down(*x1 as u32, *y1 as u32)?;
-                self.sender.send_touch_move(*x2 as u32, *y2 as u32)?;
-                self.sender.send_touch_up(*x2 as u32, *y2 as u32)?;
+                self.sender.send_touch_down(path[0].x, path[0].y)?;
+                self.sender.send_touch_move(path[1].x, path[1].y)?;
+                self.sender.send_touch_up(path[1].x, path[1].y)?;
             }
-            InputAction::Ignore => {}
+            ScrcpyAction::Ignore => {}
         }
         Ok(())
     }

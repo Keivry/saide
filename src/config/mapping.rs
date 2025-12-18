@@ -1,5 +1,8 @@
 use {
-    crate::controller::utils::*,
+    crate::{
+        app::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, ScrcpyPos},
+        controller::utils::*,
+    },
     eframe::egui::{self, PointerButton},
     parking_lot::RwLock,
     serde::{Deserialize, Serialize},
@@ -34,45 +37,39 @@ impl From<PointerButton> for MouseButton {
     }
 }
 
-/// Percentage coordinate (0.0-1.0)
-type Percent = f32;
-
-/// Input action to be performed on the device
+/// Mapping action loaded from config
 ///
 /// Coordinates are stored as:
 /// - Percentage (0.0-1.0 f32) for x and y positions
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "action")]
-pub enum InputAction {
+pub enum MappingAction {
     Tap {
-        x: Percent,
-        y: Percent,
+        #[serde(flatten)]
+        pos: MappingPos,
     },
     Swipe {
-        x1: Percent,
-        y1: Percent,
-        x2: Percent,
-        y2: Percent,
+        #[serde(flatten)]
+        path: [MappingPos; 2],
         duration: u32,
     },
     /// Touch down event (start of drag)
     TouchDown {
-        x: Percent,
-        y: Percent,
+        #[serde(flatten)]
+        pos: MappingPos,
     },
     /// Touch move event (during drag)
     TouchMove {
-        x: Percent,
-        y: Percent,
+        #[serde(flatten)]
+        pos: MappingPos,
     },
     /// Touch up event (end of drag)
     TouchUp {
-        x: Percent,
-        y: Percent,
+        #[serde(flatten)]
+        pos: MappingPos,
     },
     Scroll {
-        x: Percent,
-        y: Percent,
+        #[serde(flatten)]
+        pos: MappingPos,
         direction: WheelDirection,
     },
     Key {
@@ -93,47 +90,97 @@ pub enum InputAction {
     Ignore,
 }
 
-impl InputAction {
-    /// Validate percentage values are in [0, 1] range
-    fn validate(&self) -> Result<(), String> {
-        let check_percent = |v: Percent, name: &str| -> Result<(), String> {
-            if !(0.0..=1.0).contains(&v) {
-                Err(format!(
-                    "{} percentage {} must be in range [0.0, 1.0]",
-                    name, v
-                ))
-            } else {
-                Ok(())
-            }
-        };
+#[derive(Debug, Clone)]
+pub enum ScrcpyAction {
+    Tap {
+        pos: ScrcpyPos,
+    },
+    Swipe {
+        path: [ScrcpyPos; 2],
+        duration: u32,
+    },
+    /// Touch down event (start of drag)
+    TouchDown {
+        pos: ScrcpyPos,
+    },
+    /// Touch move event (during drag)
+    TouchMove {
+        pos: ScrcpyPos,
+    },
+    /// Touch up event (end of drag)
+    TouchUp {
+        pos: ScrcpyPos,
+    },
+    Scroll {
+        pos: ScrcpyPos,
+        direction: WheelDirection,
+    },
+    Key {
+        keycode: u8,
+    },
+    KeyCombo {
+        modifiers: Modifiers,
+        keycode: u8,
+    },
+    Text {
+        text: String,
+    },
+    Back,
+    Home,
+    Menu,
+    Power,
 
-        match self {
-            Self::Tap { x, y }
-            | Self::TouchDown { x, y }
-            | Self::TouchMove { x, y }
-            | Self::TouchUp { x, y } => {
-                check_percent(*x, "x")?;
-                check_percent(*y, "y")?;
-            }
-            Self::Scroll { x, y, .. } => {
-                check_percent(*x, "x")?;
-                check_percent(*y, "y")?;
-            }
-            Self::Swipe { x1, y1, x2, y2, .. } => {
-                check_percent(*x1, "x1")?;
-                check_percent(*y1, "y1")?;
-                check_percent(*x2, "x2")?;
-                check_percent(*y2, "y2")?;
-            }
-            _ => {}
+    Ignore,
+}
+
+impl ScrcpyAction {
+    pub fn from_mapping_action(
+        action: &MappingAction,
+        scrcpy_coords: &ScrcpyCoordSys,
+        mapping_coords: &MappingCoordSys,
+    ) -> Self {
+        match action {
+            MappingAction::Tap { pos } => ScrcpyAction::Tap {
+                pos: mapping_coords.to_scrcpy(pos, scrcpy_coords),
+            },
+            MappingAction::Swipe { path, duration } => ScrcpyAction::Swipe {
+                path: [
+                    mapping_coords.to_scrcpy(&path[0], scrcpy_coords),
+                    mapping_coords.to_scrcpy(&path[1], scrcpy_coords),
+                ],
+                duration: *duration,
+            },
+            MappingAction::TouchDown { pos } => ScrcpyAction::TouchDown {
+                pos: mapping_coords.to_scrcpy(pos, scrcpy_coords),
+            },
+            MappingAction::TouchMove { pos } => ScrcpyAction::TouchMove {
+                pos: mapping_coords.to_scrcpy(pos, scrcpy_coords),
+            },
+            MappingAction::TouchUp { pos } => ScrcpyAction::TouchUp {
+                pos: mapping_coords.to_scrcpy(pos, scrcpy_coords),
+            },
+            MappingAction::Scroll { pos, direction } => ScrcpyAction::Scroll {
+                pos: mapping_coords.to_scrcpy(pos, scrcpy_coords),
+                direction: direction.clone(),
+            },
+            MappingAction::Key { keycode } => ScrcpyAction::Key { keycode: *keycode },
+            MappingAction::KeyCombo { modifiers, keycode } => ScrcpyAction::KeyCombo {
+                modifiers: *modifiers,
+                keycode: *keycode,
+            },
+            MappingAction::Text { text } => ScrcpyAction::Text { text: text.clone() },
+            MappingAction::Back => ScrcpyAction::Back,
+            MappingAction::Home => ScrcpyAction::Home,
+            MappingAction::Menu => ScrcpyAction::Menu,
+            MappingAction::Power => ScrcpyAction::Power,
+            MappingAction::Ignore => ScrcpyAction::Ignore,
         }
-        Ok(())
     }
 }
 
 #[derive(Debug, Default)]
 pub struct KeyMapping {
-    inner: Arc<RwLock<HashMap<Key, InputAction>>>,
+    inner: Arc<RwLock<HashMap<Key, MappingAction>>>,
 }
 
 impl<'de> Deserialize<'de> for KeyMapping {
@@ -144,16 +191,10 @@ impl<'de> Deserialize<'de> for KeyMapping {
         #[derive(Deserialize)]
         struct RawMapping {
             key: Key,
-            #[serde(flatten)]
-            action: InputAction,
+            action: MappingAction,
         }
 
         let raw_mappings: Vec<RawMapping> = Deserialize::deserialize(deserializer)?;
-
-        // Validate all percentage coordinates
-        for rm in &raw_mappings {
-            rm.action.validate().map_err(serde::de::Error::custom)?;
-        }
 
         let mut m = HashMap::new();
         raw_mappings.into_iter().for_each(|rm| {
@@ -174,8 +215,7 @@ impl Serialize for KeyMapping {
         #[derive(Serialize)]
         struct RawMapping<'a> {
             key: &'a Key,
-            #[serde(flatten)]
-            action: &'a InputAction,
+            action: &'a MappingAction,
         }
 
         let mappings = self.inner.read();
@@ -188,7 +228,7 @@ impl Serialize for KeyMapping {
 }
 
 impl Deref for KeyMapping {
-    type Target = Arc<RwLock<HashMap<Key, InputAction>>>;
+    type Target = Arc<RwLock<HashMap<Key, MappingAction>>>;
 
     fn deref(&self) -> &Self::Target { &self.inner }
 }
@@ -210,7 +250,7 @@ pub struct Profile {
 
 impl Profile {
     /// Add a mapping to the profile, returning a new profile
-    pub fn add_mapping(&self, key: Key, action: InputAction) -> &Self {
+    pub fn add_mapping(&self, key: Key, action: MappingAction) -> &Self {
         self.mappings.inner.write().insert(key, action);
         self
     }
@@ -227,7 +267,7 @@ impl Profile {
     }
 
     /// Get the ADB action for a given key, if it exists
-    pub fn get_mapping(&self, key: &Key) -> Option<InputAction> {
+    pub fn get_mapping(&self, key: &Key) -> Option<MappingAction> {
         self.mappings.inner.read().get(key).cloned()
     }
 
