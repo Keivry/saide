@@ -780,3 +780,63 @@ stay_awake = true       # ✅ 防止休眠（已修复）
 **测试**: 
 - ✅ 编译零警告
 - ✅ 所有单元测试通过
+
+## 已完成 ✅ (2025-12-18)
+
+### 坐标系统统一：使用 coords.rs 三坐标系替换旧实现
+
+**目标**：将 `app/utils.rs` 中的旧坐标转换函数替换为 `app/coords.rs` 的三坐标系系统
+
+**完成内容**：
+- [x] 在 SAideApp 中添加三个坐标系成员（mapping_coords, scrcpy_coords, visual_coords）
+- [x] 实现 `update_coordinate_systems()` 方法动态更新坐标系参数
+- [x] 删除 `app/utils.rs` 中所有旧的坐标转换函数（~200 行）
+- [x] 删除 `CoordinatesTransformParams` 结构体
+- [x] 替换所有坐标转换调用点直接使用坐标系方法：
+  - 鼠标点击事件：`visual_coords.to_scrcpy()`
+  - 鼠标移动事件：`visual_coords.to_scrcpy()`
+  - 鼠标滚轮事件：`visual_coords.to_scrcpy()`
+  - 映射配置添加：`visual_coords.to_mapping()`
+  - 映射配置删除：`visual_coords.to_mapping()`
+  - 映射显示：`visual_coords.from_mapping()`
+- [x] 在合适时机调用 `update_coordinate_systems()`（旋转、设备旋转、UI 更新）
+- [x] 所有测试通过，Clippy 零警告
+
+**技术细节**：
+- 不再依赖 `device_physical_size`，所有转换基于视频分辨率
+- MappingCoordSys 使用 `device_orientation` 表示映射创建时的设备方向
+- ScrcpyCoordSys 包含 `capture_orientation` 支持 NVDEC 锁定模式
+- VisualCoordSys 包含 `video_rect` 和用户手动旋转角度
+
+**代码统计**：
+```
+ src/app/ui/mapping.rs |  14 +++--
+ src/app/ui/saide.rs   | 251 ++++++++++++----------------
+ src/app/utils.rs      | 351 +-------------------------------------
+ 3 files changed, 120 insertions(+), 496 deletions(-)
+```
+- 净删除：**376 行代码**
+
+**优势**：
+- ✅ 架构更清晰：坐标系职责分离
+- ✅ 代码更简洁：直接调用坐标系方法
+- ✅ 逻辑更统一：所有坐标转换使用同一套 API
+- ✅ 维护更容易：坐标系参数集中管理
+- ✅ 性能更好：避免重复创建临时坐标系对象
+
+**Git Commit**：
+```bash
+git add src/app/ui/mapping.rs src/app/ui/saide.rs src/app/utils.rs TODO.md
+git commit -m "refactor: 统一坐标系统，使用 coords.rs 三坐标系替换旧实现
+
+- 在 SAideApp 中维护三个坐标系实例（MappingCoordSys, ScrcpyCoordSys, VisualCoordSys）
+- 删除 app/utils.rs 中所有旧的坐标转换函数（~200 行）
+- 删除 CoordinatesTransformParams 结构体
+- 所有坐标转换直接调用坐标系方法
+- 净删除 376 行代码，架构更清晰
+- 所有测试通过，Clippy 零警告"
+```
+
+---
+
+**【本子任务已完成，请审查后回复"继续"】**

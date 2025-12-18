@@ -1,13 +1,14 @@
 use {
     super::{
         super::{
+            coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
             init::{
                 DeviceMonitorEvent,
                 INIT_RESULT_CHANNEL_CAPACITY,
                 InitEvent,
                 start_initialization,
             },
-            utils::{CoordinatesTransformParams, find_nearest_mapping, screen_to_video_coords},
+            utils::find_nearest_mapping,
         },
         indicator::Indicator,
         mapping::{MappingConfigEvent, MappingConfigWindow},
@@ -78,7 +79,7 @@ pub struct SAideApp {
     /// Device ID
     device_id: Option<String>,
 
-    /// Device physical screen size
+    /// Device physical screen size (kept for compatibility, may remove later)
     device_physical_size: (u32, u32),
 
     /// Device orientation (0-3), clockwise
@@ -86,6 +87,11 @@ pub struct SAideApp {
 
     /// Whether capture-orientation is locked (NVDEC mode)
     capture_orientation_locked: bool,
+
+    /// Coordinate systems
+    mapping_coords: MappingCoordSys,
+    scrcpy_coords: ScrcpyCoordSys,
+    visual_coords: VisualCoordSys,
 
     /// Audio disabled warning message (if audio was requested but unavailable)
     audio_warning: Option<String>,
@@ -160,6 +166,11 @@ impl SAideApp {
             capture_orientation_locked: false,
 
             audio_warning: None,
+
+            // Initialize coordinate systems with default values
+            mapping_coords: MappingCoordSys::new(0),
+            scrcpy_coords: ScrcpyCoordSys::new(1, 1, None),
+            visual_coords: VisualCoordSys::new(0), // Only stores rotation, rect passed at runtime
 
             window_initialized: false,
 
@@ -277,6 +288,11 @@ impl SAideApp {
                 self.init_state = InitState::Ready;
                 info!("Initialization completed successfully");
 
+                // Initialize coordinate systems now that video is ready
+                self.update_mapping_coords(); // Device orientation known
+                self.update_scrcpy_coords(); // Video resolution available
+                self.update_visual_coords(); // Video rotation available
+
                 // Apply turn_screen_off setting if enabled
                 let config = self.config();
                 if config.scrcpy.options.turn_screen_off
@@ -301,6 +317,41 @@ impl SAideApp {
         )));
     }
 
+    /// Update MappingCoordSys when device orientation changes
+    fn update_mapping_coords(&mut self) {
+        self.mapping_coords = MappingCoordSys::new(self.device_orientation);
+        debug!(
+            "MappingCoordSys updated: device_orientation={}",
+            self.device_orientation
+        );
+    }
+
+    /// Update ScrcpyCoordSys when video resolution or capture orientation changes
+    fn update_scrcpy_coords(&mut self) {
+        let video_resolution = self.player.video_resolution();
+        let capture_orientation = if self.capture_orientation_locked {
+            Some(0) // Locked to portrait
+        } else {
+            None
+        };
+        self.scrcpy_coords = ScrcpyCoordSys::new(
+            video_resolution.0 as u16,
+            video_resolution.1 as u16,
+            capture_orientation,
+        );
+        debug!(
+            "ScrcpyCoordSys updated: video_resolution={}x{}, capture_orientation={:?}",
+            video_resolution.0, video_resolution.1, capture_orientation
+        );
+    }
+
+    /// Update VisualCoordSys when user rotation changes
+    fn update_visual_coords(&mut self) {
+        let video_rotation = self.player.rotation();
+        self.visual_coords = VisualCoordSys::new(video_rotation);
+        debug!("VisualCoordSys updated: rotation={}", video_rotation);
+    }
+
     /// Rotate video by 90 degrees clockwise
     fn rotate(&mut self, ctx: &egui::Context) {
         let video_rotation = (self.player.rotation() + 1) % 4;
@@ -310,6 +361,7 @@ impl SAideApp {
         self.indicator.update_video_rotation(video_rotation);
 
         // Resize window to match new video dimensions
+        // No needed to update VisualCoordSys here, resize() will call it
         self.resize(ctx);
 
         // Update indicator resolution
@@ -318,6 +370,9 @@ impl SAideApp {
 
         // Request repaint to apply changes immediately
         ctx.request_repaint();
+
+        // Update VisualCoordSys (user rotation changed)
+        self.update_visual_coords();
     }
 
     /// Toggle mapping configuration window
@@ -365,6 +420,8 @@ impl SAideApp {
             self.refresh_mapping_profiles();
             self.indicator
                 .update_device_orientation(self.device_orientation);
+            // Update MappingCoordSys (device orientation changed)
+            self.update_mapping_coords();
         }
     }
 
@@ -383,66 +440,42 @@ impl SAideApp {
             .map(|profile| profile.mappings.clone())
             .unwrap_or_default();
 
+        // TODO: Check if needed?
+        // Update VisualCoordSys before drawing (video rect might have changed)
+        // self.update_visual_coords();
+
         // Draw the config window and handle events
-        let event =
-            self.mapping_config_window
-                .draw(ctx, &mappings, &self.coodinates_transform_params());
+        let video_rect = self.player.video_rect();
+        let event = self.mapping_config_window.draw(
+            ctx,
+            &mappings,
+            video_rect,
+            &self.visual_coords,
+            &self.scrcpy_coords,
+            &self.mapping_coords,
+        );
 
         match event {
             MappingConfigEvent::Close => {
                 self.mapping_config_window.hide();
             }
             MappingConfigEvent::RequestAddMapping(screen_pos) => {
-                // Convert screen position to percentage coordinates (0-1)
-                // Percentage is relative to VIDEO coordinates, not device physical size
+                // Convert screen position to mapping percentage coordinates (0.0-1.0)
+                // Visual -> Scrcpy -> Mapping
                 let video_rect = self.player.video_rect();
-                let video_rotation = self.player.rotation();
-
-                if let Some((video_x, video_y, video_w, video_h)) =
-                    screen_to_video_coords(&screen_pos, &video_rect, video_rotation)
-                {
-                    // Video coords are in portrait orientation (capture_orientation=@0)
-                    // Need to convert to device coords considering device_orientation
-
-                    // Step 1: Unscale from video to device portrait coords
-                    let scale_x = self.device_physical_size.0 as f32 / video_w as f32;
-                    let scale_y = self.device_physical_size.1 as f32 / video_h as f32;
-                    let portrait_x = video_x as f32 * scale_x;
-                    let portrait_y = video_y as f32 * scale_y;
-
-                    // Step 2: Apply device_orientation to get device logical coords
-                    let (device_w, device_h) = if self.device_orientation & 1 == 0 {
-                        self.device_physical_size // Portrait
-                    } else {
-                        (self.device_physical_size.1, self.device_physical_size.0) // Landscape
-                    };
-
-                    let (device_x, device_y) = match self.device_orientation % 4 {
-                        0 => (portrait_x, portrait_y),
-                        1 => (device_w as f32 - portrait_y, portrait_x),
-                        2 => (device_w as f32 - portrait_x, device_h as f32 - portrait_y),
-                        3 => (portrait_y, device_h as f32 - portrait_x),
-                        _ => (portrait_x, portrait_y),
-                    };
-
-                    // Step 3: Convert to percentage
-                    let percent_pos = (device_x / device_w as f32, device_y / device_h as f32);
-
+                if let Some(percent_pos) = self.visual_coords.to_mapping(
+                    screen_pos,
+                    video_rect,
+                    &self.scrcpy_coords,
+                    &self.mapping_coords,
+                ) {
                     info!(
-                        "Add mapping: screen=({:.1},{:.1}) -> video=({},{}) -> portrait=({:.1},{:.1}) -> device=({:.1},{:.1}) in {}x{} [orient={}] -> percent=({:.6},{:.6})",
+                        "Add mapping: screen=({:.1},{:.1}) -> percent=({:.6},{:.6}) [device_orientation={}]",
                         screen_pos.x,
                         screen_pos.y,
-                        video_x,
-                        video_y,
-                        portrait_x,
-                        portrait_y,
-                        device_x,
-                        device_y,
-                        device_w,
-                        device_h,
-                        self.device_orientation,
                         percent_pos.0,
-                        percent_pos.1
+                        percent_pos.1,
+                        self.device_orientation
                     );
 
                     self.mapping_config_window.request_input_dialog(percent_pos);
@@ -450,44 +483,22 @@ impl SAideApp {
             }
             MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
                 // Find nearest mapping to delete
+                // Visual -> Scrcpy -> Mapping
                 let video_rect = self.player.video_rect();
-                let video_rotation = self.player.rotation();
-
-                if let Some((video_x, video_y, video_w, video_h)) =
-                    screen_to_video_coords(&screen_pos, &video_rect, video_rotation)
+                if let Some(percent_pos) = self.visual_coords.to_mapping(
+                    screen_pos,
+                    video_rect,
+                    &self.scrcpy_coords,
+                    &self.mapping_coords,
+                ) && let Some((nearest_key, nearest_pos)) =
+                    find_nearest_mapping(percent_pos, &mappings)
                 {
-                    // Same conversion as add mapping
-                    let scale_x = self.device_physical_size.0 as f32 / video_w as f32;
-                    let scale_y = self.device_physical_size.1 as f32 / video_h as f32;
-                    let portrait_x = video_x as f32 * scale_x;
-                    let portrait_y = video_y as f32 * scale_y;
-
-                    let (device_w, device_h) = if self.device_orientation & 1 == 0 {
-                        self.device_physical_size
-                    } else {
-                        (self.device_physical_size.1, self.device_physical_size.0)
-                    };
-
-                    let (device_x, device_y) = match self.device_orientation % 4 {
-                        0 => (portrait_x, portrait_y),
-                        1 => (device_w as f32 - portrait_y, portrait_x),
-                        2 => (device_w as f32 - portrait_x, device_h as f32 - portrait_y),
-                        3 => (portrait_y, device_h as f32 - portrait_x),
-                        _ => (portrait_x, portrait_y),
-                    };
-
-                    let percent_pos = (device_x / device_w as f32, device_y / device_h as f32);
-
-                    if let Some((nearest_key, nearest_pos)) =
-                        find_nearest_mapping(percent_pos, &mappings)
-                    {
-                        info!(
-                            "Delete mapping: {:?} at ({:.6}, {:.6})",
-                            nearest_key, nearest_pos.0, nearest_pos.1
-                        );
-                        self.mapping_config_window
-                            .request_delete_dialog(nearest_key, nearest_pos);
-                    }
+                    info!(
+                        "Delete mapping: {:?} at ({:.6}, {:.6})",
+                        nearest_key, nearest_pos.0, nearest_pos.1
+                    );
+                    self.mapping_config_window
+                        .request_delete_dialog(nearest_key, nearest_pos);
                 }
             }
             MappingConfigEvent::None => {}
@@ -647,35 +658,27 @@ impl SAideApp {
         trace!("Processing mouse button event: {:?} at {:?}", button, pos);
 
         // Use video coordinates for scrcpy control channel
-        let Some((video_x, video_y, ..)) =
-            screen_to_video_coords(pos, &self.player.video_rect(), self.player.rotation())
+        let video_rect = self.player.video_rect();
+        let Some((video_x, video_y)) =
+            self.visual_coords
+                .to_scrcpy(*pos, video_rect, &self.scrcpy_coords)
         else {
             debug!("Failed to convert screen coords to video coords");
             return;
         };
 
         debug!(
-            "Converted screen ({:.1}, {:.1}) -> video ({}, {}) in {}x{} (resolution)",
-            pos.x,
-            pos.y,
-            video_x,
-            video_y,
-            self.player.video_resolution().0,
-            self.player.video_resolution().1
+            "Converted screen ({:.1}, {:.1}) -> video ({}, {})",
+            pos.x, pos.y, video_x, video_y
         );
 
-        // Get actual video resolution (not display size) for screenSize field
-        let (video_w, video_h) = self.player.video_resolution();
-
-        // Update ControlSender screen size (in case video resolution changed)
+        // Update ControlSender screen size
         if let Some(sender) = &self.control_sender {
-            sender.update_screen_size(video_w as u16, video_h as u16);
+            sender.update_screen_size(
+                self.scrcpy_coords.video_width,
+                self.scrcpy_coords.video_height,
+            );
         }
-
-        debug!(
-            "Converted screen ({:.1}, {:.1}) -> video ({}, {}) in {}x{} (resolution)",
-            pos.x, pos.y, video_x, video_y, video_w, video_h
-        );
 
         let button = MouseButton::from(button);
         if let Err(e) = mouse_mapper.handle_button_event(button, pressed, video_x, video_y) {
@@ -693,15 +696,17 @@ impl SAideApp {
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
-            if let Some((video_x, video_y, ..)) =
-                screen_to_video_coords(pos, &self.player.video_rect(), self.player.rotation())
+            let video_rect = self.player.video_rect();
+            if let Some((video_x, video_y)) =
+                self.visual_coords
+                    .to_scrcpy(*pos, video_rect, &self.scrcpy_coords)
             {
-                // Get actual video resolution for screenSize
-                let (video_w, video_h) = self.player.video_resolution();
-
                 // Update ControlSender screen size
                 if let Some(sender) = &self.control_sender {
-                    sender.update_screen_size(video_w as u16, video_h as u16);
+                    sender.update_screen_size(
+                        self.scrcpy_coords.video_width,
+                        self.scrcpy_coords.video_height,
+                    );
                 }
 
                 if let Err(e) = mouse_mapper.handle_move_event(video_x, video_y) {
@@ -719,19 +724,18 @@ impl SAideApp {
             trace!("PointerMoved outside video rect at {:?}", pos);
 
             // If dragging and moved outside, send a button release
+            let video_rect = self.player.video_rect();
             if mouse_mapper.get_button_state() != MouseState::Idle
-                && let Some((video_x, video_y, ..)) = screen_to_video_coords(
-                    last_pointer_pos,
-                    &self.player.video_rect(),
-                    self.player.rotation(),
-                )
+                && let Some((video_x, video_y)) =
+                    self.visual_coords
+                        .to_scrcpy(*last_pointer_pos, video_rect, &self.scrcpy_coords)
             {
-                // Get actual video resolution for screenSize
-                let (video_w, video_h) = self.player.video_resolution();
-
                 // Update ControlSender screen size
                 if let Some(sender) = &self.control_sender {
-                    sender.update_screen_size(video_w as u16, video_h as u16);
+                    sender.update_screen_size(
+                        self.scrcpy_coords.video_width,
+                        self.scrcpy_coords.video_height,
+                    );
                 }
 
                 if let Err(e) =
@@ -761,20 +765,20 @@ impl SAideApp {
             delta, pointer_pos
         );
 
-        let Some((video_x, video_y, ..)) = screen_to_video_coords(
-            &pointer_pos,
-            &self.player.video_rect(),
-            self.player.rotation(),
-        ) else {
+        let video_rect = self.player.video_rect();
+        let Some((video_x, video_y)) =
+            self.visual_coords
+                .to_scrcpy(pointer_pos, video_rect, &self.scrcpy_coords)
+        else {
             return;
         };
 
-        // Get actual video resolution for screenSize
-        let (video_w, video_h) = self.player.video_resolution();
-
         // Update ControlSender screen size
         if let Some(sender) = &self.control_sender {
-            sender.update_screen_size(video_w as u16, video_h as u16);
+            sender.update_screen_size(
+                self.scrcpy_coords.video_width,
+                self.scrcpy_coords.video_height,
+            );
         }
 
         let dir = if delta.y < 0.0 {
@@ -787,8 +791,8 @@ impl SAideApp {
             error!("Failed to handle wheel event: {}", e);
         } else {
             debug!(
-                "Mouse wheel event at video coords: ({}, {}) in {}x{}",
-                video_x, video_y, video_w, video_h
+                "Mouse wheel event at video coords: ({}, {})",
+                video_x, video_y
             );
         }
     }
@@ -963,16 +967,6 @@ impl SAideApp {
                 .show(ctx, |ui| self.indicator.draw_indicator(ui, video_rect));
         }
     }
-
-    fn coodinates_transform_params(&self) -> CoordinatesTransformParams {
-        CoordinatesTransformParams {
-            video_rect: self.player.video_rect(),
-            video_rotation: self.player.rotation(), // User manual rotation
-            device_physical_size: self.device_physical_size,
-            device_orientation: self.device_orientation,
-            capture_orientation: 0, // No V4L2, always 0
-        }
-    }
 }
 
 impl Drop for SAideApp {
@@ -1038,6 +1032,9 @@ impl eframe::App for SAideApp {
                     // Update indicator
                     self.indicator.update_video_resolution(new_dimensions);
                     self.window_initialized = true;
+
+                    // Update ScrcpyCoordSys (video resolution changed)
+                    self.update_scrcpy_coords();
                 }
 
                 // Process mapping configuration window

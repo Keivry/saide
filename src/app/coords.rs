@@ -173,15 +173,15 @@ impl ScrcpyCoordSys {
     /// # Parameters
     /// - `pos`: (x, y) pixel coordinates in video frame
     /// - `target`: Target VisualCoordSys
-    pub fn to_visual(&self, pos: (u32, u32), target: &VisualCoordSys) -> Option<Pos2> {
+    pub fn to_visual(&self, pos: (u32, u32), rect: Rect, rotation: u32) -> Option<Pos2> {
         // Video coords are in video frame space
         // Need to transform through user rotation to display space
 
-        let (video_w, video_h) = if target.rotation & 1 == 0 {
-            (target.rect.width(), target.rect.height())
+        let (video_w, video_h) = if rotation & 1 == 0 {
+            (rect.width(), rect.height())
         } else {
             // 90° or 270° rotation swaps dimensions
-            (target.rect.height(), target.rect.width())
+            (rect.height(), rect.width())
         };
 
         // Normalize to video frame coordinates
@@ -189,7 +189,7 @@ impl ScrcpyCoordSys {
         let y_norm = pos.1 as f32 / self.video_height as f32;
 
         // Apply user rotation (clockwise)
-        let (rel_x, rel_y) = match target.rotation % 4 {
+        let (rel_x, rel_y) = match rotation % 4 {
             0 => (x_norm * video_w, y_norm * video_h),
             1 => {
                 // 90° CW: (x, y) -> (h - y, x)
@@ -206,32 +206,30 @@ impl ScrcpyCoordSys {
             _ => unreachable!(),
         };
 
-        Some(Pos2::new(
-            target.rect.left() + rel_x,
-            target.rect.top() + rel_y,
-        ))
+        Some(Pos2::new(rect.left() + rel_x, rect.top() + rel_y))
     }
 
-    /// Convert from VisualCoordSys to scrcpy coordinate
+    /// Convert from visual coordinates to scrcpy coordinate
     ///
     /// # Parameters
     /// - `pos`: Screen position (egui::Pos2)
-    /// - `source`: Source VisualCoordSys
-    pub fn from_visual(&self, pos: Pos2, source: &VisualCoordSys) -> Option<(u32, u32)> {
+    /// - `rect`: Video display rectangle
+    /// - `rotation`: User manual rotation (0-3, clockwise 90°)
+    pub fn from_visual(&self, pos: Pos2, rect: Rect, rotation: u32) -> Option<(u32, u32)> {
         // Check if position is within rect
-        if !source.rect.contains(pos) {
+        if !rect.contains(pos) {
             return None;
         }
 
         // Get relative position in display rect
-        let rel_x = pos.x - source.rect.left();
-        let rel_y = pos.y - source.rect.top();
+        let rel_x = pos.x - rect.left();
+        let rel_y = pos.y - rect.top();
 
-        let display_width = source.rect.width();
-        let display_height = source.rect.height();
+        let display_width = rect.width();
+        let display_height = rect.height();
 
         // Inverse apply user rotation to get video frame coordinates
-        let (video_x, video_y, video_w, video_h) = match source.rotation % 4 {
+        let (video_x, video_y, video_w, video_h) = match rotation % 4 {
             0 => {
                 // No rotation
                 (rel_x, rel_y, display_width, display_height)
@@ -291,18 +289,18 @@ impl ScrcpyCoordSys {
 /// Visual coordinate system (UI/screen space)
 ///
 /// Coordinates relative to egui window/screen.
-/// - rect: Video display rectangle in window
 /// - rotation: User manual rotation applied to video display (0-3, clockwise 90°)
+///
+/// Note: video_rect is NOT cached here because it changes every frame (window resize, first frame,
+/// etc.) Instead, video_rect is passed as a parameter to conversion methods.
 #[derive(Debug, Clone, Copy)]
 pub struct VisualCoordSys {
-    pub rect: Rect,
     pub rotation: u32,
 }
 
 impl VisualCoordSys {
-    pub fn new(rect: Rect, rotation: u32) -> Self {
+    pub fn new(rotation: u32) -> Self {
         Self {
-            rect,
             rotation: rotation % 4,
         }
     }
@@ -311,33 +309,42 @@ impl VisualCoordSys {
     ///
     /// # Parameters
     /// - `pos`: Screen position (egui::Pos2)
+    /// - `rect`: Video display rectangle (from player.video_rect())
     /// - `target`: Target ScrcpyCoordSys
-    pub fn to_scrcpy(&self, pos: Pos2, target: &ScrcpyCoordSys) -> Option<(u32, u32)> {
-        target.from_visual(pos, self)
+    pub fn to_scrcpy(&self, pos: Pos2, rect: Rect, target: &ScrcpyCoordSys) -> Option<(u32, u32)> {
+        target.from_visual(pos, rect, self.rotation)
     }
 
     /// Convert from ScrcpyCoordSys to visual coordinate
     ///
     /// # Parameters
     /// - `pos`: (x, y) pixel coordinates
+    /// - `rect`: Video display rectangle (from player.video_rect())
     /// - `source`: Source ScrcpyCoordSys
-    pub fn from_scrcpy(&self, pos: (u32, u32), source: &ScrcpyCoordSys) -> Option<Pos2> {
-        source.to_visual(pos, self)
+    pub fn from_scrcpy(
+        &self,
+        pos: (u32, u32),
+        rect: Rect,
+        source: &ScrcpyCoordSys,
+    ) -> Option<Pos2> {
+        source.to_visual(pos, rect, self.rotation)
     }
 
     /// Convert to MappingCoordSys (via ScrcpyCoordSys)
     ///
     /// # Parameters
     /// - `pos`: Screen position (egui::Pos2)
+    /// - `rect`: Video display rectangle (from player.video_rect())
     /// - `scrcpy_sys`: Intermediate ScrcpyCoordSys
     /// - `target`: Target MappingCoordSys
     pub fn to_mapping(
         &self,
         pos: Pos2,
+        rect: Rect,
         scrcpy_sys: &ScrcpyCoordSys,
         target: &MappingCoordSys,
     ) -> Option<(f32, f32)> {
-        let scrcpy_pos = self.to_scrcpy(pos, scrcpy_sys)?;
+        let scrcpy_pos = self.to_scrcpy(pos, rect, scrcpy_sys)?;
         Some(target.from_scrcpy(scrcpy_pos, scrcpy_sys))
     }
 
@@ -345,16 +352,18 @@ impl VisualCoordSys {
     ///
     /// # Parameters
     /// - `pos`: (x, y) in 0.0-1.0 range
+    /// - `rect`: Video display rectangle (from player.video_rect())
     /// - `scrcpy_sys`: Intermediate ScrcpyCoordSys
     /// - `source`: Source MappingCoordSys
     pub fn from_mapping(
         &self,
         pos: (f32, f32),
+        rect: Rect,
         scrcpy_sys: &ScrcpyCoordSys,
         source: &MappingCoordSys,
     ) -> Option<Pos2> {
         let scrcpy_pos = source.to_scrcpy(pos, scrcpy_sys);
-        self.from_scrcpy(scrcpy_pos, scrcpy_sys)
+        self.from_scrcpy(scrcpy_pos, rect, scrcpy_sys)
     }
 }
 
@@ -904,16 +913,14 @@ mod tests {
 
     #[test]
     fn test_visual_rotation_0_to_scrcpy_no_capture_lock() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(0.0, 0.0), (1080.0, 2400.0).into()),
-            0,
-        );
+        let visual_sys = VisualCoordSys::new(0);
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
+        let video_rect = Rect::from_min_size(Pos2::new(0.0, 0.0), (1080.0, 2400.0).into());
 
         // (0.2, 0.4) in visual coords
         // No rotation: (0.2, 0.4) -> (0.2, 0.4)
         let scrcpy_pos = visual_sys
-            .to_scrcpy(Pos2::new(216.0, 960.0), &scrcpy_sys)
+            .to_scrcpy(Pos2::new(216.0, 960.0), video_rect, &scrcpy_sys)
             .unwrap();
 
         assert_eq!(scrcpy_pos.0, 216);
@@ -922,16 +929,14 @@ mod tests {
 
     #[test]
     fn test_visual_rotation_1_to_scrcpy_capture_lock_1() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(20.0, 30.0), (1080.0, 2400.0).into()),
-            1,
-        );
+        let visual_sys = VisualCoordSys::new(1);
+        let video_rect = Rect::from_min_size(Pos2::new(20.0, 30.0), (1080.0, 2400.0).into());
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
 
         // (0.2, 0.4) in visual coords
         // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
         let scrcpy_pos = visual_sys
-            .to_scrcpy(Pos2::new(236.0, 990.0), &scrcpy_sys)
+            .to_scrcpy(Pos2::new(236.0, 990.0), video_rect, &scrcpy_sys)
             .unwrap();
         assert_eq!(scrcpy_pos.0, 960);
         assert_eq!(scrcpy_pos.1, 864);
@@ -939,16 +944,14 @@ mod tests {
 
     #[test]
     fn test_visual_rotation_2_to_scrcpy_capture_lock_2() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(40.0, 60.0), (1080.0, 2400.0).into()),
-            2,
-        );
+        let visual_sys = VisualCoordSys::new(2);
+        let video_rect = Rect::from_min_size(Pos2::new(40.0, 60.0), (1080.0, 2400.0).into());
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
 
         // (0.2, 0.4) in visual coords
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
         let scrcpy_pos = visual_sys
-            .to_scrcpy(Pos2::new(256.0, 1020.0), &scrcpy_sys)
+            .to_scrcpy(Pos2::new(256.0, 1020.0), video_rect, &scrcpy_sys)
             .unwrap();
 
         assert_eq!(scrcpy_pos.0, 864);
@@ -957,16 +960,14 @@ mod tests {
 
     #[test]
     fn test_visual_rotation_3_to_scrcpy_capture_lock_3() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(0.0, 0.0), (1080.0, 2400.0).into()),
-            3,
-        );
+        let visual_sys = VisualCoordSys::new(3);
+        let video_rect = Rect::from_min_size(Pos2::new(0.0, 0.0), (1080.0, 2400.0).into());
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
 
         // (0.2, 0.4) in visual coords
         // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
         let scrcpy_pos = visual_sys
-            .to_scrcpy(Pos2::new(216.0, 960.0), &scrcpy_sys)
+            .to_scrcpy(Pos2::new(216.0, 960.0), video_rect, &scrcpy_sys)
             .unwrap();
 
         assert_eq!(scrcpy_pos.0, 1440);
@@ -975,10 +976,8 @@ mod tests {
 
     #[test]
     fn test_scrcpy_to_visual_rotaion_0() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(10.0, 20.0), (1080.0, 2400.0).into()),
-            0,
-        );
+        let visual_sys = VisualCoordSys::new(0);
+        let video_rect = Rect::from_min_size(Pos2::new(10.0, 20.0), (1080.0, 2400.0).into());
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
 
         // (0.2, 0.4) in scrcpy coords
@@ -987,7 +986,7 @@ mod tests {
         // Scrcpy -> Visual
         // No rotation: (0.2, 0.4) -> (0.2, 0.4)
         let visual_pos = visual_sys
-            .from_scrcpy((original_pos.0, original_pos.1), &scrcpy_sys)
+            .from_scrcpy((original_pos.0, original_pos.1), video_rect, &scrcpy_sys)
             .unwrap();
         assert!((visual_pos.x - 216.0 - 10.0).abs() < 1.0);
         assert!((visual_pos.y - 960.0 - 20.0).abs() < 1.0);
@@ -995,10 +994,8 @@ mod tests {
 
     #[test]
     fn test_scrcpy_to_visual_rotaion_1() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(20.0, 30.0), (1080.0, 2400.0).into()),
-            1,
-        );
+        let visual_sys = VisualCoordSys::new(1);
+        let video_rect = Rect::from_min_size(Pos2::new(20.0, 30.0), (1080.0, 2400.0).into());
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
 
         // (0.2, 0.4) in scrcpy coords
@@ -1007,7 +1004,7 @@ mod tests {
         // Scrcpy -> Visual
         // 90° CW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
         let visual_pos = visual_sys
-            .from_scrcpy((original_pos.0, original_pos.1), &scrcpy_sys)
+            .from_scrcpy((original_pos.0, original_pos.1), video_rect, &scrcpy_sys)
             .unwrap();
         assert!((visual_pos.x - 648.0 - 20.0).abs() < 1.0);
         assert!((visual_pos.y - 480.0 - 30.0).abs() < 1.0);
@@ -1015,10 +1012,8 @@ mod tests {
 
     #[test]
     fn test_scrcpy_to_visual_rotaion_2() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(40.0, 60.0), (1080.0, 2400.0).into()),
-            2,
-        );
+        let visual_sys = VisualCoordSys::new(2);
+        let video_rect = Rect::from_min_size(Pos2::new(40.0, 60.0), (1080.0, 2400.0).into());
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
 
         // (0.2, 0.4) in scrcpy coords
@@ -1027,7 +1022,7 @@ mod tests {
         // Scrcpy -> Visual
         // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
         let visual_pos = visual_sys
-            .from_scrcpy((original_pos.0, original_pos.1), &scrcpy_sys)
+            .from_scrcpy((original_pos.0, original_pos.1), video_rect, &scrcpy_sys)
             .unwrap();
         assert!((visual_pos.x - 864.0 - 40.0).abs() < 1.0);
         assert!((visual_pos.y - 1440.0 - 60.0).abs() < 1.0);
@@ -1035,10 +1030,8 @@ mod tests {
 
     #[test]
     fn test_scrcpy_to_visual_rotaion_3() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(0.0, 0.0), (1080.0, 2400.0).into()),
-            3,
-        );
+        let visual_sys = VisualCoordSys::new(3);
+        let video_rect = Rect::from_min_size(Pos2::new(0.0, 0.0), (1080.0, 2400.0).into());
         let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
 
         // (0.2, 0.4) in scrcpy coords
@@ -1047,7 +1040,7 @@ mod tests {
         // Scrcpy -> Visual
         // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
         let visual_pos = visual_sys
-            .from_scrcpy((original_pos.0, original_pos.1), &scrcpy_sys)
+            .from_scrcpy((original_pos.0, original_pos.1), video_rect, &scrcpy_sys)
             .unwrap();
         assert!((visual_pos.x - 432.0).abs() < 1.0);
         assert!((visual_pos.y - 1920.0).abs() < 1.0);
@@ -1055,10 +1048,8 @@ mod tests {
 
     #[test]
     fn test_visual_mapping_roundtrip() {
-        let visual_sys = VisualCoordSys::new(
-            Rect::from_min_size(Pos2::new(10.0, 20.0), (1080.0, 2400.0).into()),
-            0,
-        );
+        let visual_sys = VisualCoordSys::new(0);
+        let video_rect = Rect::from_min_size(Pos2::new(10.0, 20.0), (1080.0, 2400.0).into());
         let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
         let mapping_sys = MappingCoordSys::new(0);
 
@@ -1066,10 +1057,10 @@ mod tests {
 
         // Visual -> Mapping -> Visual
         let mapping_pos = visual_sys
-            .to_mapping(original_pos, &scrcpy_sys, &mapping_sys)
+            .to_mapping(original_pos, video_rect, &scrcpy_sys, &mapping_sys)
             .unwrap();
         let result_pos = visual_sys
-            .from_mapping(mapping_pos, &scrcpy_sys, &mapping_sys)
+            .from_mapping(mapping_pos, video_rect, &scrcpy_sys, &mapping_sys)
             .unwrap();
 
         assert!((original_pos.x - result_pos.x).abs() < 1.0);

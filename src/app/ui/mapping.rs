@@ -1,6 +1,9 @@
 use {
     super::{
-        super::utils::{CoordinatesTransformParams, device_to_screen_coords, extract_position},
+        super::{
+            coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
+            utils::extract_position,
+        },
         dialog::{ModalDialog, ModalDialogResult},
     },
     crate::config::mapping::{Key, KeyMapping},
@@ -100,13 +103,14 @@ impl MappingConfigWindow {
         &mut self,
         ctx: &egui::Context,
         mappings: &KeyMapping,
-        trans_params: &CoordinatesTransformParams,
+        video_rect: egui::Rect,
+        visual_coords: &VisualCoordSys,
+        scrcpy_coords: &ScrcpyCoordSys,
+        mapping_coords: &MappingCoordSys,
     ) -> MappingConfigEvent {
         if !self.visible {
             return MappingConfigEvent::None;
         }
-
-        let video_rect = trans_params.video_rect;
 
         let mut event = MappingConfigEvent::None;
 
@@ -157,7 +161,12 @@ impl MappingConfigWindow {
                 // Note: Profile 中的坐标是百分比 (0.0-1.0)
                 mappings.read().iter().for_each(|(key, action)| {
                     if let Some(percent_pos) = extract_position(action)
-                        && let Some(screen_pos) = device_to_screen_coords(percent_pos, trans_params)
+                        && let Some(screen_pos) = visual_coords.from_mapping(
+                            percent_pos,
+                            video_rect,
+                            scrcpy_coords,
+                            mapping_coords,
+                        )
                     {
                         // Draw circle marker
                         painter.circle_filled(screen_pos, 8.0, Color32::from_rgb(100, 200, 255));
