@@ -1,8 +1,10 @@
 //! Scrcpy 真实设备连接测试（最终版本）
 
+mod utils;
 use {
     anyhow::Result,
-    saide::{ScrcpyConnection, ServerParams, VideoPacket, utils::get_device_serial},
+    saide::{ScrcpyConnection, ServerParams, VideoPacket},
+    utils::get_device_serial,
 };
 
 fn main() -> Result<()> {

@@ -4,6 +4,8 @@
 //! - Video: PTS-driven rendering (minimal latency)
 //! - Audio: Independent buffering (100-200ms)
 
+mod utils;
+
 use {
     anyhow::{Context, Result},
     crossbeam_channel::{Receiver, Sender, bounded},
@@ -22,10 +24,10 @@ use {
             new_nv12_render_callback,
         },
         sync::AVSync,
-        utils::get_device_serial,
     },
     std::{io::Read, sync::Arc, thread},
     tracing::{debug, error, info},
+    utils::get_device_serial,
 };
 
 fn main() -> Result<()> {

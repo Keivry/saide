@@ -1,14 +1,16 @@
 //! Audio quality diagnostic tool
 
+mod utils;
+
 use {
     anyhow::Result,
     saide::{
         ScrcpyConnection,
         ServerParams,
         decoder::{AudioDecoder, AudioPlayer, OpusDecoder},
-        utils::get_device_serial,
     },
     std::time::Duration,
+    utils::get_device_serial,
 };
 
 fn main() -> Result<()> {

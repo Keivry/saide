@@ -4,7 +4,6 @@ pub mod controller;
 pub mod decoder;
 pub mod scrcpy;
 pub mod sync;
-pub mod utils;
 
 pub use {
     decoder::{
@@ -28,5 +27,4 @@ pub use {
         server::ServerParams,
     },
     sync::AVSync,
-    utils::get_device_serial,
 };
