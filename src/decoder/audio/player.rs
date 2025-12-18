@@ -212,7 +212,7 @@ impl AudioPlayer {
         let written = buffer.write(&audio.samples);
 
         if written < audio.samples.len() {
-            warn!(
+            debug!(
                 "Buffer overflow: dropped {} samples",
                 audio.samples.len() - written
             );
