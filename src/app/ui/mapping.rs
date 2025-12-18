@@ -248,7 +248,7 @@ impl MappingConfigWindow {
         match self
             .key_input_dialog
             .set_message(&format!(
-                "\nPosition: ({}, {}%)\n\nPress a key or ESC to cancel...\n",
+                "\nPosition: ({}, {})\n\nPress a key or ESC to cancel...\n",
                 pos.x, pos.y
             ))
             .show(ctx)
@@ -285,7 +285,7 @@ impl MappingConfigWindow {
 
         match self
             .delete_mapping_dialog
-            .set_message(&format!("\n{:?}: ({}%, {}%)?\n", key, pos.x, pos.y))
+            .set_message(&format!("\n{:?}: ({}, {})?\n", key, pos.x, pos.y))
             .show(ctx)
         {
             ModalDialogResult::Confirmed => {
@@ -323,7 +323,7 @@ impl MappingConfigWindow {
         match self
             .override_mapping_dialog
             .set_message(&format!(
-                "\n{:?}: ({:.2}%, {:.2}%) is already mapped.\n\nOverride to new position ({:.2}%, {:.2}%)?\n",
+                "\n{:?}: ({}, {}) is already mapped.\n\nOverride to new position ({}, {})?\n",
                 key, pos.x, pos.y, new_pos.x, new_pos.y
             ))
             .show(ctx)
