@@ -14,7 +14,7 @@ use {
         },
         indicator::Indicator,
         mapping::{MappingConfigEvent, MappingConfigWindow},
-        stream_player::StreamPlayer,
+        player::StreamPlayer,
         toolbar::{Toolbar, ToolbarEvent},
     },
     crate::{
@@ -240,13 +240,8 @@ impl SAideApp {
                         self.control_sender = Some(control_sender);
 
                         // Start player with streams
-                        let config = self.config();
-                        self.player.start_with_streams(
-                            video_stream,
-                            audio_stream,
-                            video_resolution,
-                            (*config.scrcpy).clone(),
-                        );
+                        self.player
+                            .start(video_stream, audio_stream, video_resolution);
 
                         // Save capture_locked for later use (after borrow ends)
                         capture_locked = Some(capture_orientation_locked);
@@ -1061,8 +1056,7 @@ impl eframe::App for SAideApp {
                 let _response = self.player.render(ui);
 
                 // Error overlay if stream failed
-                if let crate::app::ui::stream_player::PlayerState::Failed(err) = self.player.state()
-                {
+                if let crate::app::ui::player::PlayerState::Failed(err) = self.player.state() {
                     egui::Area::new(egui::Id::new("error_overlay"))
                         .fixed_pos(egui::pos2(0.0, 0.0))
                         .show(ctx, |ui| {
@@ -1164,10 +1158,7 @@ impl eframe::App for SAideApp {
         }
 
         // Frame rate limiting (only when streaming)
-        if matches!(
-            self.player.state(),
-            super::stream_player::PlayerState::Streaming
-        ) {
+        if matches!(self.player.state(), super::player::PlayerState::Streaming) {
             if let Some(limiter) = self.frame_rate_limiter {
                 if let Some(last) = self.last_paint_instant {
                     let elapsed = last.elapsed();
