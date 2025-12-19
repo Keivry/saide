@@ -11,6 +11,7 @@ use {
 
 const WGPU_LOG_LEVEL: &str = "error";
 
+// Default player window size
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 
@@ -60,6 +61,7 @@ fn start_ui(config_manager: ConfigManager) -> anyhow::Result<()> {
             .with_inner_size([DEFAULT_WIDTH as f32 + toolbar_width, DEFAULT_HEIGHT as f32]),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
+            // Set present mode based on VSync config
             present_mode: if config_manager.config().gpu.vsync {
                 wgpu::PresentMode::AutoVsync
             } else {
@@ -68,12 +70,14 @@ fn start_ui(config_manager: ConfigManager) -> anyhow::Result<()> {
 
             wgpu_setup: egui_wgpu::WgpuSetup::from(egui_wgpu::WgpuSetupCreateNew {
                 instance_descriptor: wgpu::InstanceDescriptor {
+                    // Select GPU backend from config
                     backends: (&config_manager.config().gpu.backend).into(),
                     ..Default::default()
                 },
                 ..Default::default()
             }),
 
+            // Set low latency frame pacing
             desired_maximum_frame_latency: Some(1),
 
             ..Default::default()

@@ -4,6 +4,8 @@
 //! Reference: scrcpy/app/src/server.c
 
 use {
+    super::codec_probe::ProfileDatabase,
+    crate::{GpuType, detect_gpu},
     anyhow::{Context, Result},
     std::process::{Command, Stdio},
     tracing::{debug, info},
@@ -135,9 +137,7 @@ impl ServerParams {
     pub fn should_lock_orientation_for_nvdec() -> bool {
         // Check if NVIDIA GPU is available
         // This is a simple heuristic - actual decoder selection happens later
-        if let Ok(content) = std::fs::read_to_string("/proc/driver/nvidia/version")
-            && !content.is_empty()
-        {
+        if let GpuType::Nvidia = detect_gpu() {
             info!("NVIDIA GPU detected, will lock capture orientation for NVDEC");
             return true;
         }
@@ -148,8 +148,6 @@ impl ServerParams {
     ///
     /// Loads from cache if available, otherwise uses defaults
     pub fn for_device(serial: &str) -> Result<Self> {
-        use super::codec_probe::ProfileDatabase;
-
         let db = ProfileDatabase::load()?;
         let mut params = Self::default();
 

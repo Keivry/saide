@@ -5,7 +5,8 @@ use {
     saide::{
         ScrcpyConnection,
         ServerParams,
-        decoder::{AutoDecoder, VideoDecoder, detect_gpu},
+        decoder::{AutoDecoder, VideoDecoder},
+        detect_gpu,
     },
     tracing::info,
 };

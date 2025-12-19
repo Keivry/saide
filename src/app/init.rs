@@ -7,7 +7,7 @@ use {
             keyboard::KeyboardMapper,
             mouse::MouseMapper,
         },
-        scrcpy::connection::ScrcpyConnection,
+        scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
     anyhow::Context,
     crossbeam_channel::{Receiver, Sender, bounded},
@@ -20,7 +20,9 @@ use {
     tracing::{debug, error, info, warn},
 };
 
+// Device monitor polling interval (ms)
 pub const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
+
 // Allow buffering 3 rotation events to avoid blocking monitor thread
 pub const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 3;
 
@@ -31,6 +33,7 @@ pub enum DeviceMonitorEvent {
     ImStateChanged(bool),
 }
 
+// Capacity for initialization result channel
 pub const INIT_RESULT_CHANNEL_CAPACITY: usize = 5;
 
 /// Initialization event
@@ -57,9 +60,12 @@ pub enum InitEvent {
 pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent>) {
     // Note: External scrcpy initialization removed - using internal StreamPlayer
 
+    const ADB_SERVER_STARTUP_WAIT_MS: u64 = 500;
+    const ADB_SERVER_CHECK_INTERVAL_MS: u64 = 50;
+
     // Delay to allow ADB server to be ready
     let start = Instant::now();
-    while start.elapsed() < Duration::from_millis(500) {
+    while start.elapsed() < Duration::from_millis(ADB_SERVER_STARTUP_WAIT_MS) {
         // check if adb is responsive
         if Command::new("adb")
             .args(["shell", "echo", "ok"])
@@ -68,7 +74,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         {
             break;
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(ADB_SERVER_CHECK_INTERVAL_MS));
     }
 
     // Device monitor initialization
@@ -86,10 +92,10 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         dm_tx.send(InitEvent::DeviceMonitor(event_rx))?;
 
         // Start rotation and im state monitoring
-        let mut last_rotation = None;
-        let mut consecutive_errors = 0;
         const MAX_CONSECUTIVE_ERRORS: u32 = 3; // Exit after 3 consecutive failures
 
+        let mut last_rotation = None;
+        let mut consecutive_errors = 0;
         loop {
             match AdbShell::get_screen_orientation() {
                 Ok(current_rotation) => {
@@ -152,15 +158,11 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
     thread::spawn(move || -> Result<(), anyhow::Error> {
         info!("Establishing scrcpy connection...");
 
-        // Wait for device to be ready
-        thread::sleep(Duration::from_millis(500));
-
         // Get device serial
         let serial = AdbShell::get_device_id()?;
         debug!("Connecting to device: {}", serial);
 
-        // 检测是否需要锁定 capture_orientation（需要在 async 闭包之前）
-        use crate::scrcpy::server::ServerParams;
+        // Check if we should lock orientation for NVDEC
         let capture_orientation_locked = ServerParams::should_lock_orientation_for_nvdec();
 
         // Establish ScrcpyConnection (blocking)
@@ -216,7 +218,6 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
                 // @0 = lock to 0° (portrait), follows device's natural orientation
                 params.capture_orientation = Some("@0".to_string());
                 info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
-                info!("Video orientation fixed, decoder never needs rebuilding");
             }
 
             ScrcpyConnection::connect(&serial, server_jar_path, params)

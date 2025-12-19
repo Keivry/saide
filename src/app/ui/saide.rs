@@ -22,9 +22,11 @@ use {
             mapping::{Key, MappingAction, MouseButton, WheelDirection},
         },
         controller::{
+            control_sender::ControlSender,
             keyboard::KeyboardMapper,
             mouse::{MouseMapper, MouseState},
         },
+        scrcpy::connection::ScrcpyConnection,
     },
     crossbeam_channel::{Receiver, bounded},
     eframe::egui::{self, Color32},
@@ -59,10 +61,10 @@ pub struct SAideApp {
     config_manager: ConfigManager,
 
     /// ScrcpyConnection (kept alive to prevent server shutdown)
-    connection: Option<crate::scrcpy::connection::ScrcpyConnection>,
+    connection: Option<ScrcpyConnection>,
 
     /// Control sender (for sending input commands to device)
-    control_sender: Option<crate::controller::control_sender::ControlSender>,
+    control_sender: Option<ControlSender>,
 
     /// Mouse input mapper
     mouse_mapper: Option<MouseMapper>,
@@ -268,7 +270,7 @@ impl SAideApp {
             }
         }
 
-        // Initialize ScrcpyCoordSys after event processing (to avoid borrow conflicts)
+        // Update ScrcpyCoordSys if capture orientation lock changed
         if let Some(locked) = capture_locked {
             self.update_scrcpy_coords(locked);
         }
@@ -289,7 +291,6 @@ impl SAideApp {
                 // Initialize coordinate systems now that video is ready
                 self.update_mapping_coords(); // Device orientation known
                 self.update_visual_coords(); // Video rotation available
-                // ScrcpyCoordSys already initialized above
 
                 // Apply turn_screen_off setting if enabled
                 let config = self.config();
