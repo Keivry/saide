@@ -16,15 +16,20 @@ use {
 
 pub struct NvdecDecoder {
     decoder: ffmpeg::decoder::Video,
+
     #[allow(dead_code)]
     scaler: Option<ScalerContext>,
+
     hw_device_ctx: *mut ffmpeg::sys::AVBufferRef,
+
     width: u32,
     height: u32,
+
     #[allow(dead_code)]
     output_format: Pixel,
     #[allow(dead_code)]
     last_decoded_dimensions: Option<(u32, u32)>,
+
     /// Counter for consecutive empty frame returns (indicates decode failure)
     consecutive_empty_frames: u32,
 }

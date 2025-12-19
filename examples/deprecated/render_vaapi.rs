@@ -49,10 +49,12 @@ fn main() -> Result<()> {
 
 struct VaapiRendererApp {
     frame_rx: Receiver<Arc<DecodedFrame>>,
+
     current_frame: Option<Arc<DecodedFrame>>,
+
     stats: RenderStats,
-    #[allow(dead_code)]
-    decoder_thread: Option<thread::JoinHandle<()>>,
+
+    _decoder_thread: Option<thread::JoinHandle<()>>,
 }
 
 #[derive(Default)]

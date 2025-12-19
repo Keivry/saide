@@ -59,11 +59,14 @@ fn main() -> Result<()> {
 
 struct AVSyncApp {
     frame_rx: Receiver<Arc<DecodedFrame>>,
+
     stats_rx: Receiver<AVStats>,
+
     current_frame: Option<Arc<DecodedFrame>>,
+
     stats: AVStats,
-    #[allow(dead_code)]
-    av_thread: Option<thread::JoinHandle<()>>,
+
+    _av_thread: Option<thread::JoinHandle<()>>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -103,7 +106,7 @@ impl AVSyncApp {
             stats_rx,
             current_frame: None,
             stats: AVStats::default(),
-            av_thread,
+            _av_thread: av_thread,
         }
     }
 }
