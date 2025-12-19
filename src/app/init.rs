@@ -175,7 +175,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         // Establish ScrcpyConnection (blocking)
         let runtime = tokio::runtime::Runtime::new()?;
         let mut connection = runtime.block_on(async {
-            let server_jar_path = "3rd-party/scrcpy-server-v3.3.3";
+            let server_path = &conn_config.general.scrcpy_server;
 
             // Create server params from config
             let mut params = ServerParams::for_device(&serial)?;
@@ -227,7 +227,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
                 info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
             }
 
-            ScrcpyConnection::connect(&serial, server_jar_path, params)
+            ScrcpyConnection::connect(&serial, server_path, params)
                 .await
                 .map_err(|e| {
                     error!("Failed to establish scrcpy connection: {}", e);

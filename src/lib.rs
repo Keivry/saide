@@ -27,3 +27,5 @@ pub use {
     sync::AVSync,
     sys::{GpuType, detect_gpu},
 };
+
+pub const SCRCPY_SERVER_VERSION: &str = "v3.3.3";

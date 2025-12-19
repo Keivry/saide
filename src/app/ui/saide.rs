@@ -557,6 +557,8 @@ impl SAideApp {
             } else {
                 info!("Mapping saved successfully");
             }
+
+            self.refresh_mapping_profiles();
         }
     }
 
@@ -580,6 +582,8 @@ impl SAideApp {
                 info!("Mapping deleted successfully");
             }
         }
+
+        self.refresh_mapping_profiles();
     }
 
     fn get_mapping(&self, key: &Key) -> Option<MappingAction> {

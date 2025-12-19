@@ -8,7 +8,10 @@ pub mod mapping;
 pub mod scrcpy;
 
 use {
-    crate::config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
+    crate::{
+        SCRCPY_SERVER_VERSION,
+        config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
+    },
     anyhow::Result,
     directories::ProjectDirs,
     lazy_static::lazy_static,
@@ -108,10 +111,27 @@ pub struct GeneralConfig {
 
     #[serde(default)]
     pub indicator_position: IndicatorPosition,
+
+    /// Path to the scrcpy server file, if not set, uses the built-in version
+    /// Defaults to "scrcpy-server-<version>" in the user data directory if available
+    /// otherwise falls back to the filename in the current directory
+    #[serde(default = "default_scrcpy_server_path")]
+    pub scrcpy_server: String,
 }
 
 fn default_true() -> bool { true }
 fn default_init_timeout() -> u32 { 15 }
+fn default_scrcpy_server_path() -> String {
+    let scrcpy_server = format!("scrcpy-server-{}", SCRCPY_SERVER_VERSION);
+    if let Some(dir) = ProjectDirs::from("io", "keivry", "saide") {
+        let path = dir.data_dir().join(scrcpy_server.as_str());
+        if path.is_file() {
+            return path.to_str().unwrap().to_string();
+        }
+    }
+
+    scrcpy_server
+}
 
 /// Main configuration structure
 #[derive(Debug, Default, Serialize, Deserialize)]
