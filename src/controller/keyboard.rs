@@ -1,3 +1,7 @@
+//! Keyboard input mapping and handling
+//!
+//! Handles mapping from egui Key events to Android keycodes and custom actions.
+
 use {
     crate::{
         app::coords::{MappingCoordSys, ScrcpyCoordSys},
@@ -17,18 +21,20 @@ lazy_static::lazy_static! {
     pub static ref EGUI_TO_ANDROID_KEY: HashMap<Key, u8> = {
         let mut m = HashMap::new();
 
-        // ────── 方向 & 导航键 ──────
+        // Arrow keys
         m.insert(Key::ArrowUp,      19);   // KEYCODE_DPAD_UP
         m.insert(Key::ArrowDown,    20);   // KEYCODE_DPAD_DOWN
         m.insert(Key::ArrowLeft,    21);   // KEYCODE_DPAD_LEFT
         m.insert(Key::ArrowRight,   22);   // KEYCODE_DPAD_RIGHT
 
-        m.insert(Key::Escape,       4);    // 强烈推荐映射为 Back 键（手机上最常用）
+        // Common control keys
+        m.insert(Key::Escape,       4);    // Map to KEYCODE_BACK
         m.insert(Key::Tab,          61);   // KEYCODE_TAB
         m.insert(Key::Space,        62);   // KEYCODE_SPACE
         m.insert(Key::Enter,        66);   // KEYCODE_ENTER
         m.insert(Key::Backspace,    67);   // KEYCODE_DEL
 
+        // Editing/navigation keys
         m.insert(Key::Insert,       110);  // KEYCODE_INSERT
         m.insert(Key::Delete,       112);  // KEYCODE_FORWARD_DEL
         m.insert(Key::Home,         122);  // KEYCODE_MOVE_HOME
@@ -36,7 +42,7 @@ lazy_static::lazy_static! {
         m.insert(Key::PageUp,       92);   // KEYCODE_PAGE_UP
         m.insert(Key::PageDown,     93);   // KEYCODE_PAGE_DOWN
 
-        // ────── 字母 A-Z ──────
+        // Letters A-Z
         m.insert(Key::A, 29); m.insert(Key::B, 30); m.insert(Key::C, 31);
         m.insert(Key::D, 32); m.insert(Key::E, 33); m.insert(Key::F, 34);
         m.insert(Key::G, 35); m.insert(Key::H, 36); m.insert(Key::I, 37);
@@ -47,13 +53,13 @@ lazy_static::lazy_static! {
         m.insert(Key::V, 50); m.insert(Key::W, 51); m.insert(Key::X, 52);
         m.insert(Key::Y, 53); m.insert(Key::Z, 54);
 
-        // ────── 主键盘数字 0-9 ──────
+        // Numbers 0-9
         m.insert(Key::Num0, 7);  m.insert(Key::Num1, 8);  m.insert(Key::Num2, 9);
         m.insert(Key::Num3,10);  m.insert(Key::Num4,11);  m.insert(Key::Num5,12);
         m.insert(Key::Num6,13);  m.insert(Key::Num7,14);  m.insert(Key::Num8,15);
         m.insert(Key::Num9,16);
 
-        // ────── 标点符号（完整覆盖 egui 新增键） ──────
+        // Other common symbols
         m.insert(Key::Comma,            55);  // KEYCODE_COMMA
         m.insert(Key::Period,           56);  // KEYCODE_PERIOD
         m.insert(Key::Slash,            76);  // KEYCODE_SLASH
@@ -65,7 +71,7 @@ lazy_static::lazy_static! {
         m.insert(Key::Minus,            69);  // KEYCODE_MINUS
         m.insert(Key::Equals,           70);  // KEYCODE_EQUALS
 
-        // ────── 功能键 F1~F12 ──────
+        // Function keys F1-F12
         for i in 1..=12 {
             if let Some(key) = Key::from_name(&format!("F{i}")) {
                 m.insert(key, 130 + i);
@@ -76,6 +82,7 @@ lazy_static::lazy_static! {
     };
 
     /// Mapping from egui Key to Android shifted keycode
+    /// These keys in Android require SHIFT to produce the desired character
     pub static ref EGUI_TO_ANDROID_SHIFT_KEY: HashMap<Key, u8> = {
         let mut m = HashMap::new();
         m.insert(Key::Exclamationmark,   8);        // KEYCODE_1
@@ -87,12 +94,13 @@ lazy_static::lazy_static! {
         m
     };
 
-    /// Keys that should not be handled, handled via text input instead
+    /// Keys that should not be handled in Android, should be handled via text input instead
     pub static ref SHOULD_NOT_HANDLED_KEYS: Vec<Key> = vec![
         Key::Backtick
     ];
 
-    // Text input special character mappings before sending to adb shell
+    /// Text input mappings for special characters
+    /// These characters need to be escaped or replaced for proper input
     pub static ref TEXT_MAPPINGS: HashMap<String, String > = {
         let mut m = HashMap::new();
         m.insert("`".to_owned(), "\\`".to_owned());
@@ -103,11 +111,14 @@ lazy_static::lazy_static! {
 /// Keyboard mapping state
 pub struct KeyboardMapper {
     config: Arc<Mappings>,
+
     sender: ControlSender,
+
     avail_profiles: RwLock<Vec<Arc<Profile>>>,
+
     active_profile: ArcSwap<Option<Arc<Profile>>>,
 
-    // Active mappings for runtime use, converted to scrcpy video coordinates
+    /// Active mappings for runtime use, converted to scrcpy video coordinates
     active_mappings: RwLock<HashMap<Key, ScrcpyAction>>,
 }
 
@@ -129,6 +140,7 @@ impl KeyboardMapper {
     /// - `device_id`: current device ID
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
     /// - `capture_orientation_locked`: whether capture-orientation is locked (NVDEC mode)
+    // TODO: Use Option<u32> for capture_orientation to support more orientations
     pub fn refresh_profiles(
         &self,
         device_id: &str,
@@ -174,13 +186,14 @@ impl KeyboardMapper {
         Ok(())
     }
 
-    /// Generate active mappings in pixel coordinates based on video size
+    /// Generate active mappings converted to scrcpy video coordinates
     ///
     /// # Parameters
-    /// - `active_profile`: 当前激活的配置文件
-    /// - `video_width`: scrcpy 视频宽度（像素）
-    /// - `video_height`: scrcpy 视频高度（像素）
-    /// - `capture_orientation_locked`: capture-orientation 是否被锁定 (NVDEC 模式)
+    /// - `profile`: active profile with percentage-based mappings
+    /// - `video_width`: current scrcpy video width in pixels
+    /// - `video_height`: current scrcpy video height in pixels
+    /// - `capture_orientation_locked`: whether capture-orientation is locked (NVDEC mode)
+    // TODO: Use Option<u32> for capture_orientation to support more orientations
     fn generate_active_mappings(
         &self,
         active_profile: &Profile,
@@ -190,10 +203,11 @@ impl KeyboardMapper {
     ) {
         let mut active_mappings = HashMap::new();
 
-        // 创建坐标系
+        // Create coordinate systems for conversion
         let mapping_sys = MappingCoordSys::new(active_profile.rotation);
         let capture_orientation = if capture_orientation_locked {
-            Some(0) // 锁定到 portrait
+            // TODO: Support more orientations
+            Some(0)
         } else {
             None
         };
@@ -255,7 +269,7 @@ impl KeyboardMapper {
             .map(|p| p.name.clone())
     }
 
-    /// Handle keyboard event
+    /// Handle keyboard event, returns true if handled
     pub fn handle_standard_key_event(&self, key: &Key) -> Result<bool> {
         if SHOULD_NOT_HANDLED_KEYS.contains(key) {
             return Ok(false);
@@ -287,7 +301,7 @@ impl KeyboardMapper {
         Ok(false)
     }
 
-    /// Handle text input event
+    /// Handle text input event, returns true if handled
     pub fn handle_text_input_event(&self, text: &str) -> Result<bool> {
         let text = text.trim();
         if text.is_empty() {
@@ -327,9 +341,7 @@ impl KeyboardMapper {
         Ok(false)
     }
 
-    /// Handle custom keyboard event using legacy ADB actions
-    ///
-    /// Uses pixel_mappings (converted from percentage) for actual control
+    /// Handle custom key mapping event, returns true if handled
     pub fn handle_custom_keymapping_event(&self, key: &Key) -> Result<bool> {
         // Use pixel-converted mappings for control
         if let Some(action) = self.active_mappings.read().get(key) {
@@ -343,7 +355,7 @@ impl KeyboardMapper {
         Ok(false)
     }
 
-    /// Convert InputAction to control messages (temporary bridge)
+    /// Send input action via control sender
     fn send_input_action(&self, action: &ScrcpyAction) -> Result<()> {
         match action {
             ScrcpyAction::Key { keycode } => {

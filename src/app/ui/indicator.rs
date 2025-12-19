@@ -1,3 +1,8 @@
+//! Video statistics indicator overlay for the video player.
+//!
+//! Displays FPS, latency, and other relevant information in a floating panel.
+//! The panel can be toggled by hovering over the indicator while holding a modifier key.
+
 use {
     super::VideoStats,
     crate::config::IndicatorPosition,
@@ -102,6 +107,7 @@ impl Indicator {
         self
     }
 
+    // TODO: Allow user specify capture orientation in config
     #[allow(dead_code)] // May be used in V4L2Player (deprecated)
     pub fn update_capture_orientation(&mut self, orientation: u32) -> &mut Self {
         self.capture_orientation = orientation;

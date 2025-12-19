@@ -1,3 +1,5 @@
+//! System-related utilities for GPU detection
+
 use {
     std::{fs, path::Path, process::Command},
     tracing::debug,

@@ -1,3 +1,8 @@
+//! Modal dialog implementation using egui
+//!
+//! Provides a reusable modal dialog component with customizable title, message,
+//! confirm and cancel buttons, and optional key capture functionality.
+
 use egui::{Key, Modal, Modifiers};
 
 const BUTTON_SIZE: (f32, f32) = (80.0, 30.0);

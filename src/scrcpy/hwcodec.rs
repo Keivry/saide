@@ -1,4 +1,4 @@
-//! Device Hardware Capability Detection
+//! Device Hardware Codec Capability Detection
 //!
 //! Detects hardware encoders and decoders on Android devices.
 
@@ -23,6 +23,8 @@ pub struct EncoderInfo {
 /// 2. Match vendor-specific hardware encoder
 /// 3. Fallback to generic Codec2
 pub fn detect_h264_encoder(serial: &str) -> Result<Option<String>> {
+    // TODO: Use scrcpy-server to list encoders directly on device, then select best
+
     info!("Detecting H.264 encoder on device: {}", serial);
 
     // Get SoC platform
@@ -118,6 +120,7 @@ fn get_prop(serial: &str, prop_name: &str) -> Result<String> {
 
 /// List all available video encoders (for debugging)
 pub fn list_video_encoders(_serial: &str) -> Result<Vec<EncoderInfo>> {
+    // TODO: Implement actual detection
     // Would need to run Java code on device or parse dumpsys output
     // For now, return empty - can be extended later
     Ok(vec![])

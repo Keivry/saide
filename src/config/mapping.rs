@@ -1,17 +1,21 @@
+//! Module for key mappings and profiles
+//!
+//! This module defines the structures and serialization logic for key mappings
+//! and profiles used in the application. It includes definitions for mapping actions,
+//! profiles, and the overall mappings configuration.
+
 use {
-    crate::{
-        app::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, ScrcpyPos},
-        controller::utils::*,
-    },
+    crate::app::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, ScrcpyPos},
     eframe::egui::{self, PointerButton},
     parking_lot::RwLock,
-    serde::{Deserialize, Serialize},
+    serde::{Deserialize, Deserializer, Serialize, Serializer},
     std::{collections::HashMap, ops::Deref, sync::Arc},
 };
 
 pub type Key = egui::Key;
 pub type Modifiers = egui::Modifiers;
 
+/// Mouse buttons
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     Left,
@@ -20,12 +24,14 @@ pub enum MouseButton {
     // TODO: Add extra buttons
 }
 
+/// Scroll wheel direction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WheelDirection {
     Up,
     Down,
 }
 
+// Convert egui PointerButton to MouseButton
 impl From<PointerButton> for MouseButton {
     fn from(button: PointerButton) -> Self {
         match button {
@@ -91,6 +97,10 @@ pub enum MappingAction {
     Ignore,
 }
 
+/// Scrcpy-specific action derived from MappingAction
+///
+/// Coordinates are converted to scrcpy coordinate system
+/// - Absolute pixel positions based on scrcpy video size
 #[derive(Debug, Clone)]
 pub enum ScrcpyAction {
     Tap {
@@ -135,6 +145,7 @@ pub enum ScrcpyAction {
 }
 
 impl ScrcpyAction {
+    /// Convert a MappingAction to a ScrcpyAction using the provided coordinate systems
     pub fn from_mapping_action(
         action: &MappingAction,
         scrcpy_coords: &ScrcpyCoordSys,
@@ -179,6 +190,7 @@ impl ScrcpyAction {
     }
 }
 
+/// Key to MappingAction map with serialization support
 #[derive(Debug, Default)]
 pub struct KeyMapping {
     inner: Arc<RwLock<HashMap<Key, MappingAction>>>,
@@ -236,6 +248,7 @@ impl Deref for KeyMapping {
     fn deref(&self) -> &Self::Target { &self.inner }
 }
 
+/// Profile for a specific device and rotation
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
@@ -243,7 +256,7 @@ pub struct Profile {
     /// Device ID this profile is associated with
     pub device_id: String,
 
-    /// Screen rotation (0-3), each step represents 90 degrees clockwise
+    /// Rotation this profile is associated with
     pub rotation: u32,
 
     /// Key mappings
@@ -274,18 +287,26 @@ impl Profile {
         self.mappings.inner.read().get(key).cloned()
     }
 
+    /// Check if the profile contains a mapping for the given key
     #[allow(dead_code)]
     pub fn contains_key(&self, key: &Key) -> bool { self.mappings.inner.read().contains_key(key) }
 }
 
+/// Overall mappings configuration
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Mappings {
+    /// Key to toggle mappings on/off
     #[serde(default = "default_toggle_key")]
     pub toggle: String,
+
+    /// Initial state of mappings (enabled/disabled)
     #[serde(default)]
     pub initial_state: bool,
+
+    /// Whether to show notification on toggle
     #[serde(default = "default_true")]
     pub show_notification: bool,
+
     #[serde(
         deserialize_with = "deserialize_profiles",
         serialize_with = "serialize_mutex_arc_vec"
@@ -304,6 +325,7 @@ impl Mappings {
             .collect()
     }
 
+    // TODO: Add, remove profiles
     #[allow(dead_code)]
     pub fn add_profile(&self, profile: Arc<Profile>) { self.profiles.write().push(profile); }
 
@@ -337,4 +359,21 @@ where
     let profiles = profiles.read();
     let vec_profiles: Vec<&Profile> = profiles.iter().map(|p| p.as_ref()).collect();
     vec_profiles.serialize(serializer)
+}
+
+pub fn deserialize_arc<'de, D, T>(deserializer: D) -> Result<Arc<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let value = T::deserialize(deserializer)?;
+    Ok(Arc::new(value))
+}
+
+pub fn serialize_arc<T, S>(value: &Arc<T>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: Serialize,
+    S: Serializer,
+{
+    value.serialize(serializer)
 }

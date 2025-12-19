@@ -1,3 +1,8 @@
+//! Mapping configuration UI
+//!
+//! Handles displaying existing mappings and adding/removing mappings
+//! through user interaction. Includes modal dialogs for key input and confirmations.
+
 use {
     super::{
         super::{

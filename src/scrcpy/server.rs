@@ -102,23 +102,33 @@ impl Default for ServerParams {
             max_fps: 60,
             audio: false,
             audio_codec: "opus".to_string(),
-            audio_source: "output".to_string(), // REMOTE_SUBMIX (系统输出)
+            audio_source: "output".to_string(), // Default to REMOTE_SUBMIX
             control: true,
             tunnel_forward: false,
             send_dummy_byte: true,
             send_frame_meta: true,
-            send_codec_meta: true, // Match scrcpy default (server ignores false?)
+            send_codec_meta: true, // Match scrcpy default. TODO: server ignores false?
             send_device_meta: true, // Default is true in scrcpy
             log_level: "info".to_string(),
             video_encoder: None, // Auto-select best encoder
-            // 🚀 低延迟优化（默认禁用）
-            // 使用 `ServerParams::for_device()` 自动加载设备最优配置
-            // 或手动设置设备特定配置
-            // 详见: docs/VIDEO_CODEC_OPTIONS_COMPATIBILITY.md
+
+            // 🚀 LATENCY OPTIMIZATION: Use Baseline profile, no B-frames
+            // Default is None, set per-device in for_device()
+            // Benefits:
+            // - Lower latency (~50-100ms)
+            // - Better compatibility with hardware decoders (NVDEC)
+            // - Reduced CPU usage on decoding side
+            // - Avoids issues with B-frames on some devices
             video_codec_options: None,
-            capture_orientation: None, // Auto (follows device rotation)
-            stay_awake: true,          // Keep device awake by default
-            screen_off_timeout: None,  // Don't turn off screen by default
+
+            // Auto (follows device rotation)
+            capture_orientation: None,
+
+            // Keep device awake by default
+            stay_awake: true,
+
+            // Don't turn off screen by default
+            screen_off_timeout: None,
         }
     }
 }
@@ -135,8 +145,6 @@ impl ServerParams {
     ///
     /// Returns true if NVDEC is likely to be used (NVIDIA GPU detected)
     pub fn should_lock_orientation_for_nvdec() -> bool {
-        // Check if NVIDIA GPU is available
-        // This is a simple heuristic - actual decoder selection happens later
         if let GpuType::Nvidia = detect_gpu() {
             info!("NVIDIA GPU detected, will lock capture orientation for NVDEC");
             return true;
@@ -238,7 +246,7 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
         info!("Using video encoder: {}", encoder);
     }
 
-    // 🚀 LATENCY OPTIMIZATION: Codec options (profile=1 for Baseline, no B-frames)
+    // 🚀 LATENCY OPTIMIZATION: Codec options
     if let Some(ref options) = params.video_codec_options {
         args.push(format!("video_codec_options={}", options));
         info!("Using video codec options: {}", options);

@@ -16,7 +16,6 @@ pub use {
         H264Decoder,
         Nv12RenderResources,
         OpusDecoder,
-        OpusFfmpegDecoder,
         VideoDecoder,
         new_nv12_render_callback,
     },

@@ -175,7 +175,7 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
     );
 
     // Detect hardware encoder
-    profile.video_encoder = super::hardware::detect_h264_encoder(serial)?;
+    profile.video_encoder = super::hwcodec::detect_h264_encoder(serial)?;
     if let Some(ref encoder) = profile.video_encoder {
         info!("Detected hardware encoder: {}", encoder);
     } else {

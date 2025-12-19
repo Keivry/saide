@@ -1,8 +1,14 @@
-/// Utility functions for mapping lookups
-use crate::app::coords::MappingPos;
-use crate::config::mapping::{Key, KeyMapping, MappingAction};
+//! Utility functions for mapping lookups
+//!
+//! This module provides functions to find the nearest key mapping
+//! to a given position and to extract positions from mapping actions.
 
-/// Find the nearest mapping to a given position
+use crate::{
+    app::coords::MappingPos,
+    config::mapping::{Key, KeyMapping, MappingAction},
+};
+
+/// Find the nearest mapping to a given source position
 pub fn find_nearest_mapping(
     source: &MappingPos,
     mappings: &KeyMapping,
@@ -28,7 +34,7 @@ pub fn find_nearest_mapping(
     nearest.map(|(k, p, _)| (k, p))
 }
 
-/// Extract position from InputAction (as f32, could be percentage or pixels)
+/// Extract position from a mapping action, if applicable
 pub fn extract_position(action: &MappingAction) -> Option<MappingPos> {
     match action {
         MappingAction::Tap { pos } => Some(*pos),

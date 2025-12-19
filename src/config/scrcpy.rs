@@ -1,3 +1,8 @@
+//! Configuration structures for scrcpy settings.
+//!
+//! This module defines the configuration structures used for scrcpy settings,
+//! including video, audio, and other options.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

@@ -1,3 +1,7 @@
+//! NV12 frame rendering using custom wgpu callback
+//!
+//! This module provides a custom wgpu render callback for rendering NV12
+
 use {
     super::DecodedFrame,
     eframe::{

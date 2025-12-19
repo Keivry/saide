@@ -1,3 +1,8 @@
+//! RGBA frame rendering using wgpu in eframe
+//!
+//! Provides a custom wgpu render callback and shared resources for rendering RGBA frames
+//! within an eframe application using the wgpu backend.
+
 use {
     super::DecodedFrame,
     eframe::{

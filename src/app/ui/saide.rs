@@ -1,3 +1,5 @@
+//! Main SAide application UI state and logic
+
 use {
     super::{
         super::{

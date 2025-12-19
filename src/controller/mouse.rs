@@ -1,3 +1,9 @@
+//! Mouse input mapper for Android touch events
+//!
+//! This module maps mouse input events (move, button, wheel) to Android touch events
+//! using the scrcpy control protocol. It handles click, drag, long-press, and
+//! wheel events, translating them into appropriate touch sequences.
+
 use {
     crate::{
         config::mapping::{MouseButton, WheelDirection},
@@ -11,8 +17,10 @@ use {
 
 /// Movement threshold to distinguish drag from click (in pixels)
 const DRAG_THRESHOLD: f32 = 5.0;
+
 /// Long press duration threshold (in milliseconds)
 const LONG_PRESS_DURATION_MS: u128 = 300;
+
 /// Drag update interval (in milliseconds) - send every move event for smooth dragging
 const DRAG_UPDATE_INTERVAL_MS: u128 = 8; // ~120fps, matches typical mouse polling rate
 
@@ -21,8 +29,10 @@ const DRAG_UPDATE_INTERVAL_MS: u128 = 8; // ~120fps, matches typical mouse polli
 pub enum MouseState {
     /// No button pressed
     Idle,
+
     /// Button pressed at position (x, y) at time
     Pressed { x: u32, y: u32, time: Instant },
+
     /// Dragging from (x1, y1), currently at (x, y)
     Dragging {
         start_x: u32,
@@ -31,6 +41,7 @@ pub enum MouseState {
         current_y: u32,
         last_update: Instant,
     },
+
     /// Long pressing at (x, y) - event already sent
     LongPressing { x: u32, y: u32 },
 }

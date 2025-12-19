@@ -1,6 +1,6 @@
-//! 内部音视频流播放器
+//! Stream Player Module
 //!
-//! 使用内部 scrcpy 实现替代外部 scrcpy + V4L2
+//! Handles video/audio decoding and rendering in the UI
 
 use {
     super::VideoStats,

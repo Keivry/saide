@@ -1,16 +1,11 @@
 //! Audio decoding and playback
 
-mod opus_native;
-mod player;
-
-// Keep FFmpeg version for reference/future AAC support
-#[allow(dead_code)]
 mod opus;
+mod player;
 
 use anyhow::Result;
 // Export both for flexibility
-pub use opus::OpusDecoder as OpusFfmpegDecoder;
-pub use {opus_native::OpusNativeDecoder as OpusDecoder, player::AudioPlayer};
+pub use {opus::OpusDecoder, player::AudioPlayer};
 
 /// Decoded audio frame
 #[derive(Debug, Clone)]

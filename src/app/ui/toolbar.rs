@@ -1,3 +1,8 @@
+//! Toolbar UI component
+//!
+//! Provides a vertical toolbar with buttons for common actions
+//! such as rotating video, configuring mappings, and toggling screen power.
+
 use {
     egui::{Button, Color32, RichText},
     lazy_static::lazy_static,

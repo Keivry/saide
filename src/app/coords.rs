@@ -1,18 +1,20 @@
-/// Coordinate system transformations for SAide
-///
-/// This module implements 3 coordinate systems:
-/// 1. MappingCoordSys: Normalized (0.0-1.0) coordinate system bound to device orientation,
-///    stored in config files
-/// 2. VisualCoordSys: Screen/UI coordinate system relative to video display rect
-/// 3. ScrcpyCoordSys: Video pixel coordinate system for scrcpy control protocol
-///
-/// Transformation chain:
-/// - Config loading: MappingCoordSys → cache as ScrcpyCoordSys when profile activated
-/// - UI display: MappingCoordSys ↔ ScrcpyCoordSys ↔ VisualCoordSys
-/// - Input events: VisualCoordSys → ScrcpyCoordSys (for control) or VisualCoordSys →
-///   MappingCoordSys (for config editing)
-use eframe::egui::{Pos2, Rect};
-use serde::{Deserialize, Serialize};
+//! Coordinate system transformations for SAide
+//!
+//! This module implements 3 coordinate systems:
+//! 1. MappingCoordSys: Normalized (0.0-1.0) coordinate system bound to device orientation, stored
+//!    in config files and key mapping profiles
+//! 2. VisualCoordSys: Screen/UI coordinate system relative to video display rect
+//! 3. ScrcpyCoordSys: Video pixel coordinate system for scrcpy control protocol
+//!
+//! Transformation chain:
+//! - Config loading: MappingCoordSys → cache as ScrcpyCoordSys when profile activated
+//! - UI display: MappingCoordSys ↔ ScrcpyCoordSys ↔ VisualCoordSys
+//! - Input events: VisualCoordSys → ScrcpyCoordSys (for control) or VisualCoordSys →
+//!   MappingCoordSys (for config editing)
+use {
+    eframe::egui::{Pos2, Rect},
+    serde::{Deserialize, Serialize},
+};
 
 /// Mapping position in normalized (0.0-1.0) coordinate system
 ///
@@ -266,7 +268,7 @@ impl ScrcpyCoordSys {
     /// Convert from visual coordinates to scrcpy coordinate
     ///
     /// # Parameters
-    /// - `pos`: Screen position (egui::Pos2)
+    /// - `pos`: Screen position (VisualPos)
     /// - `rect`: Video display rectangle
     /// - `rotation`: User manual rotation (0-3, clockwise 90°)
     pub fn from_visual(&self, pos: &VisualPos, rect: &Rect, rotation: u32) -> Option<ScrcpyPos> {

@@ -42,6 +42,8 @@ impl H264Decoder {
         let mut context = codec::context::Context::new_with_codec(codec);
 
         // Set dimensions
+        // Note: Actual dimensions may change based on stream SPS/PPS
+        // We set initial values here; they will be updated upon decoding frames.
         unsafe {
             let ctx_ptr = context.as_mut_ptr();
             (*ctx_ptr).width = width as i32;

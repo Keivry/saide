@@ -1,4 +1,7 @@
 //! Automatic decoder selection
+//!
+//! This module provides an `AutoDecoder` that selects the appropriate video decoder
+//! based on the detected GPU type (NVIDIA, Intel/AMD, or software fallback).
 
 use {
     super::{DecodedFrame, H264Decoder, NvdecDecoder, VaapiDecoder, VideoDecoder},

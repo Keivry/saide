@@ -1,3 +1,10 @@
+//! Background initialization for scrcpy connection, device monitor, and input mappers
+//!
+//! This module handles the asynchronous initialization of the scrcpy connection,
+//! device monitoring (rotation and input method state), and input mappers (keyboard and mouse).
+//! It uses separate threads to perform these tasks and communicates results back
+//! to the main application thread via channels.
+
 use {
     crate::{
         config::ConfigManager,

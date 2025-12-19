@@ -1,8 +1,15 @@
+//! Module for interacting with Android devices via adb commands.
+//!
+//! This module provides functions to retrieve device information such as
+//! screen size, orientation, input method state, and device ID using adb commands.
+
 use {
     anyhow::{Context, Result, anyhow},
     std::{
         process::{Command, Stdio},
+        sync::mpsc,
         thread,
+        time::Duration,
     },
     tracing::{debug, trace},
 };
@@ -11,6 +18,7 @@ pub struct AdbShell;
 
 impl AdbShell {
     /// Get Android device screen size using separate adb command
+    /// blocking until command completes.
     pub fn get_physical_screen_size() -> Result<(u32, u32)> {
         // Use separate adb command to get screen size, not through shell session
         let output = Command::new("adb")
@@ -52,8 +60,6 @@ impl AdbShell {
 
     /// Get Android device screen orientation using separate adb command (with 3s timeout)
     pub fn get_screen_orientation() -> Result<u32> {
-        use std::{sync::mpsc, time::Duration};
-
         let child = Command::new("adb")
             .args(["shell", "dumpsys window displays | grep mCurrentRotation"])
             .stdout(std::process::Stdio::piped())
@@ -83,6 +89,8 @@ impl AdbShell {
             output_str.trim()
         );
 
+        // TODO: Support different Android versions if output format changes
+
         // Parse output like "mCurrentRotation=ROTATION_0"
         let Some(line) = output_str
             .lines()
@@ -111,8 +119,6 @@ impl AdbShell {
 
     /// Get android device input method state (with 3s timeout)
     pub fn get_ime_state() -> Result<bool> {
-        use std::{sync::mpsc, time::Duration};
-
         let child = Command::new("adb")
             .args([
                 "shell",
@@ -138,6 +144,7 @@ impl AdbShell {
         Ok(output.status.success())
     }
 
+    /// Get Android device ID using adb command, blocking until command completes.
     pub fn get_device_id() -> Result<String> {
         let output = Command::new("adb")
             .args(["get-serialno"])

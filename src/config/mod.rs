@@ -1,3 +1,8 @@
+//! Configuration management for SAide application
+//!
+//! This module defines the configuration structures and management for the SAide application,
+//! including loading and saving configuration files, as well as default values.
+
 pub mod log;
 pub mod mapping;
 pub mod scrcpy;
@@ -17,6 +22,10 @@ use {
 };
 
 lazy_static! {
+    /// Default configuration file path
+    /// If the standard config directory cannot be determined, falls back to "config.toml" in the current directory.
+    /// E.g., on Linux, this would typically be "~/.config/saide/config.toml"
+    /// on Windows, it would be "C:\Users\<User>\AppData\Roaming\saide\config.toml"
     static ref DEFAULT_CONFIG_PATH: String = match ProjectDirs::from("io", "keivry", "saide") {
         Some(proj_dirs) => proj_dirs
             .config_dir()
@@ -28,6 +37,7 @@ lazy_static! {
     };
 }
 
+/// Position of the indicator on the screen
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum IndicatorPosition {
     #[default]
@@ -41,6 +51,7 @@ pub enum IndicatorPosition {
     BottomRight,
 }
 
+/// GPU backend options
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum GpuBackend {
@@ -72,6 +83,7 @@ impl Display for GpuBackend {
 pub struct GPUConfig {
     #[serde(default = "default_vsync")]
     pub vsync: bool,
+
     #[serde(default = "default_gpu_backend")]
     pub backend: GpuBackend,
 }
@@ -84,13 +96,16 @@ fn default_gpu_backend() -> GpuBackend { GpuBackend::Vulkan }
 pub struct GeneralConfig {
     #[serde(default = "default_true")]
     pub keyboard_enabled: bool,
+
     #[serde(default = "default_true")]
     pub mouse_enabled: bool,
+
     #[serde(default = "default_init_timeout")]
     pub init_timeout: u32,
 
     #[serde(default = "default_true")]
     pub indicator: bool,
+
     #[serde(default)]
     pub indicator_position: IndicatorPosition,
 }
@@ -98,6 +113,7 @@ pub struct GeneralConfig {
 fn default_true() -> bool { true }
 fn default_init_timeout() -> u32 { 15 }
 
+/// Main configuration structure
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SAideConfig {
     pub general: GeneralConfig,
@@ -122,14 +138,20 @@ impl SAideConfig {
     }
 }
 
-/// Configuration file manager
+/// Configuration manager
+/// Handles loading, saving, and providing access to the configuration file.
 pub struct ConfigManager {
     path: String,
     config: Arc<SAideConfig>,
 }
 
 impl ConfigManager {
+    /// Create a new ConfigManager, loading existing config or using defaults
     pub fn new() -> Result<Self> {
+        // Determine which config file to load
+        // 1. Check if the default config path exists
+        // 2. If not, check if "config.toml" exists in the current directory
+        // 3. If neither exists, use default config values
         let (path, config) = if Path::new(DEFAULT_CONFIG_PATH.as_str()).is_file() {
             (
                 DEFAULT_CONFIG_PATH.clone(),

@@ -1,5 +1,6 @@
+//! Controller module for handling input events and communication.
+
 pub mod adb;
 pub mod control_sender;
 pub mod keyboard;
 pub mod mouse;
-pub mod utils;

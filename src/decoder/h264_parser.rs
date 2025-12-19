@@ -1,8 +1,8 @@
-/// Minimal H.264 NAL Unit Parser (Annex-B format)
-///
-/// Extract resolution from SPS without full decoding.
+//! Minimal H.264 NAL Unit Parser (Annex-B format)
+//!
+//! Extract resolution from SPS without full decoding.
+
 /// NAL Unit Types (ITU-T H.264 Table 7-1)
-#[allow(dead_code)]
 const NAL_TYPE_SPS: u8 = 7;
 #[allow(dead_code)]
 const NAL_TYPE_PPS: u8 = 8;
