@@ -5,13 +5,28 @@ pub mod scrcpy;
 use {
     crate::config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
     anyhow::Result,
+    directories::ProjectDirs,
+    lazy_static::lazy_static,
     serde::{Deserialize, Serialize},
     std::{
         fmt::{self, Display},
         fs,
+        path::Path,
         sync::Arc,
     },
 };
+
+lazy_static! {
+    static ref DEFAULT_CONFIG_PATH: String = match ProjectDirs::from("io", "keivry", "saide") {
+        Some(proj_dirs) => proj_dirs
+            .config_dir()
+            .join("config.toml")
+            .to_str()
+            .unwrap()
+            .to_string(),
+        None => "config.toml".to_string(),
+    };
+}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum IndicatorPosition {
@@ -114,10 +129,21 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
-    pub fn new(path: &str) -> Result<Self> {
+    pub fn new() -> Result<Self> {
+        let (path, config) = if Path::new(DEFAULT_CONFIG_PATH.as_str()).is_file() {
+            (
+                DEFAULT_CONFIG_PATH.clone(),
+                SAideConfig::load(&DEFAULT_CONFIG_PATH)?,
+            )
+        } else if Path::new("config.toml").is_file() {
+            ("config.toml".to_string(), SAideConfig::load("config.toml")?)
+        } else {
+            (DEFAULT_CONFIG_PATH.clone(), SAideConfig::default())
+        };
+
         Ok(Self {
-            path: path.into(),
-            config: Arc::new(SAideConfig::load(path)?),
+            path,
+            config: Arc::new(config),
         })
     }
 

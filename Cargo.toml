@@ -59,7 +59,7 @@ bytemuck = "1"
 
 # Scrcpy protocol dependencies
 byteorder = "1.5"
-rand = "0.8"
+rand = "0.9"
 tokio = { version = "1", features = [
     "net",
     "io-util",
@@ -93,6 +93,7 @@ cpal = "0.16"
 
 # Opus codec (direct libopus binding)
 opus = "0.3"
+directories = "6.0.0"
 
 [profile.dev]
 opt-level = 0

@@ -9,13 +9,13 @@ use {
     tracing_subscriber::{EnvFilter, fmt, prelude::*},
 };
 
-const CONFIG_PATH: &str = "config.toml";
 const WGPU_LOG_LEVEL: &str = "error";
+
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 
 fn main() -> anyhow::Result<()> {
-    let config_manager = ConfigManager::new(CONFIG_PATH)?;
+    let config_manager = ConfigManager::new()?;
 
     let config = config_manager.config();
     let level = config.logging.level.as_str();
