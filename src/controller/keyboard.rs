@@ -5,15 +5,15 @@
 use {
     crate::{
         app::coords::{MappingCoordSys, ScrcpyCoordSys},
-        config::mapping::{Mappings, Modifiers, Profile, ScrcpyAction},
+        config::mapping::{MappingAction, Mappings, Modifiers, Profile, ScrcpyAction},
         controller::control_sender::ControlSender,
     },
-    anyhow::{Result, anyhow},
+    anyhow::Result,
     arc_swap::ArcSwap,
     egui::Key,
     parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc},
-    tracing::{error, info, trace},
+    tracing::{info, trace},
 };
 
 lazy_static::lazy_static! {
@@ -120,17 +120,25 @@ pub struct KeyboardMapper {
 
     /// Active mappings for runtime use, converted to scrcpy video coordinates
     active_mappings: RwLock<HashMap<Key, ScrcpyAction>>,
+
+    /// Scrcpy capture orientation state
+    capture_orientation: Option<u32>,
 }
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(config: Arc<Mappings>, sender: ControlSender) -> Result<Self> {
+    pub fn new(
+        config: Arc<Mappings>,
+        sender: ControlSender,
+        capture_orientation: Option<u32>,
+    ) -> Result<Self> {
         Ok(Self {
             config,
             sender,
             avail_profiles: RwLock::new(Vec::new()),
             active_profile: ArcSwap::from_pointee(None),
             active_mappings: RwLock::new(HashMap::new()),
+            capture_orientation,
         })
     }
 
@@ -141,12 +149,7 @@ impl KeyboardMapper {
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
     /// - `capture_orientation_locked`: whether capture-orientation is locked (NVDEC mode)
     // TODO: Use Option<u32> for capture_orientation to support more orientations
-    pub fn refresh_profiles(
-        &self,
-        device_id: &str,
-        device_rotation: u32,
-        capture_orientation_locked: bool,
-    ) -> Result<()> {
+    pub fn refresh_profiles(&self, device_id: &str, device_rotation: u32) -> Result<()> {
         let avail_profiles = self.config.filter_profiles(device_id, device_rotation);
 
         if avail_profiles.is_empty() {
@@ -172,101 +175,12 @@ impl KeyboardMapper {
             info!("Active profile set to: {}", profile.name);
 
             // Convert percentage to pixels for runtime use
-            let (video_width, video_height) = self.sender.get_screen_size();
-            self.generate_active_mappings(
-                &profile,
-                video_width as u32,
-                video_height as u32,
-                capture_orientation_locked,
-            );
+            self.apply_active_profile();
         }
 
         *self.avail_profiles.write() = avail_profiles;
 
         Ok(())
-    }
-
-    /// Generate active mappings converted to scrcpy video coordinates
-    ///
-    /// # Parameters
-    /// - `profile`: active profile with percentage-based mappings
-    /// - `video_width`: current scrcpy video width in pixels
-    /// - `video_height`: current scrcpy video height in pixels
-    /// - `capture_orientation_locked`: whether capture-orientation is locked (NVDEC mode)
-    // TODO: Use Option<u32> for capture_orientation to support more orientations
-    fn generate_active_mappings(
-        &self,
-        active_profile: &Profile,
-        video_width: u32,
-        video_height: u32,
-        capture_orientation_locked: bool,
-    ) {
-        let mut active_mappings = HashMap::new();
-
-        // Create coordinate systems for conversion
-        let mapping_sys = MappingCoordSys::new(active_profile.rotation);
-        let capture_orientation = if capture_orientation_locked {
-            // TODO: Support more orientations
-            Some(0)
-        } else {
-            None
-        };
-        let scrcpy_sys =
-            ScrcpyCoordSys::new(video_width as u16, video_height as u16, capture_orientation);
-
-        for (key, action) in active_profile.mappings.read().iter() {
-            let scrcpy_action =
-                ScrcpyAction::from_mapping_action(action, &scrcpy_sys, &mapping_sys);
-            active_mappings.insert(*key, scrcpy_action);
-        }
-
-        if capture_orientation_locked {
-            trace!(
-                "Converted {} mappings from percentage (rotation={}) to {}x{} pixels (capture locked to 0°)",
-                active_mappings.len(),
-                active_profile.rotation,
-                video_width,
-                video_height
-            );
-        } else {
-            trace!(
-                "Converted {} mappings from percentage to {}x{} pixels (no transform)",
-                active_mappings.len(),
-                video_width,
-                video_height
-            );
-        }
-
-        *self.active_mappings.write() = active_mappings;
-    }
-
-    /// Load profile by name
-    #[allow(dead_code)]
-    pub fn load_profile(&mut self, name: &str) -> Result<()> {
-        let profile = self
-            .avail_profiles
-            .read()
-            .iter()
-            .find(|p| p.name == name)
-            .cloned()
-            .ok_or_else(|| {
-                error!("Profile '{}' not found.", name);
-                anyhow!("Profile not found: {}.", name)
-            })?;
-
-        self.active_profile.store(Arc::new(Some(profile.clone())));
-        info!("Active profile set to: {}", profile.name);
-
-        Ok(())
-    }
-
-    /// Get active profile name
-    pub fn get_active_profile_name(&self) -> Option<String> {
-        self.active_profile
-            .load()
-            .as_ref()
-            .as_ref()
-            .map(|p| p.name.clone())
     }
 
     /// Handle keyboard event, returns true if handled
@@ -430,5 +344,92 @@ impl KeyboardMapper {
     /// Get active profile (for read-only access)
     pub fn get_active_profile(&self) -> Option<Arc<Profile>> {
         self.active_profile.load().as_ref().clone()
+    }
+
+    /// Get active profile name
+    pub fn get_active_profile_name(&self) -> Option<String> {
+        self.get_active_profile().map(|p| p.name.clone())
+    }
+
+    /// Apply active profile by converting percentage mappings to pixel coordinates
+    pub fn apply_active_profile(&self) {
+        let active_profile = match self.get_active_profile() {
+            Some(p) => p,
+            None => {
+                trace!("No active profile to apply.");
+                return;
+            }
+        };
+        let mut active_mappings = HashMap::new();
+        let (video_width, video_height) = self.sender.get_screen_size();
+
+        // Create coordinate systems for conversion
+        let mapping_sys = MappingCoordSys::new(active_profile.rotation);
+        let scrcpy_sys = ScrcpyCoordSys::new(video_width, video_height, self.capture_orientation);
+
+        for (key, action) in active_profile.mappings.read().iter() {
+            let scrcpy_action =
+                ScrcpyAction::from_mapping_action(action, &scrcpy_sys, &mapping_sys);
+            active_mappings.insert(*key, scrcpy_action);
+        }
+
+        if let Some(capture_orientation) = self.capture_orientation {
+            trace!(
+                "Converted {} mappings from percentage (rotation={}) to {}x{} pixels (capture locked to {}°)",
+                active_mappings.len(),
+                active_profile.rotation,
+                video_width,
+                video_height,
+                capture_orientation * 90
+            );
+        } else {
+            trace!(
+                "Converted {} mappings from percentage to {}x{} pixels (no transform)",
+                active_mappings.len(),
+                video_width,
+                video_height
+            );
+        }
+
+        *self.active_mappings.write() = active_mappings;
+    }
+
+    pub fn add_profile_mapping(&self, key: Key, action: MappingAction) {
+        if let Some(active_profile) = self.get_active_profile() {
+            active_profile.mappings.write().insert(key, action.clone());
+
+            let (video_width, video_height) = self.sender.get_screen_size();
+
+            // Create coordinate systems for conversion
+            let mapping_sys = MappingCoordSys::new(active_profile.rotation);
+            let scrcpy_sys =
+                ScrcpyCoordSys::new(video_width, video_height, self.capture_orientation);
+            let scrcpy_action =
+                ScrcpyAction::from_mapping_action(&action, &scrcpy_sys, &mapping_sys);
+            self.add_mapping(key, scrcpy_action);
+        }
+    }
+
+    pub fn delete_profile_mapping(&self, key: &Key) {
+        if let Some(active_profile) = self.get_active_profile() {
+            active_profile.mappings.write().remove(key);
+
+            self.delete_mapping(key);
+        }
+    }
+
+    fn add_mapping(&self, key: Key, action: ScrcpyAction) {
+        self.active_mappings.write().insert(key, action);
+    }
+
+    fn delete_mapping(&self, key: &Key) { self.active_mappings.write().remove(key); }
+
+    pub fn get_profile_mapping(&self, key: &Key) -> Option<MappingAction> {
+        if let Some(active_profile) = self.get_active_profile()
+            && let Some(action) = active_profile.mappings.read().get(key)
+        {
+            return Some(action.clone());
+        }
+        None
     }
 }

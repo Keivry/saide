@@ -170,6 +170,7 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         debug!("Connecting to device: {}", serial);
 
         // Check if we should lock orientation for NVDEC
+        // TODO: User can override this in config later
         let capture_orientation_locked = ServerParams::should_lock_orientation_for_nvdec();
 
         // Establish ScrcpyConnection (blocking)
@@ -287,8 +288,11 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
 
         // Now create keyboard mapper (if enabled)
         if conn_config.general.keyboard_enabled {
-            let keyboard_mapper =
-                KeyboardMapper::new(conn_config.mappings.clone(), control_sender.clone())?;
+            let keyboard_mapper = KeyboardMapper::new(
+                conn_config.mappings.clone(),
+                control_sender.clone(),
+                capture_orientation_locked.then_some(0),
+            )?;
             debug!("Keyboard mapper initialized with ControlSender");
             conn_tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
         }

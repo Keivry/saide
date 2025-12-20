@@ -545,20 +545,14 @@ impl SAideApp {
             return;
         };
 
-        if let Some(profile) = keyboard_mapper.get_active_profile() {
-            // Create new action with percentage coordinates
-            let action = MappingAction::Tap { pos: *pos };
+        let action = MappingAction::Tap { pos: *pos };
+        keyboard_mapper.add_profile_mapping(key, action);
 
-            profile.add_mapping(key, action);
-
-            // Save to config file
-            if let Err(e) = self.config_manager.save() {
-                error!("Failed to save config: {}", e);
-            } else {
-                info!("Mapping saved successfully");
-            }
-
-            self.refresh_mapping_profiles();
+        // Save to config file
+        if let Err(e) = self.config_manager.save() {
+            error!("Failed to save config: {}", e);
+        } else {
+            info!("Mapping saved successfully");
         }
     }
 
@@ -571,19 +565,14 @@ impl SAideApp {
             return;
         };
 
-        if let Some(profile) = keyboard_mapper.get_active_profile() {
-            // Create new profile with removed mapping
-            profile.remove_mapping(&key);
+        keyboard_mapper.delete_profile_mapping(&key);
 
-            // Save to config file
-            if let Err(e) = self.config_manager.save() {
-                error!("Failed to save config: {}", e);
-            } else {
-                info!("Mapping deleted successfully");
-            }
+        // Save to config file
+        if let Err(e) = self.config_manager.save() {
+            error!("Failed to save config: {}", e);
+        } else {
+            info!("Mapping deleted successfully");
         }
-
-        self.refresh_mapping_profiles();
     }
 
     fn get_mapping(&self, key: &Key) -> Option<MappingAction> {
@@ -591,11 +580,7 @@ impl SAideApp {
             return None;
         };
 
-        if let Some(profile) = keyboard_mapper.get_active_profile() {
-            profile.get_mapping(key)
-        } else {
-            None
-        }
+        keyboard_mapper.get_profile_mapping(key)
     }
 
     /// Process keyboard event
@@ -895,7 +880,6 @@ impl SAideApp {
     }
 
     fn refresh_mapping_profiles(&mut self) {
-        let capture_locked = self.is_capture_locked();
         let device_orientation = self.device_orientation;
 
         let (keyboard_mapper, device_id) =
@@ -908,7 +892,7 @@ impl SAideApp {
                 }
             };
 
-        match keyboard_mapper.refresh_profiles(device_id, device_orientation, capture_locked) {
+        match keyboard_mapper.refresh_profiles(device_id, device_orientation) {
             Ok(_) => {
                 let avail_profile_names = keyboard_mapper.get_avail_profiles();
                 let active_profile_name = keyboard_mapper.get_active_profile_name();
