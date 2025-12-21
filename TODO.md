@@ -2,8 +2,9 @@
 
 ## 问题
 
-- [ ] 增加删除映射后，没有更新 active_mappings
-- [ ] scrcpy-server 文件路径硬编码
+- [x] 增加删除映射后，没有更新 active_mappings
+- [x] scrcpy-server 文件路径硬编码
+- [ ] 安卓设备屏幕旋转后，部分情况键盘映射不生效
 
 ## 已完成 ✅
 
