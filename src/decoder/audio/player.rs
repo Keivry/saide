@@ -4,15 +4,18 @@ use {
     super::DecodedAudio,
     anyhow::{Context, Result},
     cpal::{
-        SampleRate,
         Stream,
         StreamConfig,
         traits::{DeviceTrait, HostTrait, StreamTrait},
     },
-    std::sync::{
-        Arc,
-        Mutex,
-        atomic::{AtomicBool, Ordering},
+    std::{
+        sync::{
+            Arc,
+            Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+        time::Duration,
     },
     tracing::{debug, info, warn},
 };
@@ -131,11 +134,11 @@ impl AudioPlayer {
             .default_output_device()
             .context("No output device available")?;
 
-        info!("Using audio device: {}", device.name()?);
+        info!("Using audio device: {}", device.description()?.name());
 
         let config = StreamConfig {
             channels,
-            sample_rate: SampleRate(sample_rate),
+            sample_rate,
             buffer_size: cpal::BufferSize::Default,
         };
 
@@ -267,7 +270,7 @@ impl Drop for AudioPlayer {
         self.stop();
 
         // Give audio stream time to finish current callback
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(50));
 
         debug!("Audio player stopped");
     }
