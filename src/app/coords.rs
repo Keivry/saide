@@ -92,6 +92,10 @@ impl MappingCoordSys {
         }
     }
 
+    pub fn update_device_orientation(&mut self, orientation: u32) {
+        self.device_orientation = orientation % 4;
+    }
+
     /// Convert mapping coordinate (0.0-1.0) to ScrcpyCoordSys
     ///
     /// # Parameters
@@ -222,6 +226,15 @@ impl ScrcpyCoordSys {
             video_width,
             video_height,
         }
+    }
+
+    pub fn update_video_size(&mut self, width: u16, height: u16) {
+        self.video_width = width;
+        self.video_height = height;
+    }
+
+    pub fn update_capture_orientation(&mut self, orientation: Option<u32>) {
+        self.capture_orientation = orientation.map(|o| o % 4);
     }
 
     /// Convert scrcpy coordinate to VisualCoordSys
@@ -360,6 +373,8 @@ impl VisualCoordSys {
             rotation: rotation % 4,
         }
     }
+
+    pub fn update_rotation(&mut self, rotation: u32) { self.rotation = rotation % 4; }
 
     /// Convert visual coordinate to ScrcpyCoordSys
     ///

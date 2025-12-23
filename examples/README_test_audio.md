@@ -10,11 +10,11 @@ Tests real-time audio capture and playback from Android device.
 
 ## Android Version Support
 
-| Android Version | API Level | Support Status |
-|-----------------|-----------|----------------|
-| Android 12+     | 31+       | ✅ Works out-of-the-box |
-| Android 11      | 30        | ⚠️ Requires unlocked screen |
-| Android 10 or earlier | ≤29 | ❌ Not supported |
+| Android Version       | API Level | Support Status              |
+| --------------------- | --------- | --------------------------- |
+| Android 12+           | 31+       | ✅ Works out-of-the-box     |
+| Android 11            | 30        | ⚠️ Requires unlocked screen |
+| Android 10 or earlier | ≤29       | ❌ Not supported            |
 
 ## Usage
 

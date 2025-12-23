@@ -7,7 +7,7 @@ use {
     super::codec_probe::ProfileDatabase,
     crate::{GpuType, detect_gpu},
     anyhow::{Context, Result},
-    std::process::{Command, Stdio},
+    std::process::{Child, Command, Stdio},
     tracing::{debug, info},
 };
 
@@ -317,7 +317,7 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
 /// Start scrcpy server process
 ///
 /// Returns the spawned process handle
-pub fn start_server(serial: &str, params: &ServerParams) -> Result<std::process::Child> {
+pub fn start_server(serial: &str, params: &ServerParams) -> Result<Child> {
     let args = build_server_args(params);
 
     info!("Starting server with scid={:08x}", params.scid);

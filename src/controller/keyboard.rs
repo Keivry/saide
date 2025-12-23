@@ -147,8 +147,6 @@ impl KeyboardMapper {
     /// # Parameters
     /// - `device_id`: current device ID
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
-    /// - `capture_orientation_locked`: whether capture-orientation is locked (NVDEC mode)
-    // TODO: Use Option<u32> for capture_orientation to support more orientations
     pub fn refresh_profiles(&self, device_id: &str, device_rotation: u32) -> Result<()> {
         let avail_profiles = self.config.filter_profiles(device_id, device_rotation);
 

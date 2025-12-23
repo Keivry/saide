@@ -29,6 +29,8 @@ use {
         thread,
         time::{Duration, Instant},
     },
+    thiserror::Error,
+    tokio_util::sync::CancellationToken,
     tracing::{debug, error, info, trace, warn},
 };
 
@@ -83,6 +85,27 @@ pub enum PlayerState {
     Failed(String),
 }
 
+#[derive(Error, Debug)]
+enum StreamWorkerError {
+    #[error("Stream cancelled")]
+    Cancelled,
+    #[error("Stream read timeout")]
+    Timeout,
+    #[error("Stream connection closed: {0}")]
+    ConnectionClosed(String),
+    #[error("Stream decode error: {0}")]
+    DecodeError(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("Other error: {0}")]
+    Other(#[from] anyhow::Error),
+
+    #[error("Send error: {0}")]
+    SendError(#[from] crossbeam_channel::SendError<PlayerEvent>),
+}
+
 /// Stream Player
 /// Handles video/audio decoding and rendering in the UI
 pub struct StreamPlayer {
@@ -121,10 +144,15 @@ pub struct StreamPlayer {
     /// Event channel for initialization
     event_tx: Sender<PlayerEvent>,
     event_rx: Receiver<PlayerEvent>,
+
+    /// Cancellation token owned by Main App
+    /// Used to signal thread shutdown
+    /// StreamPlayer MUST NOT call cancel() itself
+    cancel_token: CancellationToken,
 }
 
 impl StreamPlayer {
-    pub fn new(cc: &eframe::CreationContext) -> Self {
+    pub fn new(cc: &eframe::CreationContext, cancel_token: CancellationToken) -> Self {
         // Register NV12 render resources
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
             let resources = Nv12RenderResources::new(&wgpu_state.device, wgpu_state.target_format);
@@ -153,6 +181,7 @@ impl StreamPlayer {
             fps_timer: Instant::now(),
             event_tx,
             event_rx,
+            cancel_token,
         }
     }
 
@@ -171,12 +200,19 @@ impl StreamPlayer {
 
         let event_tx = self.event_tx.clone();
 
-        self.stream_thread = Some(thread::spawn(move || {
+        let cancel_token = self.cancel_token.clone();
+        self.stream_thread = Some(thread::spawn(move || -> Result<(), StreamWorkerError> {
+            if cancel_token.is_cancelled() {
+                debug!("Stream worker exiting due to cancellation");
+                return Err(StreamWorkerError::Cancelled);
+            }
+
             if let Err(e) = stream_worker(
                 video_stream,
                 audio_stream,
                 video_resolution,
                 event_tx.clone(),
+                cancel_token,
             ) {
                 error!("Stream worker error: {}", e);
                 let _ = event_tx.send(PlayerEvent::Failed(format!("{}", e)));
@@ -194,27 +230,8 @@ impl StreamPlayer {
         self.stats_rx = None;
         self.current_frame = None;
 
-        // Wait for thread to finish (with timeout using spawn)
-        if let Some(thread) = self.stream_thread.take() {
-            trace!("Waiting for stream thread to finish...");
-
-            // Spawn a detached thread to join (avoid blocking forever)
-            thread::spawn(move || {
-                // Try to join with timeout simulation
-                let start = Instant::now();
-                while !thread.is_finished() && start.elapsed().as_secs() < 2 {
-                    thread::sleep(Duration::from_millis(100));
-                }
-
-                if !thread.is_finished() {
-                    warn!("Stream thread did not finish within timeout, abandoning join");
-                    // Thread will be detached and cleaned up by OS
-                } else {
-                    let _ = thread.join();
-                    trace!("Stream thread finished");
-                }
-            });
-        }
+        // Detach thread handle
+        self.stream_thread.take();
     }
 
     /// Update player state (call every frame)
@@ -325,16 +342,19 @@ impl StreamPlayer {
             ui.allocate_rect(rect, egui::Sense::click())
         } else {
             // Show placeholder
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    egui::RichText::new(match &self.state {
-                        PlayerState::Idle => "No Device",
-                        PlayerState::Connecting => "Connecting...",
-                        PlayerState::Streaming => "Loading...",
-                        PlayerState::Failed(err) => err,
-                    })
-                    .size(20.0),
-                )
+            ui.centered_and_justified(|ui| match &self.state {
+                PlayerState::Idle => {
+                    ui.label(egui::RichText::new("No Device").size(20.0));
+                }
+                PlayerState::Connecting => {
+                    ui.label(egui::RichText::new("Connecting...").size(20.0));
+                }
+                PlayerState::Streaming => {
+                    ui.label(egui::RichText::new("Loading...").size(20.0));
+                }
+                PlayerState::Failed(err) => {
+                    self.draw_failed_overlay(ui, err);
+                }
             })
             .response
         }
@@ -343,26 +363,15 @@ impl StreamPlayer {
     /// Get video display rectangle
     pub fn video_rect(&self) -> egui::Rect { self.video_rect }
 
-    /// Get video dimensions
-    pub fn video_dimensions(&self) -> (u32, u32) {
-        // Return effective dimensions (considering rotation)
-        self.dimensions()
-    }
-
     /// Get video rotation (0-3)
     pub fn rotation(&self) -> u32 { self.video_rotation }
 
     /// Get actual video resolution (NOT considering rotation, for control messages)
+    #[allow(dead_code)]
     pub fn video_resolution(&self) -> (u32, u32) { (self.video_width, self.video_height) }
 
-    /// Get player state
-    pub fn state(&self) -> &PlayerState { &self.state }
-
-    /// Check if player is ready (streaming)
-    pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Streaming) }
-
     /// Get effective video dimensions (considering rotation)
-    pub fn dimensions(&self) -> (u32, u32) {
+    pub fn video_dimensions(&self) -> (u32, u32) {
         if self.video_rotation.is_multiple_of(2) {
             (self.video_width, self.video_height)
         } else {
@@ -380,8 +389,71 @@ impl StreamPlayer {
         }
     }
 
+    /// Get player state
+    pub fn state(&self) -> &PlayerState { &self.state }
+
+    /// Check if player is ready (streaming)
+    pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Streaming) }
+
     /// Set video rotation (0-3, clockwise 90°)
     pub fn set_rotation(&mut self, rotation: u32) { self.video_rotation = rotation % 4; }
+
+    fn draw_failed_overlay(&self, ui: &mut egui::Ui, err_msg: &str) {
+        // Error overlay if stream failed
+        let ctx = ui.ctx();
+        egui::Area::new(egui::Id::new("error_overlay"))
+            .fixed_pos(egui::pos2(0.0, 0.0))
+            .show(ui.ctx(), |ui| {
+                let screen_rect = ctx.content_rect();
+                let mut child_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(screen_rect)
+                        .layout(egui::Layout::top_down(egui::Align::Center)),
+                );
+                {
+                    let ui = &mut child_ui;
+                    // Semi-transparent background
+                    ui.painter().rect_filled(
+                        screen_rect,
+                        0.0,
+                        egui::Color32::from_black_alpha(200),
+                    );
+
+                    // Center error message
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(screen_rect.height() / 3.0);
+
+                        ui.label(
+                            egui::RichText::new("⚠️ Connection Lost")
+                                .size(36.0)
+                                .color(egui::Color32::from_rgb(255, 100, 100)),
+                        );
+
+                        ui.add_space(20.0);
+
+                        let msg = if err_msg.contains("read") || err_msg.contains("timeout") {
+                            "USB disconnected or device offline"
+                        } else {
+                            "Stream error occurred"
+                        };
+
+                        ui.label(
+                            egui::RichText::new(msg)
+                                .size(20.0)
+                                .color(egui::Color32::WHITE),
+                        );
+
+                        ui.add_space(15.0);
+
+                        ui.label(
+                            egui::RichText::new("Please restart the application")
+                                .size(16.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    });
+                }
+            });
+    }
 }
 
 impl Drop for StreamPlayer {
@@ -395,7 +467,8 @@ fn stream_worker(
     audio_stream: Option<TcpStream>,
     video_resolution: (u32, u32),
     event_tx: Sender<PlayerEvent>,
-) -> Result<()> {
+    token: CancellationToken,
+) -> Result<(), StreamWorkerError> {
     let (width, height) = video_resolution;
     info!("Video resolution: {}x{}", width, height);
 
@@ -429,6 +502,7 @@ fn stream_worker(
     let stats = Arc::new(Mutex::new(StreamStats::default()));
 
     // Spawn audio thread (if audio stream available)
+    let audio_token = token.clone();
     let _audio_thread = if let Some(mut audio_stream) = audio_stream {
         let stats_audio = stats.clone();
         Some(thread::spawn(move || {
@@ -436,6 +510,11 @@ fn stream_worker(
                 let mut consecutive_read_errors = 0u32;
 
                 loop {
+                    if audio_token.is_cancelled() {
+                        debug!("Audio thread exiting due to cancellation");
+                        return Ok(());
+                    }
+
                     // Read header with error tolerance
                     let mut header = [0u8; 12];
                     if let Err(e) = audio_stream.read_exact(&mut header) {
@@ -544,6 +623,11 @@ fn stream_worker(
         let mut consecutive_read_errors = 0u32;
 
         loop {
+            if token.is_cancelled() {
+                debug!("Video decode loop exiting due to cancellation");
+                return Ok(());
+            }
+
             // Try to read packet with timeout tolerance
             let video_packet = match VideoPacket::read_from(&mut video_stream) {
                 Ok(packet) => {
@@ -581,7 +665,7 @@ fn stream_worker(
                             consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
                         );
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    thread::sleep(Duration::from_millis(10));
                     continue;
                 }
             };
@@ -612,7 +696,12 @@ fn stream_worker(
             // Decode frame
             let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
                 Ok(frame) => frame,
-                Err(_) => {
+                Err(e) => {
+                    if is_shutdown(&e) {
+                        info!("Video decode error (shutdown): {}", e);
+                        return Err(e);
+                    }
+                    warn!("Video decode error: {} - skipping frame", e);
                     continue;
                 }
             };
@@ -690,9 +779,7 @@ fn is_shutdown(err: &anyhow::Error) -> bool {
         .is_some_and(|kind| {
             matches!(
                 kind,
-                io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::BrokenPipe
-                    | io::ErrorKind::UnexpectedEof
+                io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe
             )
         })
 }

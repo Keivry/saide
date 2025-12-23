@@ -14,7 +14,7 @@ use {
         },
         indicator::Indicator,
         mapping::{MappingConfigEvent, MappingConfigWindow},
-        player::StreamPlayer,
+        player::{PlayerState, StreamPlayer},
         toolbar::{Toolbar, ToolbarEvent},
     },
     crate::{
@@ -37,6 +37,7 @@ use {
         thread,
         time::{Duration, Instant},
     },
+    tokio_util::sync::CancellationToken,
     tracing::{debug, error, info, trace},
 };
 
@@ -94,9 +95,6 @@ pub struct SAideApp {
     /// Audio disabled warning message (if audio was requested but unavailable)
     audio_warning: Option<String>,
 
-    /// Whether window has been initially sized to video
-    window_initialized: bool,
-
     // Frame rate limiter duration
     frame_rate_limiter: Option<Duration>,
 
@@ -122,6 +120,13 @@ pub struct SAideApp {
 
     /// Mapping configuration window
     mapping_config_window: MappingConfigWindow,
+
+    /// Ui initialization state, to trigger first-time setups
+    /// (e.g. window resize)
+    ui_initialized: bool,
+
+    /// Cancellation token for background tasks
+    cancel_token: CancellationToken,
 }
 
 impl SAideApp {
@@ -136,10 +141,12 @@ impl SAideApp {
         let max_fps = config.scrcpy.video.max_fps;
         let vsync = config.gpu.vsync;
 
+        let cancel_token = CancellationToken::new();
+
         Self {
             toolbar: Toolbar::new(),
             indicator: Indicator::new(indicator_position, max_fps as f32),
-            player: StreamPlayer::new(cc),
+            player: StreamPlayer::new(cc, cancel_token.clone()),
 
             config_manager,
 
@@ -166,8 +173,6 @@ impl SAideApp {
             scrcpy_coords: ScrcpyCoordSys::new(1, 1, None),
             visual_coords: VisualCoordSys::new(0), // Only stores rotation, rect passed at runtime
 
-            window_initialized: false,
-
             frame_rate_limiter: if vsync {
                 None
             } else {
@@ -188,6 +193,10 @@ impl SAideApp {
             device_ime_state: false,
 
             mapping_config_window: MappingConfigWindow::new(),
+
+            ui_initialized: false,
+
+            cancel_token,
         }
     }
 
@@ -202,12 +211,12 @@ impl SAideApp {
         let (tx, rx) = bounded::<InitEvent>(INIT_RESULT_CHANNEL_CAPACITY);
         self.init_rx = Some(rx);
 
-        start_initialization(&self.config_manager, tx);
+        start_initialization(self.config_manager.config(), tx, self.cancel_token.clone());
     }
 
     /// Check initialization progress and update state
     fn check_init_stage(&mut self, _ctx: &egui::Context) {
-        let mut capture_locked = None;
+        let mut capture_orientation = None;
 
         if let Some(rx) = &self.init_rx {
             while let Ok(result) = rx.try_recv() {
@@ -220,14 +229,11 @@ impl SAideApp {
                         video_resolution,
                         device_name,
                         audio_disabled_reason,
-                        capture_orientation_locked,
+                        capture_orientation: corientation,
                     } => {
                         info!(
-                            "ScrcpyConnection ready: {}x{}, device: {:?}, capture_locked: {}",
-                            video_resolution.0,
-                            video_resolution.1,
-                            device_name,
-                            capture_orientation_locked
+                            "ScrcpyConnection ready: {}x{}, device: {:?}, capture_orientation: {:?}",
+                            video_resolution.0, video_resolution.1, device_name, corientation
                         );
 
                         // Store audio warning if present
@@ -243,8 +249,8 @@ impl SAideApp {
                         self.player
                             .start(video_stream, audio_stream, video_resolution);
 
-                        // Save capture_locked for later use (after borrow ends)
-                        capture_locked = Some(capture_orientation_locked);
+                        // Save capture_orientation for later use (after borrow ends)
+                        capture_orientation = corientation;
                     }
                     InitEvent::KeyboardMapper(keyboard_mapper) => {
                         self.keyboard_mapper = Some(keyboard_mapper);
@@ -268,9 +274,8 @@ impl SAideApp {
         }
 
         // Update ScrcpyCoordSys if capture orientation lock changed
-        if let Some(locked) = capture_locked {
-            self.update_scrcpy_coords(locked);
-        }
+        self.scrcpy_coords
+            .update_capture_orientation(capture_orientation);
 
         if let Some(_rx) = &self.init_rx {
             // Check if all components are initialized AND video stream is ready with valid
@@ -286,8 +291,11 @@ impl SAideApp {
                 info!("Initialization completed successfully");
 
                 // Initialize coordinate systems now that video is ready
-                self.update_mapping_coords(); // Device orientation known
-                self.update_visual_coords(); // Video rotation available
+                self.mapping_coords
+                    .update_device_orientation(self.device_orientation);
+                debug!("Initial device orientation: {}", self.device_orientation);
+                self.visual_coords.update_rotation(self.player.rotation());
+                debug!("Initial video rotation: {}", self.player.rotation());
 
                 // Apply turn_screen_off setting if enabled
                 let config = self.config();
@@ -306,49 +314,11 @@ impl SAideApp {
 
     /// Resize the application window to match video dimensions
     fn resize(&mut self, ctx: &egui::Context) {
-        let (w, h) = self.player.dimensions();
+        let (w, h) = self.player.video_dimensions();
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             w as f32 + Toolbar::width(),
             h as f32,
         )));
-    }
-
-    /// Update MappingCoordSys when device orientation changes
-    fn update_mapping_coords(&mut self) {
-        self.mapping_coords = MappingCoordSys::new(self.device_orientation);
-        debug!(
-            "MappingCoordSys updated: device_orientation={}",
-            self.device_orientation
-        );
-    }
-
-    /// Check if capture orientation is locked (NVDEC mode)
-    fn is_capture_locked(&self) -> bool { self.scrcpy_coords.capture_orientation.is_some() }
-
-    /// Update ScrcpyCoordSys when video resolution or capture orientation changes
-    fn update_scrcpy_coords(&mut self, capture_orientation_locked: bool) {
-        let video_resolution = self.player.video_resolution();
-        let capture_orientation = if capture_orientation_locked {
-            Some(0) // Locked to portrait
-        } else {
-            None
-        };
-        self.scrcpy_coords = ScrcpyCoordSys::new(
-            video_resolution.0 as u16,
-            video_resolution.1 as u16,
-            capture_orientation,
-        );
-        debug!(
-            "ScrcpyCoordSys updated: video_resolution={}x{}, capture_orientation={:?}",
-            video_resolution.0, video_resolution.1, capture_orientation
-        );
-    }
-
-    /// Update VisualCoordSys when user rotation changes
-    fn update_visual_coords(&mut self) {
-        let video_rotation = self.player.rotation();
-        self.visual_coords = VisualCoordSys::new(video_rotation);
-        debug!("VisualCoordSys updated: rotation={}", video_rotation);
     }
 
     /// Rotate video by 90 degrees clockwise
@@ -364,14 +334,16 @@ impl SAideApp {
         self.resize(ctx);
 
         // Update indicator resolution
-        let (w, h) = self.player.dimensions();
+        let (w, h) = self.player.video_dimensions();
         self.indicator.update_video_resolution((w, h));
 
         // Request repaint to apply changes immediately
         ctx.request_repaint();
 
         // Update VisualCoordSys (user rotation changed)
-        self.update_visual_coords();
+        self.visual_coords.update_rotation(video_rotation);
+
+        debug!("Video rotated to {}", video_rotation);
     }
 
     /// Toggle mapping configuration window
@@ -417,10 +389,14 @@ impl SAideApp {
         // Refresh keyboard profiles if needed
         if rotated {
             self.refresh_mapping_profiles();
+
             self.indicator
                 .update_device_orientation(self.device_orientation);
+
             // Update MappingCoordSys (device orientation changed)
-            self.update_mapping_coords();
+            self.mapping_coords
+                .update_device_orientation(self.device_orientation);
+            debug!("Updated device orientation to {}", self.device_orientation);
         }
     }
 
@@ -989,9 +965,10 @@ impl eframe::App for SAideApp {
             }
             InitState::Ready => {
                 // Store dimensions before update
-                let old_dimensions = if self.window_initialized {
+                let old_dimensions = if self.ui_initialized {
                     self.player.video_dimensions()
                 } else {
+                    // First frame after init, force resize
                     (0, 0)
                 };
 
@@ -1013,11 +990,13 @@ impl eframe::App for SAideApp {
 
                     // Update indicator
                     self.indicator.update_video_resolution(new_dimensions);
-                    self.window_initialized = true;
 
                     // Update ScrcpyCoordSys (video resolution changed)
-                    let capture_locked = self.is_capture_locked();
-                    self.update_scrcpy_coords(capture_locked);
+                    self.scrcpy_coords
+                        .update_video_size(new_dimensions.0 as u16, new_dimensions.1 as u16);
+
+                    // Mark UI as initialized
+                    self.ui_initialized = true;
                 }
 
                 // Process mapping configuration window
@@ -1041,63 +1020,7 @@ impl eframe::App for SAideApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
-                let _response = self.player.render(ui);
-
-                // Error overlay if stream failed
-                if let crate::app::ui::player::PlayerState::Failed(err) = self.player.state() {
-                    egui::Area::new(egui::Id::new("error_overlay"))
-                        .fixed_pos(egui::pos2(0.0, 0.0))
-                        .show(ctx, |ui| {
-                            let screen_rect = ctx.content_rect();
-                            let mut child_ui = ui.new_child(
-                                egui::UiBuilder::new()
-                                    .max_rect(screen_rect)
-                                    .layout(egui::Layout::top_down(egui::Align::Center)),
-                            );
-                            {
-                                let ui = &mut child_ui;
-                                // Semi-transparent background
-                                ui.painter().rect_filled(
-                                    screen_rect,
-                                    0.0,
-                                    egui::Color32::from_black_alpha(200),
-                                );
-
-                                // Center error message
-                                ui.vertical_centered(|ui| {
-                                    ui.add_space(screen_rect.height() / 3.0);
-
-                                    ui.label(
-                                        egui::RichText::new("⚠️ Connection Lost")
-                                            .size(36.0)
-                                            .color(egui::Color32::from_rgb(255, 100, 100)),
-                                    );
-
-                                    ui.add_space(20.0);
-
-                                    let msg = if err.contains("read") || err.contains("timeout") {
-                                        "USB disconnected or device offline"
-                                    } else {
-                                        "Stream error occurred"
-                                    };
-
-                                    ui.label(
-                                        egui::RichText::new(msg)
-                                            .size(20.0)
-                                            .color(egui::Color32::WHITE),
-                                    );
-
-                                    ui.add_space(15.0);
-
-                                    ui.label(
-                                        egui::RichText::new("Please restart the application")
-                                            .size(16.0)
-                                            .color(egui::Color32::GRAY),
-                                    );
-                                });
-                            }
-                        });
-                }
+                self.player.render(ui);
             });
 
         // Draw indicator overlay on top of video
@@ -1110,7 +1033,7 @@ impl eframe::App for SAideApp {
         if let Some(warning) = self.audio_warning.clone() {
             let mut close_clicked = false;
             egui::Area::new(egui::Id::new("audio_warning"))
-                .fixed_pos(egui::pos2(10.0, 10.0))
+                .fixed_pos(egui::pos2(Toolbar::width() + 10.0, 10.0))
                 .show(ctx, |ui| {
                     egui::Frame::new()
                         .fill(egui::Color32::from_rgba_unmultiplied(40, 40, 40, 220))
@@ -1146,7 +1069,7 @@ impl eframe::App for SAideApp {
         }
 
         // Frame rate limiting (only when streaming)
-        if matches!(self.player.state(), super::player::PlayerState::Streaming) {
+        if matches!(self.player.state(), PlayerState::Streaming) {
             if let Some(limiter) = self.frame_rate_limiter {
                 if let Some(last) = self.last_paint_instant {
                     let elapsed = last.elapsed();

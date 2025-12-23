@@ -7,7 +7,7 @@
 
 use {
     crate::{
-        config::ConfigManager,
+        config::SAideConfig,
         controller::{
             adb::AdbShell,
             control_sender::ControlSender,
@@ -21,9 +21,11 @@ use {
     std::{
         net::TcpStream,
         process::Command,
+        sync::Arc,
         thread,
         time::{Duration, Instant},
     },
+    tokio_util::sync::CancellationToken,
     tracing::{debug, error, info, warn},
 };
 
@@ -54,7 +56,7 @@ pub enum InitEvent {
         video_resolution: (u32, u32),
         device_name: Option<String>,
         audio_disabled_reason: Option<String>,
-        capture_orientation_locked: bool,
+        capture_orientation: Option<u32>,
     },
     KeyboardMapper(KeyboardMapper),
     MouseMapper(MouseMapper),
@@ -64,7 +66,11 @@ pub enum InitEvent {
 }
 
 /// Background initialization function
-pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent>) {
+pub fn start_initialization(
+    config: Arc<SAideConfig>,
+    tx: Sender<InitEvent>,
+    cancellation_token: CancellationToken,
+) {
     // Note: External scrcpy initialization removed - using internal StreamPlayer
 
     const ADB_SERVER_STARTUP_WAIT_MS: u64 = 500;
@@ -85,18 +91,143 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
     }
 
     // Device monitor initialization
-    let dm_tx = tx.clone();
+    start_device_monitor(tx.clone(), cancellation_token.clone());
+
+    // Scrcpy connection initialization
+    start_scrcpy_connection(config, tx.clone(), cancellation_token.clone());
+}
+
+fn start_scrcpy_connection(
+    config: Arc<SAideConfig>,
+    tx: Sender<InitEvent>,
+    token: CancellationToken,
+) {
+    // ScrcpyConnection initialization (async - moved to separate thread)
+    // This will create mappers AFTER connection is established
     thread::spawn(move || -> Result<(), anyhow::Error> {
+        info!("Establishing scrcpy connection...");
+
+        // Get device serial
+        if token.is_cancelled() {
+            info!("Scrcpy connection initialization cancelled");
+            return Ok(());
+        }
+        let serial = AdbShell::get_device_id()?;
+        debug!("Connecting to device: {}", serial);
+
+        // Check if we should lock orientation for NVDEC
+        // TODO: User can override this in config later
+        let capture_orientation = if ServerParams::should_lock_orientation_for_nvdec() {
+            Some(0) // Lock to portrait (0°)
+        } else {
+            None
+        };
+
+        // Establish ScrcpyConnection (blocking)
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("Failed to create Tokio runtime")?;
+        let mut connection = runtime.block_on(async {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    Err(anyhow::anyhow!("Scrcpy connection initialization cancelled"))
+                },
+                conn = scrcpy_connection(config.clone(), serial, capture_orientation) => {
+                    conn
+                }
+            }
+        })?;
+
+        info!("ScrcpyConnection established successfully");
+
+        // Extract streams (but keep connection alive)
+        let video_stream = connection
+            .video_stream
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Video stream not available"))?;
+        let audio_stream = connection.audio_stream.take();
+        let control_stream = connection
+            .control_stream
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Control stream not available"))?;
+        let video_resolution = connection
+            .video_resolution
+            .ok_or_else(|| anyhow::anyhow!("Video resolution not available"))?;
+        let device_name = connection.device_name.clone();
+        let audio_disabled_reason = connection.audio_disabled_reason.clone();
+
+        // Create ControlSender with cloned stream
+        // We need to clone the TcpStream to keep both in ControlSender and return original
+        let control_stream_clone = control_stream
+            .try_clone()
+            .context("Failed to clone control stream")?;
+
+        let control_sender = ControlSender::new(
+            control_stream_clone,
+            video_resolution.0 as u16,
+            video_resolution.1 as u16,
+        );
+
+        info!(
+            "ControlSender created with resolution {}x{}, capture_orientation={:?}",
+            video_resolution.0, video_resolution.1, capture_orientation
+        );
+
+        // Put the original control_stream back into connection to keep it alive
+        connection.control_stream = Some(control_stream);
+
+        // Send connection ready event (with connection to keep alive)
+        tx.send(InitEvent::ConnectionReady {
+            connection,
+            control_sender: control_sender.clone(),
+            video_stream,
+            audio_stream,
+            video_resolution,
+            device_name,
+            audio_disabled_reason,
+            capture_orientation,
+        })?;
+
+        // Now create keyboard mapper (if enabled)
+        if config.general.keyboard_enabled {
+            let keyboard_mapper = KeyboardMapper::new(
+                config.mappings.clone(),
+                control_sender.clone(),
+                capture_orientation,
+            )?;
+            debug!("Keyboard mapper initialized with ControlSender");
+            tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
+        }
+
+        // Create mouse mapper (if enabled)
+        if config.general.mouse_enabled {
+            let mouse_mapper = MouseMapper::new(control_sender.clone())?;
+            debug!("Mouse mapper initialized with ControlSender");
+            tx.send(InitEvent::MouseMapper(mouse_mapper))?;
+        }
+
+        Ok(())
+    });
+}
+
+fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
+    thread::spawn(move || -> Result<(), anyhow::Error> {
+        info!("Starting device monitor thread...");
+
+        if token.is_cancelled() {
+            info!("Device monitor initialization cancelled");
+            return Ok(());
+        }
+
         // Get device ID
         let device_id = AdbShell::get_device_id()?;
         debug!("Using device ID: {}", device_id);
-        dm_tx.send(InitEvent::DeviceId(device_id))?;
-
-        // Note: device_physical_size removed - no longer needed with new coordinate system
+        tx.send(InitEvent::DeviceId(device_id))?;
 
         // Create channel for rotation events
         let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
-        dm_tx.send(InitEvent::DeviceMonitor(event_rx))?;
+        tx.send(InitEvent::DeviceMonitor(event_rx))?;
 
         // Start rotation and im state monitoring
         const MAX_CONSECUTIVE_ERRORS: u32 = 3; // Exit after 3 consecutive failures
@@ -104,6 +235,12 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
         let mut last_rotation = None;
         let mut consecutive_errors = 0;
         loop {
+            // Check for cancellation
+            if token.is_cancelled() {
+                info!("Device monitor cancellation requested, stopping...");
+                break;
+            }
+
             match AdbShell::get_screen_orientation() {
                 Ok(current_rotation) => {
                     consecutive_errors = 0; // Reset error counter on success
@@ -139,6 +276,11 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
                 }
             }
 
+            if token.is_cancelled() {
+                info!("Device monitor cancellation requested, stopping...");
+                break;
+            }
+
             // Poll input method state (skip if device is disconnected)
             if consecutive_errors == 0
                 && let Ok(im_state) = AdbShell::get_ime_state()
@@ -150,6 +292,10 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
                 break;
             }
 
+            if token.is_cancelled() {
+                info!("Device monitor cancellation requested, stopping...");
+                break;
+            }
             thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
         }
 
@@ -157,153 +303,69 @@ pub fn start_initialization(config_manager: &ConfigManager, tx: Sender<InitEvent
 
         Ok(())
     });
+}
 
-    // ScrcpyConnection initialization (async - moved to separate thread)
-    // This will create mappers AFTER connection is established
-    let conn_config = config_manager.config();
-    let conn_tx = tx.clone();
-    thread::spawn(move || -> Result<(), anyhow::Error> {
-        info!("Establishing scrcpy connection...");
+async fn scrcpy_connection(
+    config: Arc<SAideConfig>,
+    serial: String,
+    capture_orientation: Option<u32>,
+) -> Result<ScrcpyConnection, anyhow::Error> {
+    let server_path = &config.general.scrcpy_server;
 
-        // Get device serial
-        let serial = AdbShell::get_device_id()?;
-        debug!("Connecting to device: {}", serial);
+    // Create server params from config
+    let mut params = ServerParams::for_device(&serial)?;
 
-        // Check if we should lock orientation for NVDEC
-        // TODO: User can override this in config later
-        let capture_orientation_locked = ServerParams::should_lock_orientation_for_nvdec();
+    // Apply config settings
+    let bit_rate = {
+        let rate_str = &config.scrcpy.video.bit_rate;
+        let multiplier = if rate_str.ends_with('M') || rate_str.ends_with('m') {
+            1_000_000
+        } else if rate_str.ends_with('K') || rate_str.ends_with('k') {
+            1_000
+        } else {
+            1
+        };
+        let num_str = rate_str.trim_end_matches(|c: char| !c.is_ascii_digit());
+        num_str.parse::<u32>().unwrap_or(8) * multiplier
+    };
 
-        // Establish ScrcpyConnection (blocking)
-        let runtime = tokio::runtime::Runtime::new()?;
-        let mut connection = runtime.block_on(async {
-            let server_path = &conn_config.general.scrcpy_server;
+    params.video = true;
+    params.video_codec = config.scrcpy.video.codec.clone();
+    params.video_bit_rate = bit_rate;
+    params.max_size = config.scrcpy.video.max_size as u16;
+    params.max_fps = config.scrcpy.video.max_fps as u16;
+    params.audio = config.scrcpy.audio.enabled;
+    params.audio_codec = config.scrcpy.audio.codec.clone();
+    params.audio_source = config.scrcpy.audio.source.clone();
+    params.control = true;
+    params.send_device_meta = true;
+    params.send_codec_meta = true;
+    params.send_frame_meta = true;
 
-            // Create server params from config
-            let mut params = ServerParams::for_device(&serial)?;
+    // Apply screen control options
+    params.stay_awake = config.scrcpy.options.stay_awake;
+    params.screen_off_timeout = if config.scrcpy.options.turn_screen_off {
+        Some(-1) // Turn off immediately
+    } else {
+        None
+    };
 
-            // Apply config settings
-            let bit_rate = {
-                let rate_str = &conn_config.scrcpy.video.bit_rate;
-                let multiplier = if rate_str.ends_with('M') || rate_str.ends_with('m') {
-                    1_000_000
-                } else if rate_str.ends_with('K') || rate_str.ends_with('k') {
-                    1_000
-                } else {
-                    1
-                };
-                let num_str = rate_str.trim_end_matches(|c: char| !c.is_ascii_digit());
-                num_str.parse::<u32>().unwrap_or(8) * multiplier
-            };
+    // 🔒 NVDEC Optimization: Lock capture orientation to prevent resolution changes
+    // Benefits:
+    // - Avoid decoder rebuild overhead (~200ms + black screen)
+    // - No need for prepend-sps-pps-to-idr-frames=1 (compatibility)
+    // - More stable, works on all devices
+    if let Some(capture_orientation) = capture_orientation {
+        // Lock to current device orientation (absolute)
+        // @0 = lock to 0° (portrait), follows device's natural orientation
+        params.capture_orientation = Some(format!("@{}", capture_orientation));
+        info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
+    }
 
-            params.video = true;
-            params.video_codec = conn_config.scrcpy.video.codec.clone();
-            params.video_bit_rate = bit_rate;
-            params.max_size = conn_config.scrcpy.video.max_size as u16;
-            params.max_fps = conn_config.scrcpy.video.max_fps as u16;
-            params.audio = conn_config.scrcpy.audio.enabled;
-            params.audio_codec = conn_config.scrcpy.audio.codec.clone();
-            params.audio_source = conn_config.scrcpy.audio.source.clone();
-            params.control = true;
-            params.send_device_meta = true;
-            params.send_codec_meta = true;
-            params.send_frame_meta = true;
-
-            // Apply screen control options
-            params.stay_awake = conn_config.scrcpy.options.stay_awake;
-            params.screen_off_timeout = if conn_config.scrcpy.options.turn_screen_off {
-                Some(-1) // Turn off immediately
-            } else {
-                None
-            };
-
-            // 🔒 NVDEC Optimization: Lock capture orientation to prevent resolution changes
-            // Benefits:
-            // - Avoid decoder rebuild overhead (~200ms + black screen)
-            // - No need for prepend-sps-pps-to-idr-frames=1 (compatibility)
-            // - More stable, works on all devices
-            if capture_orientation_locked {
-                // Lock to current device orientation (absolute)
-                // @0 = lock to 0° (portrait), follows device's natural orientation
-                params.capture_orientation = Some("@0".to_string());
-                info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
-            }
-
-            ScrcpyConnection::connect(&serial, server_path, params)
-                .await
-                .map_err(|e| {
-                    error!("Failed to establish scrcpy connection: {}", e);
-                    e
-                })
-        })?;
-
-        info!("ScrcpyConnection established successfully");
-
-        // Extract streams (but keep connection alive)
-        let video_stream = connection
-            .video_stream
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("Video stream not available"))?;
-        let audio_stream = connection.audio_stream.take();
-        let control_stream = connection
-            .control_stream
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("Control stream not available"))?;
-        let video_resolution = connection
-            .video_resolution
-            .ok_or_else(|| anyhow::anyhow!("Video resolution not available"))?;
-        let device_name = connection.device_name.clone();
-        let audio_disabled_reason = connection.audio_disabled_reason.clone();
-
-        // Create ControlSender with cloned stream
-        // We need to clone the TcpStream to keep both in ControlSender and return original
-        let control_stream_clone = control_stream
-            .try_clone()
-            .context("Failed to clone control stream")?;
-
-        let control_sender = ControlSender::new(
-            control_stream_clone,
-            video_resolution.0 as u16,
-            video_resolution.1 as u16,
-        );
-
-        info!(
-            "ControlSender created with resolution {}x{}, capture_orientation_locked={}",
-            video_resolution.0, video_resolution.1, capture_orientation_locked
-        );
-
-        // Put the original control_stream back into connection to keep it alive
-        connection.control_stream = Some(control_stream);
-
-        // Send connection ready event (with connection to keep alive)
-        conn_tx.send(InitEvent::ConnectionReady {
-            connection,
-            control_sender: control_sender.clone(),
-            video_stream,
-            audio_stream,
-            video_resolution,
-            device_name,
-            audio_disabled_reason,
-            capture_orientation_locked,
-        })?;
-
-        // Now create keyboard mapper (if enabled)
-        if conn_config.general.keyboard_enabled {
-            let keyboard_mapper = KeyboardMapper::new(
-                conn_config.mappings.clone(),
-                control_sender.clone(),
-                capture_orientation_locked.then_some(0),
-            )?;
-            debug!("Keyboard mapper initialized with ControlSender");
-            conn_tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
-        }
-
-        // Create mouse mapper (if enabled)
-        if conn_config.general.mouse_enabled {
-            let mouse_mapper = MouseMapper::new(control_sender.clone())?;
-            debug!("Mouse mapper initialized with ControlSender");
-            conn_tx.send(InitEvent::MouseMapper(mouse_mapper))?;
-        }
-
-        Ok(())
-    });
+    ScrcpyConnection::connect(&serial, server_path, params)
+        .await
+        .map_err(|e| {
+            error!("Failed to establish scrcpy connection: {}", e);
+            e
+        })
 }
