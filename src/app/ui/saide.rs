@@ -38,7 +38,7 @@ use {
         time::{Duration, Instant},
     },
     tokio_util::sync::CancellationToken,
-    tracing::{debug, error, info, trace},
+    tracing::{debug, error, info, trace, warn},
 };
 
 const BG_COLOR: Color32 = Color32::from_rgb(32, 32, 32);
@@ -118,6 +118,9 @@ pub struct SAideApp {
     /// Android device input method state
     device_ime_state: bool,
 
+    /// Device offline state (confirmed by ADB monitor)
+    device_offline: bool,
+
     /// Mapping configuration window
     mapping_config_window: MappingConfigWindow,
 
@@ -191,6 +194,7 @@ impl SAideApp {
             keyboard_custom_mapping_enabled,
 
             device_ime_state: false,
+            device_offline: false,
 
             mapping_config_window: MappingConfigWindow::new(),
 
@@ -381,6 +385,12 @@ impl SAideApp {
                             debug!("Device IME state changed: {}", im_state);
                             self.device_ime_state = im_state;
                         }
+                    }
+                    DeviceMonitorEvent::DeviceOffline => {
+                        warn!("Device went offline - USB/ADB connection lost");
+                        // Device monitor confirmed device is offline
+                        // This helps distinguish USB disconnect from normal exit
+                        self.device_offline = true;
                     }
                 }
             }

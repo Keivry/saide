@@ -40,6 +40,8 @@ pub enum DeviceMonitorEvent {
     Rotated(u32),
     /// Device input method (IME) state changed, true = shown, false = hidden
     ImStateChanged(bool),
+    /// Device went offline (USB disconnected or connection lost)
+    DeviceOffline,
 }
 
 // Capacity for initialization result channel
@@ -267,6 +269,13 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
                             "Device disconnected (adb failed {} times): {}",
                             consecutive_errors, e
                         );
+
+                        // Check ADB state before exiting
+                        if let Ok(state) = AdbShell::get_device_state() && state != "device" {
+                            info!("ADB state: {} - sending DeviceOffline event", state);
+                            let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
+                        }
+
                         break; // Exit monitoring thread
                     }
                     error!(

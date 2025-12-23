@@ -4,7 +4,7 @@
 //! screen size, orientation, input method state, and device ID using adb commands.
 
 use {
-    anyhow::{Context, Result, anyhow},
+    crate::error::{Result, SaideError},
     std::{
         process::{Command, Stdio},
         sync::mpsc,
@@ -24,7 +24,7 @@ impl AdbShell {
         let output = Command::new("adb")
             .args(["shell", "wm size"])
             .output()
-            .context("Failed to execute adb shell wm size command")?;
+            .map_err(|e| SaideError::Adb(format!("Failed to execute adb shell wm size: {}", e)))?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
         debug!("wm size output: {}", output_str.trim());
@@ -34,14 +34,17 @@ impl AdbShell {
             .lines()
             .find(|line| line.contains("Physical size:"))
         else {
-            return Err(anyhow!(
+            return Err(SaideError::Adb(format!(
                 "Failed to find 'Physical size:' in output: {}",
                 output_str.trim()
-            ));
+            )));
         };
 
         let Some(size_part) = line.split(':').nth(1) else {
-            return Err(anyhow!("Failed to parse size from line: {}", line));
+            return Err(SaideError::Adb(format!(
+                "Failed to parse size from line: {}",
+                line
+            )));
         };
 
         let size_str = size_part.trim();
@@ -49,11 +52,11 @@ impl AdbShell {
         let width = parts
             .next()
             .and_then(|w| w.trim().parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse width from: {}", size_str))?;
+            .ok_or_else(|| SaideError::Adb(format!("Failed to parse width from: {}", size_str)))?;
         let height = parts
             .next()
             .and_then(|h| h.trim().parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse height from: {}", size_str))?;
+            .ok_or_else(|| SaideError::Adb(format!("Failed to parse height from: {}", size_str)))?;
 
         Ok((width, height))
     }
@@ -65,7 +68,7 @@ impl AdbShell {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .context("Failed to spawn adb command")?;
+            .map_err(|e| SaideError::Adb(format!("Failed to spawn adb command: {}", e)))?;
 
         // Wait with 3 second timeout
         let (tx, rx) = mpsc::channel();
@@ -75,12 +78,21 @@ impl AdbShell {
 
         let output = match rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(output)) => output,
-            Ok(Err(e)) => anyhow::bail!("adb command failed: {}", e),
-            Err(_) => anyhow::bail!("adb command timed out after 3 seconds"),
+            Ok(Err(e)) => {
+                return Err(SaideError::Adb(format!("adb command failed: {}", e)));
+            }
+            Err(_) => {
+                return Err(SaideError::Adb(
+                    "adb command timed out after 3 seconds".to_string(),
+                ));
+            }
         };
 
         if !output.status.success() {
-            anyhow::bail!("adb command failed with status: {}", output.status);
+            return Err(SaideError::Adb(format!(
+                "adb command failed with status: {}",
+                output.status
+            )));
         }
 
         let output_str = String::from_utf8_lossy(&output.stdout);
@@ -96,14 +108,17 @@ impl AdbShell {
             .lines()
             .find(|line| line.contains("mCurrentRotation"))
         else {
-            return Err(anyhow!(
+            return Err(SaideError::Adb(format!(
                 "Failed to find 'mCurrentRotation' in output: {}",
                 output_str.trim()
-            ));
+            )));
         };
 
         let Some(rotation_part) = line.split('=').nth(1) else {
-            return Err(anyhow!("Failed to parse rotation from line: {}", line));
+            return Err(SaideError::Adb(format!(
+                "Failed to parse rotation from line: {}",
+                line
+            )));
         };
 
         let rotation_str = rotation_part.trim();
@@ -113,7 +128,12 @@ impl AdbShell {
             "ROTATION_90" => 1,
             "ROTATION_180" => 2,
             "ROTATION_270" => 3,
-            other => return Err(anyhow!("Unknown rotation value: {}", other)),
+            other => {
+                return Err(SaideError::Adb(format!(
+                    "Unknown rotation value: {}",
+                    other
+                )));
+            }
         })
     }
 
@@ -127,7 +147,7 @@ impl AdbShell {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .context("Failed to spawn adb command")?;
+            .map_err(|e| SaideError::Adb(format!("Failed to spawn adb command: {}", e)))?;
 
         // Wait with 3 second timeout
         let (tx, rx) = mpsc::channel();
@@ -137,8 +157,14 @@ impl AdbShell {
 
         let output = match rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(output)) => output,
-            Ok(Err(e)) => anyhow::bail!("adb command failed: {}", e),
-            Err(_) => anyhow::bail!("adb command timed out after 3 seconds"),
+            Ok(Err(e)) => {
+                return Err(SaideError::Adb(format!("adb command failed: {}", e)));
+            }
+            Err(_) => {
+                return Err(SaideError::Adb(
+                    "adb command timed out after 3 seconds".to_string(),
+                ));
+            }
         };
 
         Ok(output.status.success())
@@ -149,10 +175,21 @@ impl AdbShell {
         let output = Command::new("adb")
             .args(["get-serialno"])
             .output()
-            .context("Failed to execute adb get-serialno command")?;
+            .map_err(|e| SaideError::Adb(format!("Failed to execute adb get-serialno: {}", e)))?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
         let device_id = output_str.trim().to_string();
         Ok(device_id)
+    }
+
+    /// Get ADB device state (device/offline/unauthorized/no device)
+    pub fn get_device_state() -> Result<String> {
+        let output = Command::new("adb")
+            .args(["get-state"])
+            .output()
+            .map_err(|e| SaideError::Adb(format!("Failed to execute adb get-state: {}", e)))?;
+
+        let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(state)
     }
 }
