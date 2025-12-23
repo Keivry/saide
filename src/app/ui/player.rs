@@ -16,20 +16,19 @@ use {
             extract_resolution_from_stream,
             new_nv12_render_callback,
         },
+        error::{Result, SaideError},
         scrcpy::protocol::video::VideoPacket,
         sync::AVSync,
     },
-    anyhow::Result,
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     std::{
-        io::{self, Read},
+        io::Read,
         net::TcpStream,
         sync::{Arc, Mutex},
         thread,
         time::{Duration, Instant},
     },
-    thiserror::Error,
     tokio_util::sync::CancellationToken,
     tracing::{debug, error, info, trace, warn},
 };
@@ -74,36 +73,15 @@ pub enum PlayerEvent {
         width: u32,
         height: u32,
     },
-    Failed(String),
+    Failed(SaideError),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlayerState {
     Idle,
     Connecting,
     Streaming,
     Failed(String),
-}
-
-#[derive(Error, Debug)]
-enum StreamWorkerError {
-    #[error("Stream cancelled")]
-    Cancelled,
-    #[error("Stream read timeout")]
-    Timeout,
-    #[error("Stream connection closed: {0}")]
-    ConnectionClosed(String),
-    #[error("Stream decode error: {0}")]
-    DecodeError(String),
-
-    #[error("IO error: {0}")]
-    Io(#[from] io::Error),
-
-    #[error("Other error: {0}")]
-    Other(#[from] anyhow::Error),
-
-    #[error("Send error: {0}")]
-    SendError(#[from] crossbeam_channel::SendError<PlayerEvent>),
 }
 
 /// Stream Player
@@ -201,10 +179,10 @@ impl StreamPlayer {
         let event_tx = self.event_tx.clone();
 
         let cancel_token = self.cancel_token.clone();
-        self.stream_thread = Some(thread::spawn(move || -> Result<(), StreamWorkerError> {
+        self.stream_thread = Some(thread::spawn(move || {
             if cancel_token.is_cancelled() {
                 debug!("Stream worker exiting due to cancellation");
-                return Err(StreamWorkerError::Cancelled);
+                return;
             }
 
             if let Err(e) = stream_worker(
@@ -214,8 +192,10 @@ impl StreamPlayer {
                 event_tx.clone(),
                 cancel_token,
             ) {
-                error!("Stream worker error: {}", e);
-                let _ = event_tx.send(PlayerEvent::Failed(format!("{}", e)));
+                if e.should_log() {
+                    error!("Stream worker error: {}", e);
+                }
+                let _ = event_tx.send(PlayerEvent::Failed(e));
             }
         }));
     }
@@ -258,8 +238,10 @@ impl StreamPlayer {
                     self.video_height = height;
                 }
                 PlayerEvent::Failed(err) => {
-                    error!("Stream failed: {}", err);
-                    self.state = PlayerState::Failed(err);
+                    if err.should_log() {
+                        error!("Stream failed: {}", err);
+                    }
+                    self.state = PlayerState::Failed(err.to_string());
                 }
             }
         }
@@ -468,7 +450,7 @@ fn stream_worker(
     video_resolution: (u32, u32),
     event_tx: Sender<PlayerEvent>,
     token: CancellationToken,
-) -> Result<(), StreamWorkerError> {
+) -> Result<()> {
     let (width, height) = video_resolution;
     info!("Video resolution: {}x{}", width, height);
 
@@ -518,7 +500,7 @@ fn stream_worker(
                     // Read header with error tolerance
                     let mut header = [0u8; 12];
                     if let Err(e) = audio_stream.read_exact(&mut header) {
-                        let e = e.into();
+                        let e = SaideError::from(e);
 
                         // Check if timeout (audio may have no data)
                         if is_timeout(&e) {
@@ -533,12 +515,17 @@ fn stream_worker(
                         consecutive_read_errors += 1;
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
+                            if is_shutdown(&e) {
+                                return Err(SaideError::ConnectionLost(
+                                    "Audio stream connection closed".to_string(),
+                                ));
+                            }
                             return Err(e);
                         }
 
                         if is_shutdown(&e) {
                             debug!(
-                                "Audio header read error ({}/{}): {} (shutdown)",
+                                "Audio header read error ({}/{}): {} (connection closing)",
                                 consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
                             );
                         } else {
@@ -564,7 +551,7 @@ fn stream_worker(
                     // Read payload with error tolerance
                     let mut payload = vec![0u8; packet_size];
                     if let Err(e) = audio_stream.read_exact(&mut payload) {
-                        let e = e.into();
+                        let e = SaideError::from(e);
 
                         if is_timeout(&e) {
                             trace!("Audio payload timeout - retrying");
@@ -577,12 +564,17 @@ fn stream_worker(
                         consecutive_read_errors += 1;
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
+                            if is_shutdown(&e) {
+                                return Err(SaideError::ConnectionLost(
+                                    "Audio stream connection closed".to_string(),
+                                ));
+                            }
                             return Err(e);
                         }
 
                         if is_shutdown(&e) {
                             debug!(
-                                "Audio payload read error ({}/{}): {} (shutdown)",
+                                "Audio payload read error ({}/{}): {} (connection closing)",
                                 consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
                             );
                         } else {
@@ -651,12 +643,17 @@ fn stream_worker(
                             "Failed to read video packet {} times consecutively",
                             consecutive_read_errors
                         );
+                        if is_shutdown(&e) {
+                            return Err(SaideError::ConnectionLost(
+                                "Video stream connection closed".to_string(),
+                            ));
+                        }
                         return Err(e);
                     }
 
                     if is_shutdown(&e) {
                         debug!(
-                            "Video packet read error ({}/{}): {} - skipping",
+                            "Video packet read error ({}/{}): {} (connection closing)",
                             consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
                         );
                     } else {
@@ -697,6 +694,7 @@ fn stream_worker(
             let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
                 Ok(frame) => frame,
                 Err(e) => {
+                    let e = SaideError::Decode(e.to_string());
                     if is_shutdown(&e) {
                         info!("Video decode error (shutdown): {}", e);
                         return Err(e);
@@ -758,7 +756,7 @@ fn stream_worker(
             }
 
             error!("Connection error: {}", e);
-            let _ = event_tx.send(PlayerEvent::Failed(format!("Connection lost: {}", e)));
+            let _ = event_tx.send(PlayerEvent::Failed(e.clone()));
 
             Err(e)
         }
@@ -766,20 +764,7 @@ fn stream_worker(
 }
 
 /// Check if error is a timeout-related IO error
-fn is_timeout(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<io::Error>()
-        .map(|e| e.kind())
-        .is_some_and(|kind| kind == io::ErrorKind::WouldBlock || kind == io::ErrorKind::TimedOut)
-}
+fn is_timeout(err: &SaideError) -> bool { err.is_timeout() }
 
-/// Check if error is a shutdown-related IO error
-fn is_shutdown(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<io::Error>()
-        .map(|e| e.kind())
-        .is_some_and(|kind| {
-            matches!(
-                kind,
-                io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe
-            )
-        })
-}
+/// Check if error is a shutdown-related IO error (connection lost)
+fn is_shutdown(err: &SaideError) -> bool { err.is_io_shutdown() }

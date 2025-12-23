@@ -270,13 +270,14 @@ impl ScrcpyConnection {
     }
 
     /// Read and parse a video packet
-    pub fn read_video_packet(&mut self) -> Result<super::protocol::video::VideoPacket> {
+    pub fn read_video_packet(&mut self) -> anyhow::Result<super::protocol::video::VideoPacket> {
         use super::protocol::video::VideoPacket;
         VideoPacket::read_from(
             self.video_stream
                 .as_mut()
                 .context("Video stream not available")?,
         )
+        .map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     /// Read and parse an audio packet

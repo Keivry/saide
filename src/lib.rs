@@ -2,6 +2,7 @@ pub mod app;
 pub mod config;
 pub mod controller;
 pub mod decoder;
+pub mod error;
 pub mod scrcpy;
 pub mod sync;
 pub mod sys;
@@ -19,6 +20,7 @@ pub use {
         VideoDecoder,
         new_nv12_render_callback,
     },
+    error::{Result as SaideResult, SaideError},
     scrcpy::{
         connection::ScrcpyConnection,
         protocol::{audio::AudioPacket, control::ControlMessage, video::VideoPacket},

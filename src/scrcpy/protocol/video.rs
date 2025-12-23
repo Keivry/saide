@@ -1,12 +1,13 @@
-/// Scrcpy Video Stream Protocol Implementation
-///
-/// Reference: scrcpy/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
-/// Protocol version: 3.3.3
-use anyhow::{Context, Result};
 use {
     byteorder::{BigEndian, ReadBytesExt},
     std::io::Read,
 };
+
+/// Scrcpy Video Stream Protocol Implementation
+///
+/// Reference: scrcpy/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
+/// Protocol version: 3.3.3
+use crate::error::{Result, SaideError};
 
 /// Packet flags in pts_and_flags field (as per Streamer.java)
 pub const PACKET_FLAG_CONFIG: u64 = 1 << 63; // Configuration packet (SPS/PPS)
@@ -46,16 +47,17 @@ impl VideoPacket {
         // Read 12-byte header
         let pts_and_flags = reader
             .read_u64::<BigEndian>()
-            .context("Failed to read pts_and_flags")?;
+            .map_err(|e| SaideError::Protocol(format!("Failed to read pts_and_flags: {}", e)))?;
         let packet_size = reader
             .read_u32::<BigEndian>()
-            .context("Failed to read packet_size")? as usize;
+            .map_err(|e| SaideError::Protocol(format!("Failed to read packet_size: {}", e)))?
+            as usize;
 
         // Read payload
         let mut data = vec![0u8; packet_size];
         reader
             .read_exact(&mut data)
-            .context("Failed to read packet payload")?;
+            .map_err(|e| SaideError::Protocol(format!("Failed to read packet payload: {}", e)))?;
 
         // Extract flags (as per Streamer.java writeFrameMeta)
         let is_config = (pts_and_flags & PACKET_FLAG_CONFIG) != 0;
