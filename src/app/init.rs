@@ -271,7 +271,9 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
                         );
 
                         // Check ADB state before exiting
-                        if let Ok(state) = AdbShell::get_device_state() && state != "device" {
+                        if let Ok(state) = AdbShell::get_device_state()
+                            && state != "device"
+                        {
                             info!("ADB state: {} - sending DeviceOffline event", state);
                             let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
                         }

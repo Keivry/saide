@@ -355,6 +355,13 @@ impl SAideApp {
         self.mapping_config_window.toggle();
     }
 
+    /// Convert Failed state to ConnectionLost (called when device_offline detected)
+    fn convert_failed_to_connection_lost(&mut self) {
+        // This is the ONLY place that triggers ConnectionLost state
+        // Single source of truth: DeviceMonitor confirming device offline
+        self.player.force_connection_lost();
+    }
+
     // Check if position is within video rectangle
     fn is_in_video_rect(&self, pos: &VisualPos) -> bool {
         let video_rect = self.player.video_rect();
@@ -372,6 +379,8 @@ impl SAideApp {
         }
 
         let mut rotated = false;
+        let mut device_offline_detected = false;
+
         if let Some(rx) = &self.device_monitor_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
@@ -388,12 +397,17 @@ impl SAideApp {
                     }
                     DeviceMonitorEvent::DeviceOffline => {
                         warn!("Device went offline - USB/ADB connection lost");
-                        // Device monitor confirmed device is offline
-                        // This helps distinguish USB disconnect from normal exit
                         self.device_offline = true;
+                        device_offline_detected = true;
                     }
                 }
             }
+        }
+
+        // Handle device offline outside the borrow scope
+        if device_offline_detected && matches!(self.player.state(), PlayerState::Failed(_)) {
+            info!("Converting Failed → ConnectionLost due to device offline");
+            self.convert_failed_to_connection_lost();
         }
 
         // Refresh keyboard profiles if needed

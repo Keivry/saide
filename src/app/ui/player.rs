@@ -384,6 +384,14 @@ impl StreamPlayer {
     /// Get player state
     pub fn state(&self) -> &PlayerState { &self.state }
 
+    /// Force state to ConnectionLost (called by SAideApp when device_offline confirmed)
+    pub fn force_connection_lost(&mut self) {
+        if let PlayerState::Failed(err_msg) = &self.state {
+            info!("Forcing PlayerState::ConnectionLost: {}", err_msg);
+            self.state = PlayerState::ConnectionLost(err_msg.clone());
+        }
+    }
+
     /// Check if player is ready (streaming)
     pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Streaming) }
 
@@ -586,11 +594,7 @@ fn stream_worker(
                         consecutive_read_errors += 1;
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                            if is_shutdown(&e) {
-                                return Err(SaideError::ConnectionLost(
-                                    "Audio stream connection closed".to_string(),
-                                ));
-                            }
+                            // Return error as-is, let DeviceMonitor determine connection state
                             return Err(e);
                         }
 
@@ -635,11 +639,7 @@ fn stream_worker(
                         consecutive_read_errors += 1;
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                            if is_shutdown(&e) {
-                                return Err(SaideError::ConnectionLost(
-                                    "Audio stream connection closed".to_string(),
-                                ));
-                            }
+                            // Return error as-is, let DeviceMonitor determine connection state
                             return Err(e);
                         }
 
@@ -714,14 +714,12 @@ fn stream_worker(
                             "Failed to read video packet {} times consecutively",
                             consecutive_read_errors
                         );
-                        if is_shutdown(&e) {
-                            return Err(SaideError::ConnectionLost(
-                                "Video stream connection closed".to_string(),
-                            ));
-                        }
+                        // Return the error as-is, don't convert to ConnectionLost here
+                        // DeviceMonitor is the authoritative source for connection state
                         return Err(e);
                     }
 
+                    // Log error appropriately
                     if is_shutdown(&e) {
                         debug!(
                             "Video packet read error ({}/{}): {} (connection closing)",

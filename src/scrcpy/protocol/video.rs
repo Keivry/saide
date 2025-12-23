@@ -7,7 +7,7 @@ use {
 ///
 /// Reference: scrcpy/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
 /// Protocol version: 3.3.3
-use crate::error::{Result, SaideError};
+use crate::error::Result;
 
 /// Packet flags in pts_and_flags field (as per Streamer.java)
 pub const PACKET_FLAG_CONFIG: u64 = 1 << 63; // Configuration packet (SPS/PPS)
@@ -45,19 +45,14 @@ impl VideoPacket {
     /// 3. Extract flags and PTS from pts_and_flags
     pub fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
         // Read 12-byte header
-        let pts_and_flags = reader
-            .read_u64::<BigEndian>()
-            .map_err(|e| SaideError::Protocol(format!("Failed to read pts_and_flags: {}", e)))?;
-        let packet_size = reader
-            .read_u32::<BigEndian>()
-            .map_err(|e| SaideError::Protocol(format!("Failed to read packet_size: {}", e)))?
-            as usize;
+        // Note: IO errors are preserved (auto-converted to SaideError::Io)
+        // This allows proper detection of connection loss
+        let pts_and_flags = reader.read_u64::<BigEndian>()?;
+        let packet_size = reader.read_u32::<BigEndian>()? as usize;
 
         // Read payload
         let mut data = vec![0u8; packet_size];
-        reader
-            .read_exact(&mut data)
-            .map_err(|e| SaideError::Protocol(format!("Failed to read packet payload: {}", e)))?;
+        reader.read_exact(&mut data)?;
 
         // Extract flags (as per Streamer.java writeFrameMeta)
         let is_config = (pts_and_flags & PACKET_FLAG_CONFIG) != 0;
