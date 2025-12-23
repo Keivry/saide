@@ -232,14 +232,18 @@ impl SAideApp {
                         video_stream,
                         audio_stream,
                         video_resolution,
+                        device_id,
                         device_name,
                         audio_disabled_reason,
                         capture_orientation: corientation,
                     } => {
                         info!(
-                            "ScrcpyConnection ready: {}x{}, device: {:?}, capture_orientation: {:?}",
-                            video_resolution.0, video_resolution.1, device_name, corientation
+                            "ScrcpyConnection ready: {}x{}, device: {} ({:?}), capture_orientation: {:?}",
+                            video_resolution.0, video_resolution.1, device_id, device_name, corientation
                         );
+
+                        // Store device_id
+                        self.device_id = Some(device_id.clone());
 
                         // Store audio warning if present
                         self.audio_warning = audio_disabled_reason;
@@ -252,7 +256,7 @@ impl SAideApp {
 
                         // Start player with streams
                         self.player
-                            .start(video_stream, audio_stream, video_resolution);
+                            .start(video_stream, audio_stream, video_resolution, device_id);
 
                         // Save capture_orientation for later use (after borrow ends)
                         capture_orientation = corientation;
@@ -265,9 +269,6 @@ impl SAideApp {
                     }
                     InitEvent::DeviceMonitor(_device_monitor_rx) => {
                         self.device_monitor_rx = Some(_device_monitor_rx);
-                    }
-                    InitEvent::DeviceId(device_id) => {
-                        self.device_id = Some(device_id);
                     }
                     InitEvent::Error(e) => {
                         error!("Initialization error: {}", e);

@@ -227,12 +227,8 @@ impl ScrcpyConnection {
     /// Send control message
     pub fn send_control(&mut self, data: &[u8]) -> Result<()> {
         if let Some(ref mut stream) = self.control_stream {
-            stream.write_all(data).map_err(|e| {
-                SAideError::Channel(format!("Failed to write to control stream: {}", e))
-            })?;
-            stream.flush().map_err(|e| {
-                SAideError::Channel(format!("Failed to flush control stream: {}", e))
-            })?;
+            stream.write_all(data)?;
+            stream.flush()?;
             Ok(())
         } else {
             Err(SAideError::Other(
@@ -244,9 +240,7 @@ impl ScrcpyConnection {
     /// Read video packet (blocking)
     pub fn read_video(&mut self, buf: &mut [u8]) -> Result<usize> {
         if let Some(ref mut stream) = self.video_stream {
-            stream.read(buf).map_err(|e| {
-                SAideError::Channel(format!("Failed to read from video stream: {}", e))
-            })
+            Ok(stream.read(buf)?)
         } else {
             Err(SAideError::Other("Video stream not available".to_string()))
         }
@@ -255,9 +249,7 @@ impl ScrcpyConnection {
     /// Read exact number of bytes from video stream (blocking until complete)
     pub fn read_video_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         if let Some(ref mut stream) = self.video_stream {
-            stream.read_exact(buf).map_err(|e| {
-                SAideError::Channel(format!("Failed to read exact from video stream: {}", e))
-            })
+            Ok(stream.read_exact(buf)?)
         } else {
             Err(SAideError::Other("Video stream not available".to_string()))
         }
@@ -286,9 +278,7 @@ impl ScrcpyConnection {
         if let Some(ref mut stream) = self.audio_stream {
             // Read 12-byte header first
             let mut header = [0u8; 12];
-            stream.read_exact(&mut header).map_err(|_| {
-                SAideError::Channel("Failed to read audio packet header".to_string())
-            })?;
+            stream.read_exact(&mut header)?;
 
             // Parse packet size from header
             let packet_size = u32::from_be_bytes([header[8], header[9], header[10], header[11]]);
@@ -297,9 +287,7 @@ impl ScrcpyConnection {
             let total_size = 12 + packet_size as usize;
             let mut data = vec![0u8; total_size];
             data[..12].copy_from_slice(&header);
-            stream.read_exact(&mut data[12..]).map_err(|_| {
-                SAideError::Channel("Failed to read audio packet payload".to_string())
-            })?;
+            stream.read_exact(&mut data[12..])?;
 
             return AudioPacket::from_bytes(&data);
         }

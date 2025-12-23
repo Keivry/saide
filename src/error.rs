@@ -5,21 +5,21 @@
 //! - ConnectionLost: Device disconnected (USB/WiFi)
 //! - Decode: Video/audio decoding errors
 //! - Adb: ADB command failures
-//! - IO: Network/file I/O errors
+//! - Io: Network/file I/O errors (preserves ErrorKind)
 //! - Other: Unexpected errors
 
 use {std::io, thiserror::Error};
 
 /// SAide unified error type
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug)]
 pub enum SAideError {
     /// Normal shutdown via CancellationToken
     #[error("Operation cancelled")]
     Cancelled,
 
     /// Device connection lost (USB/WiFi disconnect)
-    #[error("Connection lost: {0}")]
-    ConnectionLost(String),
+    #[error("Connection lost: {reason} (device: {device})")]
+    ConnectionLost { device: String, reason: String },
 
     /// Video error
     #[error("Video error: {0}")]
@@ -38,12 +38,19 @@ pub enum SAideError {
     Format(String),
 
     /// ADB command execution error
-    #[error("ADB error: {0}")]
-    Adb(String),
+    #[error("ADB command failed: {command} on device {device}: {message}")]
+    Adb {
+        device: String,
+        command: String,
+        message: String,
+    },
 
-    /// Network I/O error
-    #[error("Network I/O error: {0}")]
-    Io(String),
+    /// Network I/O error (preserves original ErrorKind for precise detection)
+    #[error("I/O error: {source}")]
+    Io {
+        #[source]
+        source: io::Error,
+    },
 
     /// Scrcpy protocol error
     #[error("Scrcpy protocol error: {0}")]
@@ -73,7 +80,7 @@ impl SAideError {
     pub fn is_cancelled(&self) -> bool { matches!(self, SAideError::Cancelled) }
 
     /// Check if error is connection lost
-    pub fn is_connection_lost(&self) -> bool { matches!(self, SAideError::ConnectionLost(_)) }
+    pub fn is_connection_lost(&self) -> bool { matches!(self, SAideError::ConnectionLost { .. }) }
 
     /// Check if error should show UI overlay
     pub fn should_show_overlay(&self) -> bool { self.is_connection_lost() }
@@ -81,22 +88,28 @@ impl SAideError {
     /// Check if error should be logged
     pub fn should_log(&self) -> bool { !self.is_cancelled() }
 
-    /// Check if error indicates connection shutdown
+    /// Check if error indicates connection shutdown (using ErrorKind for precision)
     pub fn is_io_shutdown(&self) -> bool {
-        if let SAideError::Io(msg) = self {
-            msg.contains("Connection reset")
-                || msg.contains("Broken pipe")
-                || msg.contains("Connection aborted")
-                || msg.contains("Unexpected end of file")
+        if let SAideError::Io { source } = self {
+            matches!(
+                source.kind(),
+                io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::UnexpectedEof
+            )
         } else {
             false
         }
     }
 
-    /// Check if error is a timeout
+    /// Check if error is a timeout (using ErrorKind)
     pub fn is_timeout(&self) -> bool {
-        if let SAideError::Io(msg) = self {
-            msg.contains("would block") || msg.contains("timed out")
+        if let SAideError::Io { source } = self {
+            matches!(
+                source.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            )
         } else {
             false
         }
@@ -105,7 +118,7 @@ impl SAideError {
 
 // Automatic conversions from common error types
 impl From<io::Error> for SAideError {
-    fn from(err: io::Error) -> Self { SAideError::Io(err.to_string()) }
+    fn from(source: io::Error) -> Self { SAideError::Io { source } }
 }
 
 impl<T> From<crossbeam_channel::SendError<T>> for SAideError {
@@ -130,7 +143,10 @@ mod tests {
 
     #[test]
     fn test_connection_lost_detection() {
-        let err = SAideError::ConnectionLost("USB disconnected".to_string());
+        let err = SAideError::ConnectionLost {
+            device: "emulator-5554".to_string(),
+            reason: "USB disconnected".to_string(),
+        };
         assert!(!err.is_cancelled());
         assert!(err.is_connection_lost());
         assert!(err.should_show_overlay());
@@ -141,6 +157,37 @@ mod tests {
     fn test_io_error_conversion() {
         let io_err = io::Error::new(io::ErrorKind::BrokenPipe, "pipe broken");
         let err = SAideError::from(io_err);
-        assert!(matches!(err, SAideError::Io(_)));
+        assert!(matches!(err, SAideError::Io { .. }));
+        assert!(err.is_io_shutdown());
+    }
+
+    #[test]
+    fn test_io_shutdown_detection() {
+        let errors = vec![
+            io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"),
+            io::Error::new(io::ErrorKind::ConnectionReset, "connection reset"),
+            io::Error::new(io::ErrorKind::ConnectionAborted, "connection aborted"),
+            io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected eof"),
+        ];
+
+        for io_err in errors {
+            let err = SAideError::from(io_err);
+            assert!(
+                err.is_io_shutdown(),
+                "Expected is_io_shutdown() to be true for {:?}",
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn test_timeout_detection() {
+        let timeout_err = io::Error::new(io::ErrorKind::TimedOut, "timed out");
+        let err = SAideError::from(timeout_err);
+        assert!(err.is_timeout());
+
+        let wouldblock_err = io::Error::new(io::ErrorKind::WouldBlock, "would block");
+        let err = SAideError::from(wouldblock_err);
+        assert!(err.is_timeout());
     }
 }

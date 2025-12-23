@@ -170,10 +170,11 @@ impl StreamPlayer {
         video_stream: TcpStream,
         audio_stream: Option<TcpStream>,
         video_resolution: (u32, u32),
+        device_id: String,
     ) {
         info!(
-            "Starting stream with provided connections: {}x{}",
-            video_resolution.0, video_resolution.1
+            "Starting stream with provided connections: {}x{} (device: {})",
+            video_resolution.0, video_resolution.1, device_id
         );
         self.state = PlayerState::Connecting;
 
@@ -190,6 +191,7 @@ impl StreamPlayer {
                 video_stream,
                 audio_stream,
                 video_resolution,
+                device_id,
                 event_tx.clone(),
                 cancel_token,
             ) {
@@ -522,6 +524,7 @@ fn stream_worker(
     mut video_stream: TcpStream,
     audio_stream: Option<TcpStream>,
     video_resolution: (u32, u32),
+    device_id: String,
     event_tx: Sender<PlayerEvent>,
     token: CancellationToken,
 ) -> Result<()> {
@@ -590,9 +593,10 @@ fn stream_worker(
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
                             if is_shutdown(&e) {
-                                return Err(SAideError::ConnectionLost(
-                                    "Audio stream connection closed".to_string(),
-                                ));
+                                return Err(SAideError::ConnectionLost {
+                                    device: device_id.clone(),
+                                    reason: "Audio stream connection closed".to_string(),
+                                });
                             }
                             return Err(e);
                         }
@@ -639,9 +643,10 @@ fn stream_worker(
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
                             if is_shutdown(&e) {
-                                return Err(SAideError::ConnectionLost(
-                                    "Audio stream connection closed".to_string(),
-                                ));
+                                return Err(SAideError::ConnectionLost {
+                                    device: device_id.clone(),
+                                    reason: "Audio payload connection closed".to_string(),
+                                });
                             }
                             return Err(e);
                         }
@@ -718,9 +723,10 @@ fn stream_worker(
                             consecutive_read_errors
                         );
                         if is_shutdown(&e) {
-                            return Err(SAideError::ConnectionLost(
-                                "Video stream connection closed".to_string(),
-                            ));
+                            return Err(SAideError::ConnectionLost {
+                                device: device_id.clone(),
+                                reason: "Video stream connection closed".to_string(),
+                            });
                         }
                         return Err(e);
                     }

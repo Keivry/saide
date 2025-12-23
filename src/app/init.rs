@@ -56,6 +56,7 @@ pub enum InitEvent {
         video_stream: TcpStream,
         audio_stream: Option<TcpStream>,
         video_resolution: (u32, u32),
+        device_id: String,
         device_name: Option<String>,
         audio_disabled_reason: Option<String>,
         capture_orientation: Option<u32>,
@@ -63,7 +64,6 @@ pub enum InitEvent {
     KeyboardMapper(KeyboardMapper),
     MouseMapper(MouseMapper),
     DeviceMonitor(Receiver<DeviceMonitorEvent>),
-    DeviceId(String),
     Error(SAideError),
 }
 
@@ -189,6 +189,7 @@ fn start_scrcpy_connection(
             video_stream,
             audio_stream,
             video_resolution,
+            device_id: serial.clone(),
             device_name,
             audio_disabled_reason,
             capture_orientation,
@@ -224,11 +225,6 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
             info!("Device monitor initialization cancelled");
             return Ok(());
         }
-
-        // Get device ID
-        let device_id = AdbShell::get_device_id()?;
-        debug!("Using device ID: {}", device_id);
-        tx.send(InitEvent::DeviceId(device_id))?;
 
         // Create channel for rotation events
         let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
