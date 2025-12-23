@@ -3,9 +3,10 @@
 mod opus;
 mod player;
 
-use anyhow::Result;
 // Export both for flexibility
 pub use {opus::OpusDecoder, player::AudioPlayer};
+
+use crate::error::Result;
 
 /// Decoded audio frame
 #[derive(Debug, Clone)]

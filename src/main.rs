@@ -1,9 +1,9 @@
 use {
-    anyhow::anyhow,
     eframe::{egui, egui_wgpu},
     saide::{
         app::ui::{SAideApp, Toolbar},
         config::ConfigManager,
+        error::{Result, SAideError},
     },
     tracing::info,
     tracing_subscriber::{EnvFilter, fmt, prelude::*},
@@ -15,7 +15,7 @@ const WGPU_LOG_LEVEL: &str = "error";
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     let config_manager = ConfigManager::new()?;
 
     let config = config_manager.config();
@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
     start_ui(config_manager)
 }
 
-fn start_ui(config_manager: ConfigManager) -> anyhow::Result<()> {
+fn start_ui(config_manager: ConfigManager) -> Result<()> {
     let toolbar_width = Toolbar::width();
 
     let options = eframe::NativeOptions {
@@ -90,5 +90,5 @@ fn start_ui(config_manager: ConfigManager) -> anyhow::Result<()> {
         options,
         Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, config_manager)))),
     )
-    .map_err(|e| anyhow!("eframe error: {}", e))
+    .map_err(|e| SAideError::Ui(e.to_string()))
 }

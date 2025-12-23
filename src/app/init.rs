@@ -9,14 +9,14 @@ use {
     crate::{
         config::SAideConfig,
         controller::{
-            adb::AdbShell,
+            adb::{AdbShell, DeviceState},
             control_sender::ControlSender,
             keyboard::KeyboardMapper,
             mouse::MouseMapper,
         },
+        error::{Result, SAideError},
         scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
-    anyhow::Context,
     crossbeam_channel::{Receiver, Sender, bounded},
     std::{
         net::TcpStream,
@@ -64,7 +64,7 @@ pub enum InitEvent {
     MouseMapper(MouseMapper),
     DeviceMonitor(Receiver<DeviceMonitorEvent>),
     DeviceId(String),
-    Error(anyhow::Error),
+    Error(SAideError),
 }
 
 /// Background initialization function
@@ -106,7 +106,7 @@ fn start_scrcpy_connection(
 ) {
     // ScrcpyConnection initialization (async - moved to separate thread)
     // This will create mappers AFTER connection is established
-    thread::spawn(move || -> Result<(), anyhow::Error> {
+    thread::spawn(move || -> Result<()> {
         info!("Establishing scrcpy connection...");
 
         // Get device serial
@@ -129,11 +129,14 @@ fn start_scrcpy_connection(
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .context("Failed to create Tokio runtime")?;
+            .map_err(|e| {
+                error!("Failed to create Tokio runtime: {}", e);
+                SAideError::Other(format!("Failed to create Tokio runtime: {}", e))
+            })?;
         let mut connection = runtime.block_on(async {
             tokio::select! {
                 _ = token.cancelled() => {
-                    Err(anyhow::anyhow!("Scrcpy connection initialization cancelled"))
+                    Err(SAideError::Cancelled)
                 },
                 conn = scrcpy_connection(config.clone(), serial, capture_orientation) => {
                     conn
@@ -147,15 +150,15 @@ fn start_scrcpy_connection(
         let video_stream = connection
             .video_stream
             .take()
-            .ok_or_else(|| anyhow::anyhow!("Video stream not available"))?;
+            .ok_or_else(|| SAideError::Other("Video stream not available".to_string()))?;
         let audio_stream = connection.audio_stream.take();
         let control_stream = connection
             .control_stream
             .take()
-            .ok_or_else(|| anyhow::anyhow!("Control stream not available"))?;
+            .ok_or_else(|| SAideError::Other("Control stream not available".to_string()))?;
         let video_resolution = connection
             .video_resolution
-            .ok_or_else(|| anyhow::anyhow!("Video resolution not available"))?;
+            .ok_or_else(|| SAideError::Other("Video resolution not available".to_string()))?;
         let device_name = connection.device_name.clone();
         let audio_disabled_reason = connection.audio_disabled_reason.clone();
 
@@ -163,7 +166,7 @@ fn start_scrcpy_connection(
         // We need to clone the TcpStream to keep both in ControlSender and return original
         let control_stream_clone = control_stream
             .try_clone()
-            .context("Failed to clone control stream")?;
+            .map_err(|e| SAideError::Other(format!("Failed to clone control stream: {}", e)))?;
 
         let control_sender = ControlSender::new(
             control_stream_clone,
@@ -197,14 +200,14 @@ fn start_scrcpy_connection(
                 config.mappings.clone(),
                 control_sender.clone(),
                 capture_orientation,
-            )?;
+            );
             debug!("Keyboard mapper initialized with ControlSender");
             tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
         }
 
         // Create mouse mapper (if enabled)
         if config.general.mouse_enabled {
-            let mouse_mapper = MouseMapper::new(control_sender.clone())?;
+            let mouse_mapper = MouseMapper::new(control_sender.clone());
             debug!("Mouse mapper initialized with ControlSender");
             tx.send(InitEvent::MouseMapper(mouse_mapper))?;
         }
@@ -214,7 +217,7 @@ fn start_scrcpy_connection(
 }
 
 fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
-    thread::spawn(move || -> Result<(), anyhow::Error> {
+    thread::spawn(move || -> Result<()> {
         info!("Starting device monitor thread...");
 
         if token.is_cancelled() {
@@ -238,6 +241,21 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
         let mut consecutive_errors = 0;
         loop {
             // Check for cancellation
+            if token.is_cancelled() {
+                info!("Device monitor cancellation requested, stopping...");
+                break;
+            }
+
+            if let Ok(state) = AdbShell::get_device_state()
+                && state != DeviceState::Connected
+            {
+                info!("ADB state: {:?} - sending DeviceOffline event", state);
+                let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
+
+                // Device is offline, exit monitoring
+                break;
+            }
+
             if token.is_cancelled() {
                 info!("Device monitor cancellation requested, stopping...");
                 break;
@@ -269,14 +287,6 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
                             "Device disconnected (adb failed {} times): {}",
                             consecutive_errors, e
                         );
-
-                        // Check ADB state before exiting
-                        if let Ok(state) = AdbShell::get_device_state()
-                            && state != "device"
-                        {
-                            info!("ADB state: {} - sending DeviceOffline event", state);
-                            let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
-                        }
 
                         break; // Exit monitoring thread
                     }
@@ -320,7 +330,7 @@ async fn scrcpy_connection(
     config: Arc<SAideConfig>,
     serial: String,
     capture_orientation: Option<u32>,
-) -> Result<ScrcpyConnection, anyhow::Error> {
+) -> Result<ScrcpyConnection> {
     let server_path = &config.general.scrcpy_server;
 
     // Create server params from config

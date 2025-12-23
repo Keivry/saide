@@ -49,8 +49,6 @@ wgpu = { version = "27", features = ["vulkan"] }
 crossbeam-channel = "0.5"
 
 v4l = "0.14"
-
-anyhow = "1.0"
 toml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 
@@ -108,3 +106,6 @@ codegen-units = 1
 lto = true
 strip = true
 panic = "abort"
+
+[dev-dependencies]
+anyhow = "1.0.100"

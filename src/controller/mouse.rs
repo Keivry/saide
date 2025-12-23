@@ -8,8 +8,8 @@ use {
     crate::{
         config::mapping::{MouseButton, WheelDirection},
         controller::control_sender::ControlSender,
+        error::Result,
     },
-    anyhow::Result,
     parking_lot::Mutex,
     std::time::Instant,
     tracing::{debug, trace},
@@ -54,11 +54,11 @@ pub struct MouseMapper {
 
 impl MouseMapper {
     /// Create a new mouse mapper
-    pub fn new(sender: ControlSender) -> Result<Self> {
-        Ok(Self {
+    pub fn new(sender: ControlSender) -> Self {
+        Self {
             sender,
             left_button_state: Mutex::new(MouseState::Idle),
-        })
+        }
     }
 
     /// Update mouse state - call this every frame

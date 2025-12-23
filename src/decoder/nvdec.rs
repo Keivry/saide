@@ -2,7 +2,7 @@
 
 use {
     super::{DecodedFrame, VideoDecoder},
-    anyhow::{Context as AnyhowContext, Result, bail},
+    crate::error::{Result, SAideError},
     ffmpeg::{
         codec,
         format::Pixel,
@@ -10,7 +10,7 @@ use {
         util::frame::video::Video as VideoFrame,
     },
     ffmpeg_next as ffmpeg,
-    std::ptr,
+    std::{ptr, thread, time::Duration},
     tracing::{debug, info, trace, warn},
 };
 
@@ -37,7 +37,7 @@ pub struct NvdecDecoder {
 impl NvdecDecoder {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         // Initialize FFmpeg
-        ffmpeg::init().context("Failed to initialize FFmpeg")?;
+        ffmpeg::init().map_err(|e| SAideError::Video(format!("Failed to init FFmpeg: {:?}", e)))?;
 
         // Set FFmpeg log level to error only (suppress warnings)
         unsafe {
@@ -56,7 +56,10 @@ impl NvdecDecoder {
                 0,
             );
             if ret < 0 {
-                bail!("Failed to create CUDA device context: {}", ret);
+                return Err(SAideError::Video(format!(
+                    "Failed to create CUDA device context: {}",
+                    ret
+                )));
             }
         }
 
@@ -64,7 +67,7 @@ impl NvdecDecoder {
 
         // Find h264_cuvid decoder
         let codec = ffmpeg::decoder::find_by_name("h264_cuvid")
-            .context("h264_cuvid decoder not found (FFmpeg not compiled with NVDEC support)")?;
+            .ok_or_else(|| SAideError::Video("H.264 CUVID decoder not found".to_string()))?;
 
         info!("Found H.264 CUVID decoder: {}", codec.name());
 
@@ -95,7 +98,7 @@ impl NvdecDecoder {
         let decoder = context
             .decoder()
             .video()
-            .context("Failed to open h264_cuvid decoder")?;
+            .map_err(|e| SAideError::Video(format!("Failed to create NVDEC decoder: {:?}", e)))?;
 
         debug!(
             "NVDEC H.264 decoder initialized (will auto-detect {}x{} from stream)",
@@ -233,10 +236,10 @@ impl VideoDecoder for NvdecDecoder {
 
             // After 3 consecutive empty frames, assume resolution changed
             if self.consecutive_empty_frames >= 3 {
-                bail!(
+                return Err(SAideError::Video(format!(
                     "NVDEC decoder stuck: {} consecutive empty frames (likely resolution change)",
                     self.consecutive_empty_frames
-                );
+                )));
             }
 
             return Ok(None);
@@ -263,7 +266,9 @@ impl VideoDecoder for NvdecDecoder {
 
     fn flush(&mut self) -> Result<Vec<DecodedFrame>> {
         debug!("Flushing decoder");
-        self.decoder.send_eof().context("Failed to send EOF")?;
+        self.decoder.send_eof().map_err(|e| {
+            SAideError::Video(format!("Failed to send EOF to NVDEC decoder: {:?}", e))
+        })?;
         self.receive_frames()
     }
 }
@@ -284,7 +289,7 @@ impl Drop for NvdecDecoder {
             let _ = self.flush();
 
             // 2. Give CUDA time to finish async operations
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(50));
 
             // 3. Release hardware device context
             if !self.hw_device_ctx.is_null() {

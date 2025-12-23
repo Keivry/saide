@@ -2,7 +2,7 @@
 
 use {
     super::{DecodedFrame, VideoDecoder},
-    anyhow::{Context as AnyhowContext, Result, bail},
+    crate::error::{Result, SAideError},
     ffmpeg::{
         codec,
         format::Pixel,
@@ -26,7 +26,7 @@ pub struct H264Decoder {
 impl H264Decoder {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         // Initialize FFmpeg (idempotent)
-        ffmpeg::init().context("Failed to initialize FFmpeg")?;
+        ffmpeg::init().map_err(|e| SAideError::Video(format!("FFmpeg init error: {}", e)))?;
 
         // Set FFmpeg log level to error only (suppress warnings)
         unsafe {
@@ -34,7 +34,8 @@ impl H264Decoder {
         }
 
         // Find H.264 decoder
-        let codec = ffmpeg::decoder::find(codec::Id::H264).context("H.264 decoder not found")?;
+        let codec = ffmpeg::decoder::find(codec::Id::H264)
+            .ok_or_else(|| SAideError::Video("H.264 decoder not found".to_string()))?;
 
         info!("Found H.264 decoder: {}", codec.name());
 
@@ -61,7 +62,7 @@ impl H264Decoder {
         let decoder = context
             .decoder()
             .video()
-            .context("Failed to open H.264 decoder")?;
+            .map_err(|e| SAideError::Video(format!("Failed to create H.264 decoder: {}", e)))?;
 
         debug!("H.264 decoder initialized: {}x{}", width, height);
 
@@ -113,7 +114,7 @@ impl H264Decoder {
                 self.height,
                 Flags::BILINEAR,
             )
-            .context("Failed to create scaler")?;
+            .map_err(|e| SAideError::Video(format!("Failed to create scaler: {}", e)))?;
 
             self.scaler = Some(scaler);
             self.last_decoded_dimensions = Some(current_dimensions);
@@ -131,7 +132,7 @@ impl H264Decoder {
 
         self.decoder
             .send_packet(&packet)
-            .context("Failed to send packet to decoder")?;
+            .map_err(|e| SAideError::Video(format!("Failed to send packet to decoder: {}", e)))?;
 
         Ok(())
     }
@@ -158,9 +159,9 @@ impl H264Decoder {
                     // Convert to RGBA
                     let mut rgb_frame = VideoFrame::empty();
                     if let Some(scaler) = &mut self.scaler {
-                        scaler
-                            .run(&decoded, &mut rgb_frame)
-                            .context("Failed to scale frame")?;
+                        scaler.run(&decoded, &mut rgb_frame).map_err(|e| {
+                            SAideError::Video(format!("Failed to scale frame: {}", e))
+                        })?;
 
                         // Extract frame data
                         let data = rgb_frame.data(0).to_vec();
@@ -184,7 +185,10 @@ impl H264Decoder {
                     break;
                 }
                 Err(e) => {
-                    bail!("Decoder error: {}", e);
+                    return Err(SAideError::Video(format!(
+                        "Failed to receive frame from decoder: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -218,7 +222,7 @@ impl VideoDecoder for H264Decoder {
         // Send EOF
         self.decoder
             .send_eof()
-            .context("Failed to send EOF to decoder")?;
+            .map_err(|e| SAideError::Video(format!("Failed to send EOF to decoder: {}", e)))?;
 
         // Receive all remaining frames
         self.receive_frames()

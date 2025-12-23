@@ -3,8 +3,7 @@
 //! Detects hardware encoders and decoders on Android devices.
 
 use {
-    anyhow::{Context, Result},
-    std::process::Command,
+    crate::{controller::AdbShell, error::Result},
     tracing::info,
 };
 
@@ -49,13 +48,13 @@ pub fn detect_h264_encoder(serial: &str) -> Result<Option<String>> {
 /// Get SoC platform identifier
 fn get_soc_platform(serial: &str) -> Result<String> {
     // Try ro.board.platform first (most accurate)
-    let platform = get_prop(serial, "ro.board.platform")?;
+    let platform = AdbShell::get_prop(serial, "ro.board.platform")?;
     if !platform.is_empty() && platform != "unknown" {
         return Ok(platform);
     }
 
     // Fallback to ro.hardware
-    let hardware = get_prop(serial, "ro.hardware")?;
+    let hardware = AdbShell::get_prop(serial, "ro.hardware")?;
     if !hardware.is_empty() && hardware != "unknown" {
         return Ok(hardware);
     }
@@ -98,24 +97,6 @@ fn match_encoder_for_platform(platform: &str) -> Option<String> {
     }
 
     None
-}
-
-/// Get Android system property
-fn get_prop(serial: &str, prop_name: &str) -> Result<String> {
-    let output = Command::new("adb")
-        .args(["-s", serial, "shell", "getprop", prop_name])
-        .output()
-        .context(format!("Failed to query {}", prop_name))?;
-
-    if !output.status.success() {
-        return Ok("unknown".to_string());
-    }
-
-    let value = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .to_lowercase();
-
-    Ok(value)
 }
 
 /// List all available video encoders (for debugging)

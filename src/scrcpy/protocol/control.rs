@@ -2,10 +2,9 @@
 ///
 /// Reference: scrcpy/app/src/control_msg.c
 /// Protocol version: 3.3.3
-use anyhow::Result;
 use {
     byteorder::{BigEndian, WriteBytesExt},
-    std::io::Write,
+    std::io::{Result, Write},
 };
 
 /// Control message type enumeration

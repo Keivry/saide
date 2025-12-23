@@ -1,7 +1,7 @@
 //! Audio packet parsing for Scrcpy protocol
 
 use {
-    anyhow::{Context, Result},
+    crate::error::{Result, SAideError},
     byteorder::{BigEndian, ReadBytesExt},
     std::io::Cursor,
 };
@@ -33,7 +33,10 @@ impl AudioPacket {
     /// ```
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         if data.len() < 12 {
-            anyhow::bail!("Audio packet too short: {} bytes", data.len());
+            return Err(SAideError::Decode(format!(
+                "Audio packet too short: expected at least 12 bytes, got {}",
+                data.len()
+            )));
         }
 
         let mut cursor = Cursor::new(data);
@@ -41,10 +44,10 @@ impl AudioPacket {
         // Read header (12 bytes)
         let pts_and_flags = cursor
             .read_u64::<BigEndian>()
-            .context("Failed to read pts_and_flags")?;
+            .map_err(|e| SAideError::Decode(format!("Failed to read pts_and_flags: {}", e)))?;
         let packet_size = cursor
             .read_u32::<BigEndian>()
-            .context("Failed to read packet_size")?;
+            .map_err(|e| SAideError::Decode(format!("Failed to read packet_size: {}", e)))?;
 
         // Extract PTS (lower 63 bits)
         let pts = (pts_and_flags & 0x7FFF_FFFF_FFFF_FFFF) as i64;
@@ -55,11 +58,11 @@ impl AudioPacket {
         let expected_total = payload_start + packet_size as usize;
 
         if data.len() != expected_total {
-            anyhow::bail!(
+            return Err(SAideError::Decode(format!(
                 "Audio packet size mismatch: expected {}, got {}",
                 expected_total,
                 data.len()
-            );
+            )));
         }
 
         // Extract payload

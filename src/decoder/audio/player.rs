@@ -2,7 +2,10 @@
 
 use {
     super::DecodedAudio,
-    anyhow::{Context, Result},
+    crate::{
+        constant::{AUDIO_BUFFER_MS, AUDIO_PREBUFFER_MS},
+        error::{Result, SAideError},
+    },
     cpal::{
         Stream,
         StreamConfig,
@@ -19,14 +22,6 @@ use {
     },
     tracing::{debug, info, warn},
 };
-
-/// Audio playback buffer size (milliseconds)
-/// Increased for better network streaming stability
-const BUFFER_MS: usize = 200;
-
-/// Target buffering before starting playback (milliseconds)
-/// Wait for initial buffering to avoid immediate underrun
-const PREBUFFER_MS: usize = 100;
 
 /// Ring buffer for audio samples
 struct RingBuffer {
@@ -132,9 +127,12 @@ impl AudioPlayer {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
-            .context("No output device available")?;
+            .ok_or_else(|| SAideError::Audio("No default audio output device found".to_string()))?;
 
-        info!("Using audio device: {}", device.description()?.name());
+        let description = device.description().map_err(|e| {
+            SAideError::Audio(format!("Failed to get audio device description: {}", e))
+        })?;
+        info!("Using audio device: {}", description.name());
 
         let config = StreamConfig {
             channels,
@@ -145,8 +143,9 @@ impl AudioPlayer {
         debug!("Audio config: {:?}", config);
 
         // Create ring buffer for audio samples
-        let buffer_samples = (sample_rate as usize * BUFFER_MS / 1000) * channels as usize;
-        let prebuffer_samples = (sample_rate as usize * PREBUFFER_MS / 1000) * channels as usize;
+        let buffer_samples = (sample_rate as usize * AUDIO_BUFFER_MS / 1000) * channels as usize;
+        let prebuffer_samples =
+            (sample_rate as usize * AUDIO_PREBUFFER_MS / 1000) * channels as usize;
         let ring_buffer = Arc::new(Mutex::new(RingBuffer::new(buffer_samples)));
 
         let running = Arc::new(AtomicBool::new(true));
@@ -157,27 +156,31 @@ impl AudioPlayer {
         let ring_buffer_clone = ring_buffer.clone();
 
         // Create audio output stream
-        let stream = device.build_output_stream(
-            &config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                audio_callback(
-                    data,
-                    &ring_buffer_clone,
-                    &running_clone,
-                    &started_clone,
-                    prebuffer_samples,
-                );
-            },
-            move |err| {
-                warn!("Audio stream error: {}", err);
-            },
-            None,
-        )?;
+        let stream = device
+            .build_output_stream(
+                &config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    audio_callback(
+                        data,
+                        &ring_buffer_clone,
+                        &running_clone,
+                        &started_clone,
+                        prebuffer_samples,
+                    );
+                },
+                move |err| {
+                    warn!("Audio stream error: {}", err);
+                },
+                None,
+            )
+            .map_err(|e| SAideError::Audio(format!("Failed to create audio stream: {}", e)))?;
 
-        stream.play()?;
+        stream
+            .play()
+            .map_err(|e| SAideError::Audio(format!("Failed to start audio stream: {}", e)))?;
         info!(
             "Audio player started: {}Hz, {} channels, buffer={}ms, prebuffer={}ms",
-            sample_rate, channels, BUFFER_MS, PREBUFFER_MS
+            sample_rate, channels, AUDIO_BUFFER_MS, AUDIO_PREBUFFER_MS
         );
 
         Ok(Self {
@@ -195,19 +198,17 @@ impl AudioPlayer {
     pub fn play(&self, audio: &DecodedAudio) -> Result<()> {
         // Validate sample rate and channels match
         if audio.sample_rate != self.sample_rate {
-            anyhow::bail!(
+            return Err(SAideError::Audio(format!(
                 "Sample rate mismatch: expected {}, got {}",
-                self.sample_rate,
-                audio.sample_rate
-            );
+                self.sample_rate, audio.sample_rate
+            )));
         }
 
         if audio.channels != self.channels {
-            anyhow::bail!(
+            return Err(SAideError::Audio(format!(
                 "Channel count mismatch: expected {}, got {}",
-                self.channels,
-                audio.channels
-            );
+                self.channels, audio.channels
+            )));
         }
 
         // Write samples to ring buffer

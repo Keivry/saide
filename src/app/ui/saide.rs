@@ -28,6 +28,7 @@ use {
             keyboard::KeyboardMapper,
             mouse::{MouseMapper, MouseState},
         },
+        error::Result,
         scrcpy::connection::ScrcpyConnection,
     },
     crossbeam_channel::{Receiver, bounded},
@@ -355,13 +356,6 @@ impl SAideApp {
         self.mapping_config_window.toggle();
     }
 
-    /// Convert Failed state to ConnectionLost (called when device_offline detected)
-    fn convert_failed_to_connection_lost(&mut self) {
-        // This is the ONLY place that triggers ConnectionLost state
-        // Single source of truth: DeviceMonitor confirming device offline
-        self.player.force_connection_lost();
-    }
-
     // Check if position is within video rectangle
     fn is_in_video_rect(&self, pos: &VisualPos) -> bool {
         let video_rect = self.player.video_rect();
@@ -379,7 +373,6 @@ impl SAideApp {
         }
 
         let mut rotated = false;
-        let mut device_offline_detected = false;
 
         if let Some(rx) = &self.device_monitor_rx {
             while let Ok(event) = rx.try_recv() {
@@ -398,16 +391,16 @@ impl SAideApp {
                     DeviceMonitorEvent::DeviceOffline => {
                         warn!("Device went offline - USB/ADB connection lost");
                         self.device_offline = true;
-                        device_offline_detected = true;
                     }
                 }
             }
         }
 
         // Handle device offline outside the borrow scope
-        if device_offline_detected && matches!(self.player.state(), PlayerState::Failed(_)) {
+        if self.device_offline && matches!(self.player.state(), PlayerState::Failed(_)) {
             info!("Converting Failed → ConnectionLost due to device offline");
-            self.convert_failed_to_connection_lost();
+            self.player
+                .set_state(PlayerState::Failed("Device offline".to_string()));
         }
 
         // Refresh keyboard profiles if needed
@@ -590,7 +583,7 @@ impl SAideApp {
         key: &egui::Key,
         pressed: bool,
         modifiers: egui::Modifiers,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool> {
         if !pressed {
             return Ok(false);
         }
@@ -892,22 +885,16 @@ impl SAideApp {
                 }
             };
 
-        match keyboard_mapper.refresh_profiles(device_id, device_orientation) {
-            Ok(_) => {
-                let avail_profile_names = keyboard_mapper.get_avail_profiles();
-                let active_profile_name = keyboard_mapper.get_active_profile_name();
-                debug!(
-                    "Keyboard profiles refreshed: active={:?}, available={:?}",
-                    active_profile_name, avail_profile_names
-                );
+        keyboard_mapper.refresh_profiles(device_id, device_orientation);
 
-                self.indicator.update_active_profile(active_profile_name);
-            }
-            Err(e) => {
-                self.indicator.reset_profiles();
-                debug!("Failed to refresh keyboard profiles: {}", e);
-            }
-        }
+        let avail_profile_names = keyboard_mapper.get_avail_profiles();
+        let active_profile_name = keyboard_mapper.get_active_profile_name();
+        debug!(
+            "Keyboard profiles refreshed: active={:?}, available={:?}",
+            active_profile_name, avail_profile_names
+        );
+
+        self.indicator.update_active_profile(active_profile_name);
     }
 
     fn draw_toolbar(&mut self, ctx: &egui::Context) {

@@ -2,7 +2,7 @@
 
 use {
     super::{AudioDecoder, DecodedAudio},
-    anyhow::{Context, Result},
+    crate::error::{Result, SAideError},
     opus::{Channels, Decoder},
     tracing::{debug, info, trace},
 };
@@ -22,17 +22,23 @@ impl OpusDecoder {
     /// * `channels` - Number of channels (1=mono, 2=stereo)
     pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
         if sample_rate != 48000 {
-            anyhow::bail!("Opus only supports 48000 Hz sample rate");
+            return Err(SAideError::Format(
+                "Opus only supports 48000 Hz sample rate".to_string(),
+            ));
         }
 
         let opus_channels = match channels {
             1 => Channels::Mono,
             2 => Channels::Stereo,
-            _ => anyhow::bail!("Opus only supports 1 or 2 channels"),
+            _ => {
+                return Err(SAideError::Format(
+                    "Opus only supports mono or stereo channels".to_string(),
+                ));
+            }
         };
 
-        let decoder =
-            Decoder::new(sample_rate, opus_channels).context("Failed to create Opus decoder")?;
+        let decoder = Decoder::new(sample_rate, opus_channels)
+            .map_err(|e| SAideError::Audio(format!("Failed to create Opus decoder: {:?}", e)))?;
 
         info!(
             "Initialized native Opus decoder: {}Hz, {} channels",

@@ -10,9 +10,9 @@
 
 use {std::io, thiserror::Error};
 
-/// Saide unified error type
+/// SAide unified error type
 #[derive(Error, Debug, Clone)]
-pub enum SaideError {
+pub enum SAideError {
     /// Normal shutdown via CancellationToken
     #[error("Operation cancelled")]
     Cancelled,
@@ -21,9 +21,21 @@ pub enum SaideError {
     #[error("Connection lost: {0}")]
     ConnectionLost(String),
 
+    /// Video error
+    #[error("Video error: {0}")]
+    Video(String),
+
+    /// Audio error
+    #[error("Audio error: {0}")]
+    Audio(String),
+
     /// Video/audio decoding error
     #[error("Decode error: {0}")]
     Decode(String),
+
+    /// A/V Format error
+    #[error("Format error: {0}")]
+    Format(String),
 
     /// ADB command execution error
     #[error("ADB error: {0}")]
@@ -45,19 +57,23 @@ pub enum SaideError {
     #[error("Channel error: {0}")]
     Channel(String),
 
+    /// Ui error
+    #[error("UI error: {0}")]
+    Ui(String),
+
     /// Other unexpected errors
     #[error("Unexpected error: {0}")]
     Other(String),
 }
 
-pub type Result<T> = std::result::Result<T, SaideError>;
+pub type Result<T> = std::result::Result<T, SAideError>;
 
-impl SaideError {
+impl SAideError {
     /// Check if error is a normal shutdown
-    pub fn is_cancelled(&self) -> bool { matches!(self, SaideError::Cancelled) }
+    pub fn is_cancelled(&self) -> bool { matches!(self, SAideError::Cancelled) }
 
     /// Check if error is connection lost
-    pub fn is_connection_lost(&self) -> bool { matches!(self, SaideError::ConnectionLost(_)) }
+    pub fn is_connection_lost(&self) -> bool { matches!(self, SAideError::ConnectionLost(_)) }
 
     /// Check if error should show UI overlay
     pub fn should_show_overlay(&self) -> bool { self.is_connection_lost() }
@@ -67,7 +83,7 @@ impl SaideError {
 
     /// Check if error indicates connection shutdown
     pub fn is_io_shutdown(&self) -> bool {
-        if let SaideError::Io(msg) = self {
+        if let SAideError::Io(msg) = self {
             msg.contains("Connection reset")
                 || msg.contains("Broken pipe")
                 || msg.contains("Connection aborted")
@@ -79,7 +95,7 @@ impl SaideError {
 
     /// Check if error is a timeout
     pub fn is_timeout(&self) -> bool {
-        if let SaideError::Io(msg) = self {
+        if let SAideError::Io(msg) = self {
             msg.contains("would block") || msg.contains("timed out")
         } else {
             false
@@ -88,20 +104,16 @@ impl SaideError {
 }
 
 // Automatic conversions from common error types
-impl From<io::Error> for SaideError {
-    fn from(err: io::Error) -> Self { SaideError::Io(err.to_string()) }
+impl From<io::Error> for SAideError {
+    fn from(err: io::Error) -> Self { SAideError::Io(err.to_string()) }
 }
 
-impl From<anyhow::Error> for SaideError {
-    fn from(err: anyhow::Error) -> Self { SaideError::Other(err.to_string()) }
+impl<T> From<crossbeam_channel::SendError<T>> for SAideError {
+    fn from(err: crossbeam_channel::SendError<T>) -> Self { SAideError::Channel(err.to_string()) }
 }
 
-impl<T> From<crossbeam_channel::SendError<T>> for SaideError {
-    fn from(err: crossbeam_channel::SendError<T>) -> Self { SaideError::Channel(err.to_string()) }
-}
-
-impl From<crossbeam_channel::RecvError> for SaideError {
-    fn from(err: crossbeam_channel::RecvError) -> Self { SaideError::Channel(err.to_string()) }
+impl From<crossbeam_channel::RecvError> for SAideError {
+    fn from(err: crossbeam_channel::RecvError) -> Self { SAideError::Channel(err.to_string()) }
 }
 
 #[cfg(test)]
@@ -110,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_cancelled_detection() {
-        let err = SaideError::Cancelled;
+        let err = SAideError::Cancelled;
         assert!(err.is_cancelled());
         assert!(!err.is_connection_lost());
         assert!(!err.should_log());
@@ -118,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_connection_lost_detection() {
-        let err = SaideError::ConnectionLost("USB disconnected".to_string());
+        let err = SAideError::ConnectionLost("USB disconnected".to_string());
         assert!(!err.is_cancelled());
         assert!(err.is_connection_lost());
         assert!(err.should_show_overlay());
@@ -128,7 +140,7 @@ mod tests {
     #[test]
     fn test_io_error_conversion() {
         let io_err = io::Error::new(io::ErrorKind::BrokenPipe, "pipe broken");
-        let err = SaideError::from(io_err);
-        assert!(matches!(err, SaideError::Io(_)));
+        let err = SAideError::from(io_err);
+        assert!(matches!(err, SAideError::Io(_)));
     }
 }

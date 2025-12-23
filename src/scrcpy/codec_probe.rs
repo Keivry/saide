@@ -4,10 +4,14 @@
 
 use {
     super::server::ServerParams,
-    crate::{GpuType, detect_gpu},
-    anyhow::{Context, Result},
+    crate::{
+        GpuType,
+        controller::AdbShell,
+        detect_gpu,
+        error::{Result, SAideError},
+    },
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, fs, path::PathBuf, process::Command},
+    std::{collections::HashMap, fs, path::PathBuf},
     tracing::{debug, info},
 };
 
@@ -66,9 +70,9 @@ pub struct DeviceProfile {
 impl DeviceProfile {
     /// Create profile from device info
     pub fn new(serial: &str) -> Result<Self> {
-        let model = get_prop(serial, "ro.product.model")?;
-        let platform = get_platform(serial)?;
-        let android_version = get_android_version(serial)?;
+        let model = AdbShell::get_prop(serial, "ro.product.model")?;
+        let platform = AdbShell::get_platform(serial)?;
+        let android_version = AdbShell::get_android_version(serial)?;
 
         Ok(Self {
             serial: serial.to_string(),
@@ -126,19 +130,24 @@ impl ProfileDatabase {
             return Ok(Self::default());
         }
 
-        let content = fs::read_to_string(&path).context("Failed to read profile database")?;
-        serde_json::from_str(&content).context("Failed to parse profile database")
+        let content = fs::read_to_string(&path)
+            .map_err(|e| SAideError::Io(format!("Failed to read profile database: {}", e)))?;
+        serde_json::from_str(&content)
+            .map_err(|e| SAideError::Io(format!("Failed to parse profile database: {}", e)))
     }
 
     /// Save to config file
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).context("Failed to create config directory")?;
+            fs::create_dir_all(parent)
+                .map_err(|e| SAideError::Io(format!("Failed to create config directory: {}", e)))?;
         }
 
-        let content = serde_json::to_string_pretty(&self)?;
-        fs::write(&path, content).context("Failed to write profile database")?;
+        let content = serde_json::to_string_pretty(&self)
+            .map_err(|e| SAideError::Io(format!("Failed to serialize profile database: {}", e)))?;
+        fs::write(&path, content)
+            .map_err(|e| SAideError::Io(format!("Failed to write profile database: {}", e)))?;
 
         info!("Saved device profiles to {:?}", path);
         Ok(())
@@ -146,7 +155,12 @@ impl ProfileDatabase {
 
     /// Get config file path
     fn config_path() -> Result<PathBuf> {
-        let home = std::env::var("HOME").context("HOME not set")?;
+        let home = std::env::var("HOME").map_err(|e| {
+            SAideError::Io(format!(
+                "Failed to get HOME directory for profile database: {}",
+                e
+            ))
+        })?;
         Ok(PathBuf::from(home)
             .join(".config")
             .join("saide")
@@ -345,35 +359,6 @@ fn test_codec_options(
     });
 
     Ok(result)
-}
-
-/// Get device platform
-fn get_platform(serial: &str) -> Result<String> {
-    let platform = get_prop(serial, "ro.board.platform")?;
-    if !platform.is_empty() && platform != "unknown" {
-        return Ok(platform);
-    }
-
-    get_prop(serial, "ro.hardware")
-}
-
-/// Get Android version (SDK int)
-fn get_android_version(serial: &str) -> Result<u32> {
-    let version_str = get_prop(serial, "ro.build.version.sdk")?;
-    version_str
-        .trim()
-        .parse()
-        .context("Failed to parse Android version")
-}
-
-/// Get Android system property
-fn get_prop(serial: &str, prop_name: &str) -> Result<String> {
-    let output = Command::new("adb")
-        .args(["-s", serial, "shell", "getprop", prop_name])
-        .output()
-        .context(format!("Failed to query {}", prop_name))?;
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[cfg(test)]

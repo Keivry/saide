@@ -5,14 +5,16 @@
 
 use {
     super::codec_probe::ProfileDatabase,
-    crate::{GpuType, detect_gpu},
-    anyhow::{Context, Result},
-    std::process::{Child, Command, Stdio},
+    crate::{
+        GpuType,
+        constant::{SCRCPY_SERVER_CLASS_NAME, SCRCPY_SERVER_PATH, SCRCPY_SERVER_VERSION},
+        controller::AdbShell,
+        detect_gpu,
+        error::{Result, SAideError},
+    },
+    std::process::Child,
     tracing::{debug, info},
 };
-
-/// Server JAR file path on device
-const DEVICE_SERVER_PATH: &str = "/data/local/tmp/scrcpy-server.jar";
 
 /// Device name field length (as per DesktopConnection.java)
 ///
@@ -179,48 +181,41 @@ impl ServerParams {
     }
 }
 
-/// Get Android API level
-pub fn get_android_version(serial: &str) -> Result<u32> {
-    let output = Command::new("adb")
-        .args(["-s", serial, "shell", "getprop", "ro.build.version.sdk"])
-        .output()
-        .context("Failed to query Android version")?;
-
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .context("Failed to parse Android version")
-}
-
 /// Push server JAR to device
 pub fn push_server(serial: &str, server_jar_path: &str) -> Result<()> {
     debug!("Pushing server to device: {}", serial);
 
-    let status = Command::new("adb")
-        .args(["-s", serial, "push", server_jar_path, DEVICE_SERVER_PATH])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .status()
-        .context("Failed to execute adb push")?;
+    AdbShell::push_file(serial, server_jar_path, SCRCPY_SERVER_PATH)?;
 
-    if !status.success() {
-        anyhow::bail!("Failed to push server to device");
-    }
-
-    info!("Server pushed to {}", DEVICE_SERVER_PATH);
+    info!("Server pushed to {}", SCRCPY_SERVER_PATH);
     Ok(())
+}
+
+/// Start scrcpy server process
+///
+/// Returns the spawned process handle
+pub fn start_server(serial: &str, params: &ServerParams) -> Result<Child> {
+    let args = build_server_args(params);
+
+    info!("Starting server with scid={:08x}", params.scid);
+    info!("Server command: adb -s {} {}", serial, args.join(" "));
+
+    let child = AdbShell::execute_jar(
+        serial,
+        SCRCPY_SERVER_PATH,
+        "/",
+        SCRCPY_SERVER_CLASS_NAME,
+        SCRCPY_SERVER_VERSION,
+        &args,
+    )?;
+
+    info!("Server process started (scid={:08x})", params.scid);
+    Ok(child)
 }
 
 /// Build server command arguments
 fn build_server_args(params: &ServerParams) -> Vec<String> {
-    let mut args = vec![
-        "shell".to_string(),
-        format!("CLASSPATH={}", DEVICE_SERVER_PATH),
-        "app_process".to_string(),
-        "/".to_string(),
-        "com.genymobile.scrcpy.Server".to_string(),
-        "3.3.3".to_string(), // Version
-    ];
+    let mut args = Vec::new();
 
     // Required parameters
     args.push(format!("scid={:08x}", params.scid));
@@ -314,27 +309,6 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
     args
 }
 
-/// Start scrcpy server process
-///
-/// Returns the spawned process handle
-pub fn start_server(serial: &str, params: &ServerParams) -> Result<Child> {
-    let args = build_server_args(params);
-
-    info!("Starting server with scid={:08x}", params.scid);
-    info!("Server command: adb -s {} {}", serial, args.join(" "));
-
-    let mut cmd = Command::new("adb");
-    cmd.arg("-s").arg(serial);
-    cmd.args(&args);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let child = cmd.spawn().context("Failed to spawn server process")?;
-
-    info!("Server process started (scid={:08x})", params.scid);
-    Ok(child)
-}
-
 /// Get socket name from scid (as per DesktopConnection.java)
 pub fn get_socket_name(scid: u32) -> String { format!("scrcpy_{:08x}", scid) }
 
@@ -346,12 +320,13 @@ pub fn read_device_meta<R: std::io::Read>(stream: &mut R) -> Result<String> {
     let mut buffer = [0u8; 64]; // DEVICE_NAME_FIELD_LENGTH
     stream
         .read_exact(&mut buffer)
-        .context("Failed to read device metadata")?;
+        .map_err(|e| SAideError::Io(format!("Failed to read device metadata: {}", e)))?;
 
     // Find null terminator
     let len = buffer.iter().position(|&b| b == 0).unwrap_or(64);
 
-    String::from_utf8(buffer[..len].to_vec()).context("Invalid UTF-8 in device name")
+    String::from_utf8(buffer[..len].to_vec())
+        .map_err(|_| SAideError::Other("Invalid UTF-8 in device name".to_string()))
 }
 
 #[cfg(test)]

@@ -7,8 +7,8 @@ use {
         app::coords::{MappingCoordSys, ScrcpyCoordSys},
         config::mapping::{MappingAction, Mappings, Modifiers, Profile, ScrcpyAction},
         controller::control_sender::ControlSender,
+        error::Result,
     },
-    anyhow::Result,
     arc_swap::ArcSwap,
     egui::Key,
     parking_lot::RwLock,
@@ -131,15 +131,15 @@ impl KeyboardMapper {
         config: Arc<Mappings>,
         sender: ControlSender,
         capture_orientation: Option<u32>,
-    ) -> Result<Self> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             config,
             sender,
             avail_profiles: RwLock::new(Vec::new()),
             active_profile: ArcSwap::from_pointee(None),
             active_mappings: RwLock::new(HashMap::new()),
             capture_orientation,
-        })
+        }
     }
 
     /// Refresh available profiles based on device ID and rotation
@@ -147,7 +147,7 @@ impl KeyboardMapper {
     /// # Parameters
     /// - `device_id`: current device ID
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
-    pub fn refresh_profiles(&self, device_id: &str, device_rotation: u32) -> Result<()> {
+    pub fn refresh_profiles(&self, device_id: &str, device_rotation: u32) {
         let avail_profiles = self.config.filter_profiles(device_id, device_rotation);
 
         if avail_profiles.is_empty() {
@@ -177,8 +177,6 @@ impl KeyboardMapper {
         }
 
         *self.avail_profiles.write() = avail_profiles;
-
-        Ok(())
     }
 
     /// Handle keyboard event, returns true if handled

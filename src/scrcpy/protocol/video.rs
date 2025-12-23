@@ -1,13 +1,12 @@
-use {
-    byteorder::{BigEndian, ReadBytesExt},
-    std::io::Read,
-};
-
 /// Scrcpy Video Stream Protocol Implementation
 ///
 /// Reference: scrcpy/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
 /// Protocol version: 3.3.3
-use crate::error::Result;
+use {
+    crate::error::Result,
+    byteorder::{BigEndian, ReadBytesExt},
+    std::io::Read,
+};
 
 /// Packet flags in pts_and_flags field (as per Streamer.java)
 pub const PACKET_FLAG_CONFIG: u64 = 1 << 63; // Configuration packet (SPS/PPS)

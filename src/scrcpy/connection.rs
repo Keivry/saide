@@ -4,18 +4,24 @@
 //! Reference: scrcpy/app/src/adb/adb_tunnel.c, scrcpy/app/src/server.c
 
 use {
-    super::server::{ServerParams, get_socket_name, push_server, start_server},
-    anyhow::{Context, Result},
+    super::{
+        protocol::{audio::AudioPacket, video::VideoPacket},
+        server::{ServerParams, get_socket_name, push_server, read_device_meta, start_server},
+    },
+    crate::{
+        constant::{DEFAULT_PORT_RANGE, GRACEFUL_WAIT_MS},
+        controller::AdbShell,
+        error::{Result, SAideError},
+    },
     std::{
         io::{Read, Write},
         net::{TcpListener, TcpStream},
         process::Child,
+        thread,
+        time::{Duration, Instant},
     },
     tracing::{debug, info},
 };
-
-/// Default port range for ADB reverse/forward
-const DEFAULT_PORT_RANGE: (u16, u16) = (27183, 27199);
 
 /// Scrcpy connection with video, audio, and control channels
 pub struct ScrcpyConnection {
@@ -73,8 +79,7 @@ impl ScrcpyConnection {
         let mut audio_disabled_reason = None;
 
         if params.audio {
-            let android_version = super::server::get_android_version(serial)
-                .context("Failed to get Android version")?;
+            let android_version = AdbShell::get_android_version(serial)?;
 
             // Audio capture requires Android 11 (API 30) or higher
             if android_version < 30 {
@@ -92,55 +97,47 @@ impl ScrcpyConnection {
         }
 
         // Step 1: Push server
-        push_server(serial, server_jar_path).context("Failed to push server to device")?;
+        push_server(serial, server_jar_path)?;
 
         // Step 2: Find available local port and start listening FIRST
         // (as per scrcpy: client must listen before server starts)
-        let local_port = find_available_port(DEFAULT_PORT_RANGE.0, DEFAULT_PORT_RANGE.1)
-            .context("No available port in range")?;
+        let local_port = find_available_port(DEFAULT_PORT_RANGE.0, DEFAULT_PORT_RANGE.1)?;
 
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))
-            .context("Failed to bind to local port")?;
-        listener
-            .set_nonblocking(false)
-            .context("Failed to set blocking mode")?;
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port)).map_err(|e| {
+            SAideError::Io(format!(
+                "Failed to bind local listener on port {}: {}",
+                local_port, e
+            ))
+        })?;
+        listener.set_nonblocking(false).map_err(|e| {
+            SAideError::Io(format!("Failed to set listener to blocking mode: {}", e))
+        })?;
 
         debug!("Listening on 127.0.0.1:{}", local_port);
 
         // Step 3: Setup ADB reverse tunnel (after listener is ready)
-        setup_reverse_tunnel(serial, &socket_name, local_port)
-            .context("Failed to setup reverse tunnel")?;
+        setup_reverse_tunnel(serial, &socket_name, local_port)?;
 
         // Step 4: Start server process (it will connect to our listener via tunnel)
-        let server_process =
-            start_server(serial, &params).context("Failed to start server process")?;
+        let server_process = start_server(serial, &params)?;
 
         debug!("Server started, waiting for connections...");
 
         // Step 5: Accept connections in order: Video, Audio (optional), Control
         let mut video_stream = if params.video {
-            Some(
-                accept_connection(&listener, "video")
-                    .context("Failed to accept video connection")?,
-            )
+            Some(accept_connection(&listener, "video")?)
         } else {
             None
         };
 
         let mut audio_stream = if params.audio {
-            Some(
-                accept_connection(&listener, "audio")
-                    .context("Failed to accept audio connection")?,
-            )
+            Some(accept_connection(&listener, "audio")?)
         } else {
             None
         };
 
         let control_stream = if params.control {
-            Some(
-                accept_connection(&listener, "control")
-                    .context("Failed to accept control connection")?,
-            )
+            Some(accept_connection(&listener, "control")?)
         } else {
             None
         };
@@ -150,7 +147,7 @@ impl ScrcpyConnection {
         // Step 6: Read device metadata from video stream (if enabled)
         let device_name = if params.send_device_meta {
             if let Some(ref mut stream) = video_stream {
-                match super::server::read_device_meta(stream) {
+                match read_device_meta(stream) {
                     Ok(name) => {
                         debug!("Device name: {}", name);
                         Some(name)
@@ -230,33 +227,39 @@ impl ScrcpyConnection {
     /// Send control message
     pub fn send_control(&mut self, data: &[u8]) -> Result<()> {
         if let Some(ref mut stream) = self.control_stream {
-            stream
-                .write_all(data)
-                .context("Failed to write to control stream")?;
-            stream.flush().context("Failed to flush control stream")?;
+            stream.write_all(data).map_err(|e| {
+                SAideError::Channel(format!("Failed to write to control stream: {}", e))
+            })?;
+            stream.flush().map_err(|e| {
+                SAideError::Channel(format!("Failed to flush control stream: {}", e))
+            })?;
             Ok(())
         } else {
-            anyhow::bail!("Control stream not available")
+            Err(SAideError::Other(
+                "Control stream not available".to_string(),
+            ))
         }
     }
 
     /// Read video packet (blocking)
     pub fn read_video(&mut self, buf: &mut [u8]) -> Result<usize> {
         if let Some(ref mut stream) = self.video_stream {
-            stream.read(buf).context("Failed to read from video stream")
+            stream.read(buf).map_err(|e| {
+                SAideError::Channel(format!("Failed to read from video stream: {}", e))
+            })
         } else {
-            anyhow::bail!("Video stream not available")
+            Err(SAideError::Other("Video stream not available".to_string()))
         }
     }
 
     /// Read exact number of bytes from video stream (blocking until complete)
     pub fn read_video_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         if let Some(ref mut stream) = self.video_stream {
-            stream
-                .read_exact(buf)
-                .context("Failed to read exact bytes from video stream")
+            stream.read_exact(buf).map_err(|e| {
+                SAideError::Channel(format!("Failed to read exact from video stream: {}", e))
+            })
         } else {
-            anyhow::bail!("Video stream not available")
+            Err(SAideError::Other("Video stream not available".to_string()))
         }
     }
 
@@ -270,26 +273,22 @@ impl ScrcpyConnection {
     }
 
     /// Read and parse a video packet
-    pub fn read_video_packet(&mut self) -> anyhow::Result<super::protocol::video::VideoPacket> {
-        use super::protocol::video::VideoPacket;
+    pub fn read_video_packet(&mut self) -> Result<VideoPacket> {
         VideoPacket::read_from(
             self.video_stream
                 .as_mut()
-                .context("Video stream not available")?,
+                .ok_or_else(|| SAideError::Other("Video stream not available".to_string()))?,
         )
-        .map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     /// Read and parse an audio packet
-    pub fn read_audio_packet(&mut self) -> Result<super::protocol::audio::AudioPacket> {
-        use super::protocol::audio::AudioPacket;
-
+    pub fn read_audio_packet(&mut self) -> Result<AudioPacket> {
         if let Some(ref mut stream) = self.audio_stream {
             // Read 12-byte header first
             let mut header = [0u8; 12];
-            stream
-                .read_exact(&mut header)
-                .context("Failed to read audio packet header")?;
+            stream.read_exact(&mut header).map_err(|_| {
+                SAideError::Channel("Failed to read audio packet header".to_string())
+            })?;
 
             // Parse packet size from header
             let packet_size = u32::from_be_bytes([header[8], header[9], header[10], header[11]]);
@@ -298,14 +297,16 @@ impl ScrcpyConnection {
             let total_size = 12 + packet_size as usize;
             let mut data = vec![0u8; total_size];
             data[..12].copy_from_slice(&header);
-            stream
-                .read_exact(&mut data[12..])
-                .context("Failed to read audio packet payload")?;
+            stream.read_exact(&mut data[12..]).map_err(|_| {
+                SAideError::Channel("Failed to read audio packet payload".to_string())
+            })?;
 
-            AudioPacket::from_bytes(&data)
-        } else {
-            anyhow::bail!("Audio stream not available (disabled for Android < 11 or not requested)")
+            return AudioPacket::from_bytes(&data);
         }
+
+        Err(SAideError::Other(
+            "Audio stream not available (disabled for Android < 11 or not requested)".to_string(),
+        ))
     }
 
     /// Gracefully shutdown connection
@@ -321,8 +322,7 @@ impl ScrcpyConnection {
         // Step 2: Kill server process immediately (MUST be in main thread)
         if let Some(mut process) = self.server_process.take() {
             // Try graceful exit first (wait 100ms)
-            const GRACEFUL_WAIT_MS: u64 = 100;
-            let start = std::time::Instant::now();
+            let start = Instant::now();
 
             while start.elapsed().as_millis() < GRACEFUL_WAIT_MS as u128 {
                 if let Ok(Some(status)) = process.try_wait() {
@@ -331,7 +331,7 @@ impl ScrcpyConnection {
                     info!("Connection closed (graceful)");
                     return Ok(());
                 }
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(10));
             }
 
             // Force kill if still running
@@ -343,7 +343,7 @@ impl ScrcpyConnection {
                 Ok(_) => {
                     debug!("Server process killed");
                     // Wait for reaping
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    thread::sleep(Duration::from_millis(50));
                     match process.try_wait() {
                         Ok(Some(status)) => debug!("Process reaped: {:?}", status),
                         Ok(None) => debug!("Process not yet reaped"),
@@ -376,32 +376,20 @@ fn find_available_port(start: u16, end: u16) -> Result<u16> {
             return Ok(port);
         }
     }
-    anyhow::bail!("No available port in range {}..{}", start, end)
+    Err(SAideError::Io(format!(
+        "No available port found in range {}-{}",
+        start, end
+    )))
 }
 
 /// Setup ADB reverse tunnel
-///
-/// Command: `adb reverse localabstract:<socket_name> tcp:<local_port>`
 fn setup_reverse_tunnel(serial: &str, socket_name: &str, local_port: u16) -> Result<()> {
     debug!(
         "Setting up reverse tunnel: {} -> tcp:{}",
         socket_name, local_port
     );
 
-    let status = std::process::Command::new("adb")
-        .args([
-            "-s",
-            serial,
-            "reverse",
-            &format!("localabstract:{}", socket_name),
-            &format!("tcp:{}", local_port),
-        ])
-        .status()
-        .context("Failed to execute adb reverse")?;
-
-    if !status.success() {
-        anyhow::bail!("adb reverse failed");
-    }
+    AdbShell::setup_reverse_tunnel(serial, socket_name, local_port)?;
 
     info!("Reverse tunnel established");
     Ok(())
@@ -411,32 +399,9 @@ fn setup_reverse_tunnel(serial: &str, socket_name: &str, local_port: u16) -> Res
 fn remove_reverse_tunnel(serial: &str, socket_name: &str) -> Result<()> {
     debug!("Removing reverse tunnel: {}", socket_name);
 
-    let status = std::process::Command::new("adb")
-        .args([
-            "-s",
-            serial,
-            "reverse",
-            "--remove",
-            &format!("localabstract:{}", socket_name),
-        ])
-        .output(); // Use output() instead of status() to capture stderr
+    AdbShell::remove_reverse_tunnel(serial, socket_name)?;
 
-    match status {
-        Ok(output) if output.status.success() => {
-            debug!("Reverse tunnel removed successfully");
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Ignore "not found" errors (tunnel already removed)
-            if !stderr.contains("not found") && !stderr.is_empty() {
-                debug!("Failed to remove tunnel: {}", stderr.trim());
-            }
-        }
-        Err(e) => {
-            debug!("Error removing tunnel: {}", e);
-        }
-    }
-
+    info!("Reverse tunnel removed");
     Ok(())
 }
 
@@ -447,32 +412,38 @@ fn accept_connection(listener: &TcpListener, channel: &str) -> Result<TcpStream>
     // Set accept timeout
     listener
         .set_nonblocking(false)
-        .context("Failed to set blocking mode")?;
+        .map_err(|e| SAideError::Io(format!("Failed to set listener to blocking mode: {}", e)))?;
 
     // Accept connection
     let (stream, addr) = listener
         .accept()
-        .context(format!("Failed to accept {} connection", channel))?;
+        .map_err(|e| SAideError::Io(format!("Failed to accept {} connection: {}", channel, e)))?;
 
     debug!("{} connection accepted from {}", channel, addr);
 
     // 🚀 LOW LATENCY: Enable TCP_NODELAY to disable Nagle's algorithm
     // This reduces latency by 5-10ms by sending packets immediately
-    stream
-        .set_nodelay(true)
-        .context("Failed to set TCP_NODELAY")?;
+    stream.set_nodelay(true).map_err(|_| {
+        SAideError::Io(format!(
+            "Failed to set TCP_NODELAY for {} connection",
+            channel
+        ))
+    })?;
 
     debug!("{} connection: TCP_NODELAY enabled", channel);
 
     // 🛡️ CRITICAL: Set read timeout to detect USB disconnection
     // Without timeout, read() blocks forever when USB is unplugged
     let timeout = match channel {
-        "control" => std::time::Duration::from_secs(2), // Faster detection for control
-        _ => std::time::Duration::from_secs(5),         // Video/Audio can tolerate more delay
+        "control" => Duration::from_secs(2), // Faster detection for control
+        _ => Duration::from_secs(5),         // Video/Audio can tolerate more delay
     };
-    stream
-        .set_read_timeout(Some(timeout))
-        .with_context(|| format!("Failed to set {} stream read timeout", channel))?;
+    stream.set_read_timeout(Some(timeout)).map_err(|_| {
+        SAideError::Io(format!(
+            "Failed to set read timeout for {} connection",
+            channel
+        ))
+    })?;
 
     debug!("{} connection: read timeout set to {:?}", channel, timeout);
 

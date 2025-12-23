@@ -1,5 +1,6 @@
 pub mod app;
 pub mod config;
+pub mod constant;
 pub mod controller;
 pub mod decoder;
 pub mod error;
@@ -20,7 +21,6 @@ pub use {
         VideoDecoder,
         new_nv12_render_callback,
     },
-    error::{Result as SaideResult, SaideError},
     scrcpy::{
         connection::ScrcpyConnection,
         protocol::{audio::AudioPacket, control::ControlMessage, video::VideoPacket},
@@ -29,5 +29,3 @@ pub use {
     sync::AVSync,
     sys::{GpuType, detect_gpu},
 };
-
-pub const SCRCPY_SERVER_VERSION: &str = "v3.3.3";

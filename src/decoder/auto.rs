@@ -5,8 +5,7 @@
 
 use {
     super::{DecodedFrame, H264Decoder, NvdecDecoder, VaapiDecoder, VideoDecoder},
-    crate::{GpuType, detect_gpu},
-    anyhow::Result,
+    crate::{GpuType, detect_gpu, error::Result},
     tracing::{info, warn},
 };
 

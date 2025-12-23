@@ -2,7 +2,7 @@
 
 use {
     super::{DecodedFrame, VideoDecoder},
-    anyhow::{Context as AnyhowContext, Result, bail},
+    crate::error::{Result, SAideError},
     ffmpeg::{
         codec,
         format::Pixel,
@@ -35,7 +35,8 @@ pub struct VaapiDecoder {
 impl VaapiDecoder {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         // Initialize FFmpeg
-        ffmpeg::init().context("Failed to initialize FFmpeg")?;
+        ffmpeg::init()
+            .map_err(|e| SAideError::Video(format!("Failed to initialize FFmpeg: {}", e)))?;
 
         // Set FFmpeg log level to error only (suppress warnings)
         unsafe {
@@ -55,14 +56,18 @@ impl VaapiDecoder {
                 0,
             );
             if ret < 0 {
-                bail!("Failed to create VAAPI device context: {}", ret);
+                return Err(SAideError::Video(format!(
+                    "Failed to create VAAPI device context: {}",
+                    ret
+                )));
             }
         }
 
         info!("VAAPI device context created: /dev/dri/renderD128");
 
         // Find H.264 decoder
-        let codec = ffmpeg::decoder::find(codec::Id::H264).context("H.264 decoder not found")?;
+        let codec = ffmpeg::decoder::find(codec::Id::H264)
+            .ok_or_else(|| SAideError::Video("H.264 decoder not found".to_string()))?;
 
         info!("Found H.264 decoder: {}", codec.name());
 
@@ -95,10 +100,9 @@ impl VaapiDecoder {
             (*ctx_ptr).thread_count = 1;
         }
 
-        let decoder = context
-            .decoder()
-            .video()
-            .context("Failed to open H.264 decoder")?;
+        let decoder = context.decoder().video().map_err(|e| {
+            SAideError::Video(format!("Failed to create VAAPI H.264 decoder: {}", e))
+        })?;
 
         debug!("VAAPI H.264 decoder initialized: {}x{}", width, height);
 
@@ -149,7 +153,7 @@ impl VaapiDecoder {
                 self.height,
                 Flags::BILINEAR,
             )
-            .context("Failed to create scaler")?;
+            .map_err(|e| SAideError::Video(format!("Failed to create scaler context: {}", e)))?;
 
             self.scaler = Some(scaler);
             self.last_decoded_dimensions = Some(current_dimensions);
@@ -166,7 +170,7 @@ impl VaapiDecoder {
 
         self.decoder
             .send_packet(&packet)
-            .context("Failed to send packet to decoder")?;
+            .map_err(|e| SAideError::Video(format!("Failed to send packet to decoder: {}", e)))?;
 
         Ok(())
     }
@@ -260,7 +264,10 @@ impl VaapiDecoder {
                     break;
                 }
                 Err(e) => {
-                    bail!("Decoder error: {}", e);
+                    return Err(SAideError::Video(format!(
+                        "Failed to receive frame from decoder: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -282,7 +289,9 @@ impl VideoDecoder for VaapiDecoder {
 
     fn flush(&mut self) -> Result<Vec<DecodedFrame>> {
         debug!("Flushing decoder");
-        self.decoder.send_eof().context("Failed to send EOF")?;
+        self.decoder
+            .send_eof()
+            .map_err(|e| SAideError::Video(format!("Failed to send EOF to decoder: {}", e)))?;
         self.receive_frames()
     }
 }

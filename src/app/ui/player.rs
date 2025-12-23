@@ -16,7 +16,7 @@ use {
             extract_resolution_from_stream,
             new_nv12_render_callback,
         },
-        error::{Result, SaideError},
+        error::{Result, SAideError},
         scrcpy::protocol::video::VideoPacket,
         sync::AVSync,
     },
@@ -73,7 +73,7 @@ pub enum PlayerEvent {
         width: u32,
         height: u32,
     },
-    Failed(SaideError),
+    Failed(SAideError),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -384,13 +384,8 @@ impl StreamPlayer {
     /// Get player state
     pub fn state(&self) -> &PlayerState { &self.state }
 
-    /// Force state to ConnectionLost (called by SAideApp when device_offline confirmed)
-    pub fn force_connection_lost(&mut self) {
-        if let PlayerState::Failed(err_msg) = &self.state {
-            info!("Forcing PlayerState::ConnectionLost: {}", err_msg);
-            self.state = PlayerState::ConnectionLost(err_msg.clone());
-        }
-    }
+    /// Set player state
+    pub fn set_state(&mut self, state: PlayerState) { self.state = state; }
 
     /// Check if player is ready (streaming)
     pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Streaming) }
@@ -579,7 +574,7 @@ fn stream_worker(
                     // Read header with error tolerance
                     let mut header = [0u8; 12];
                     if let Err(e) = audio_stream.read_exact(&mut header) {
-                        let e = SaideError::from(e);
+                        let e = SAideError::from(e);
 
                         // Check if timeout (audio may have no data)
                         if is_timeout(&e) {
@@ -594,7 +589,11 @@ fn stream_worker(
                         consecutive_read_errors += 1;
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                            // Return error as-is, let DeviceMonitor determine connection state
+                            if is_shutdown(&e) {
+                                return Err(SAideError::ConnectionLost(
+                                    "Audio stream connection closed".to_string(),
+                                ));
+                            }
                             return Err(e);
                         }
 
@@ -626,7 +625,7 @@ fn stream_worker(
                     // Read payload with error tolerance
                     let mut payload = vec![0u8; packet_size];
                     if let Err(e) = audio_stream.read_exact(&mut payload) {
-                        let e = SaideError::from(e);
+                        let e = SAideError::from(e);
 
                         if is_timeout(&e) {
                             trace!("Audio payload timeout - retrying");
@@ -639,7 +638,11 @@ fn stream_worker(
                         consecutive_read_errors += 1;
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                            // Return error as-is, let DeviceMonitor determine connection state
+                            if is_shutdown(&e) {
+                                return Err(SAideError::ConnectionLost(
+                                    "Audio stream connection closed".to_string(),
+                                ));
+                            }
                             return Err(e);
                         }
 
@@ -714,12 +717,14 @@ fn stream_worker(
                             "Failed to read video packet {} times consecutively",
                             consecutive_read_errors
                         );
-                        // Return the error as-is, don't convert to ConnectionLost here
-                        // DeviceMonitor is the authoritative source for connection state
+                        if is_shutdown(&e) {
+                            return Err(SAideError::ConnectionLost(
+                                "Video stream connection closed".to_string(),
+                            ));
+                        }
                         return Err(e);
                     }
 
-                    // Log error appropriately
                     if is_shutdown(&e) {
                         debug!(
                             "Video packet read error ({}/{}): {} (connection closing)",
@@ -763,7 +768,7 @@ fn stream_worker(
             let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
                 Ok(frame) => frame,
                 Err(e) => {
-                    let e = SaideError::Decode(e.to_string());
+                    let e = SAideError::Decode(e.to_string());
                     if is_shutdown(&e) {
                         info!("Video decode error (shutdown): {}", e);
                         return Err(e);
@@ -833,7 +838,7 @@ fn stream_worker(
 }
 
 /// Check if error is a timeout-related IO error
-fn is_timeout(err: &SaideError) -> bool { err.is_timeout() }
+fn is_timeout(err: &SAideError) -> bool { err.is_timeout() }
 
 /// Check if error is a shutdown-related IO error (connection lost)
-fn is_shutdown(err: &SaideError) -> bool { err.is_io_shutdown() }
+fn is_shutdown(err: &SAideError) -> bool { err.is_io_shutdown() }

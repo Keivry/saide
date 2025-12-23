@@ -9,10 +9,10 @@ pub mod scrcpy;
 
 use {
     crate::{
-        SCRCPY_SERVER_VERSION,
         config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
+        constant::SCRCPY_SERVER_VERSION_STRING,
+        error::{Result, SAideError},
     },
-    anyhow::Result,
     directories::ProjectDirs,
     lazy_static::lazy_static,
     serde::{Deserialize, Serialize},
@@ -122,7 +122,7 @@ pub struct GeneralConfig {
 fn default_true() -> bool { true }
 fn default_init_timeout() -> u32 { 15 }
 fn default_scrcpy_server_path() -> String {
-    let scrcpy_server = format!("scrcpy-server-{}", SCRCPY_SERVER_VERSION);
+    let scrcpy_server = format!("scrcpy-server-{}", SCRCPY_SERVER_VERSION_STRING);
     if let Some(dir) = ProjectDirs::from("io", "keivry", "saide") {
         let path = dir.data_dir().join(scrcpy_server.as_str());
         if path.is_file() {
@@ -147,13 +147,17 @@ impl SAideConfig {
     /// Load configuration from file
     pub fn load(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
-        Ok(toml::from_str(&content)?)
+        toml::from_str(&content)
+            .map_err(|e| SAideError::Config(format!("Failed to parse config file {}: {}", path, e)))
     }
 
     /// Save configuration to file
     pub fn save(&self, path: &str) -> Result<()> {
-        let content = toml::to_string_pretty(self)?;
-        fs::write(path, content)?;
+        let content = toml::to_string_pretty(self).map_err(|e| {
+            SAideError::Config(format!("Failed to serialize config for {}: {}", path, e))
+        })?;
+        fs::write(path, content)
+            .map_err(|e| SAideError::Io(format!("Failed to write config file {}: {}", path, e)))?;
         Ok(())
     }
 }

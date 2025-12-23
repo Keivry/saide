@@ -9,7 +9,7 @@ mod nvdec;
 mod rgba_render;
 mod vaapi;
 
-use {anyhow::Result, ffmpeg_next::format::Pixel};
+use {crate::error::Result, ffmpeg_next::format::Pixel};
 pub use {
     audio::{AudioDecoder, AudioPlayer, DecodedAudio, OpusDecoder},
     auto::AutoDecoder,
