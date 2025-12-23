@@ -81,6 +81,7 @@ pub enum PlayerState {
     Idle,
     Connecting,
     Streaming,
+    ConnectionLost(String),
     Failed(String),
 }
 
@@ -241,7 +242,13 @@ impl StreamPlayer {
                     if err.should_log() {
                         error!("Stream failed: {}", err);
                     }
-                    self.state = PlayerState::Failed(err.to_string());
+
+                    // Distinguish ConnectionLost from other errors
+                    if err.is_connection_lost() {
+                        self.state = PlayerState::ConnectionLost(err.to_string());
+                    } else {
+                        self.state = PlayerState::Failed(err.to_string());
+                    }
                 }
             }
         }
@@ -334,6 +341,9 @@ impl StreamPlayer {
                 PlayerState::Streaming => {
                     ui.label(egui::RichText::new("Loading...").size(20.0));
                 }
+                PlayerState::ConnectionLost(err) => {
+                    self.draw_connection_lost_overlay(ui, err);
+                }
                 PlayerState::Failed(err) => {
                     self.draw_failed_overlay(ui, err);
                 }
@@ -380,8 +390,67 @@ impl StreamPlayer {
     /// Set video rotation (0-3, clockwise 90°)
     pub fn set_rotation(&mut self, rotation: u32) { self.video_rotation = rotation % 4; }
 
+    fn draw_connection_lost_overlay(&self, ui: &mut egui::Ui, err_msg: &str) {
+        // Connection Lost overlay (USB/WiFi disconnected)
+        let ctx = ui.ctx();
+        egui::Area::new(egui::Id::new("connection_lost_overlay"))
+            .fixed_pos(egui::pos2(0.0, 0.0))
+            .show(ui.ctx(), |ui| {
+                let screen_rect = ctx.content_rect();
+                let mut child_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(screen_rect)
+                        .layout(egui::Layout::top_down(egui::Align::Center)),
+                );
+                {
+                    let ui = &mut child_ui;
+                    // Semi-transparent dark background
+                    ui.painter().rect_filled(
+                        screen_rect,
+                        0.0,
+                        egui::Color32::from_black_alpha(220),
+                    );
+
+                    // Center content
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(screen_rect.height() / 3.0);
+
+                        ui.label(
+                            egui::RichText::new("📡 Connection Lost")
+                                .size(42.0)
+                                .color(egui::Color32::from_rgb(255, 120, 100)),
+                        );
+
+                        ui.add_space(25.0);
+
+                        ui.label(
+                            egui::RichText::new("Device disconnected (USB/WiFi)")
+                                .size(22.0)
+                                .color(egui::Color32::WHITE),
+                        );
+
+                        ui.add_space(20.0);
+
+                        ui.label(
+                            egui::RichText::new("Please check connection and restart")
+                                .size(18.0)
+                                .color(egui::Color32::GRAY),
+                        );
+
+                        ui.add_space(15.0);
+
+                        ui.label(
+                            egui::RichText::new(format!("Details: {}", err_msg))
+                                .size(14.0)
+                                .color(egui::Color32::DARK_GRAY),
+                        );
+                    });
+                }
+            });
+    }
+
     fn draw_failed_overlay(&self, ui: &mut egui::Ui, err_msg: &str) {
-        // Error overlay if stream failed
+        // General error overlay (decode errors, protocol errors, etc.)
         let ctx = ui.ctx();
         egui::Area::new(egui::Id::new("error_overlay"))
             .fixed_pos(egui::pos2(0.0, 0.0))
@@ -406,21 +475,15 @@ impl StreamPlayer {
                         ui.add_space(screen_rect.height() / 3.0);
 
                         ui.label(
-                            egui::RichText::new("⚠️ Connection Lost")
+                            egui::RichText::new("⚠️ Stream Error")
                                 .size(36.0)
                                 .color(egui::Color32::from_rgb(255, 100, 100)),
                         );
 
                         ui.add_space(20.0);
 
-                        let msg = if err_msg.contains("read") || err_msg.contains("timeout") {
-                            "USB disconnected or device offline"
-                        } else {
-                            "Stream error occurred"
-                        };
-
                         ui.label(
-                            egui::RichText::new(msg)
+                            egui::RichText::new("An error occurred during streaming")
                                 .size(20.0)
                                 .color(egui::Color32::WHITE),
                         );
@@ -431,6 +494,14 @@ impl StreamPlayer {
                             egui::RichText::new("Please restart the application")
                                 .size(16.0)
                                 .color(egui::Color32::GRAY),
+                        );
+
+                        ui.add_space(10.0);
+
+                        ui.label(
+                            egui::RichText::new(format!("Details: {}", err_msg))
+                                .size(14.0)
+                                .color(egui::Color32::DARK_GRAY),
                         );
                     });
                 }

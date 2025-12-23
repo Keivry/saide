@@ -1,5 +1,24 @@
 # 项目任务清单
 
+## 进行中 🔄
+
+- [x] 设计统一错误类型架构（src/error.rs）
+  - [x] 定义顶层 SaideError 枚举（9种错误分类）
+  - [x] 区分 Cancelled / ConnectionLost / Decode / IO / Protocol 等类型
+  - [x] 实现自动类型转换（From trait）
+  - [x] 添加 is_cancelled / is_connection_lost / should_log 等辅助方法
+- [x] 重构各模块错误处理
+  - [x] player.rs 使用 SaideError
+  - [x] scrcpy/protocol/video.rs 使用 SaideError
+  - [x] 连接关闭时转换为 ConnectionLost 错误
+  - [x] Cancelled 错误静默处理（不记录日志）
+- [ ] UI 层错误展示（下一阶段）
+  - [ ] ConnectionLost → "Connection Lost" overlay
+  - [ ] 其他错误 → 错误对话框
+- [ ] 测试和验证（下一阶段）
+  - [ ] USB 断开场景测试
+  - [ ] Ctrl+C 优雅关闭测试
+
 ## 问题
 
 - [x] 增加删除映射后，没有更新 active_mappings
