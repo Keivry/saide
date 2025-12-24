@@ -34,7 +34,6 @@ pub const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
 
 // Allow buffering 3 rotation events to avoid blocking monitor thread
 pub const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 3;
-
 pub enum DeviceMonitorEvent {
     /// Device rotated event with new orientation (0-3), clockwise
     Rotated(u32),
@@ -45,8 +44,7 @@ pub enum DeviceMonitorEvent {
 }
 
 // Capacity for initialization result channel
-pub const INIT_RESULT_CHANNEL_CAPACITY: usize = 5;
-
+pub const INIT_RESULT_CHANNEL_CAPACITY: usize = 4;
 /// Initialization event
 pub enum InitEvent {
     /// ScrcpyConnection established with streams
@@ -218,8 +216,98 @@ fn start_scrcpy_connection(
     });
 }
 
+async fn scrcpy_connection(
+    serial: &str,
+    config: Arc<SAideConfig>,
+    capture_orientation: Option<u32>,
+) -> Result<ScrcpyConnection> {
+    let server_path = &config.general.scrcpy_server;
+
+    // Create server params from config
+    let mut params = ServerParams::for_device(serial)?;
+
+    // Apply config settings
+    let bit_rate = {
+        let rate_str = &config.scrcpy.video.bit_rate;
+        let multiplier = if rate_str.ends_with('M') || rate_str.ends_with('m') {
+            1_000_000
+        } else if rate_str.ends_with('K') || rate_str.ends_with('k') {
+            1_000
+        } else {
+            1
+        };
+        let num_str = rate_str.trim_end_matches(|c: char| !c.is_ascii_digit());
+        num_str.parse::<u32>().unwrap_or(8) * multiplier
+    };
+
+    params.video = true;
+    params.video_codec = config.scrcpy.video.codec.clone();
+    params.video_bit_rate = bit_rate;
+    params.max_size = config.scrcpy.video.max_size as u16;
+    params.max_fps = config.scrcpy.video.max_fps as u16;
+    params.audio = config.scrcpy.audio.enabled;
+    params.audio_codec = config.scrcpy.audio.codec.clone();
+    params.audio_source = config.scrcpy.audio.source.clone();
+    params.control = true;
+    params.send_device_meta = true;
+    params.send_codec_meta = true;
+    params.send_frame_meta = true;
+
+    // Apply screen control options
+    params.stay_awake = config.scrcpy.options.stay_awake;
+    params.screen_off_timeout = if config.scrcpy.options.turn_screen_off {
+        Some(-1) // Turn off immediately
+    } else {
+        None
+    };
+
+    // 🔒 NVDEC Optimization: Lock capture orientation to prevent resolution changes
+    // Benefits:
+    // - Avoid decoder rebuild overhead (~200ms + black screen)
+    // - No need for prepend-sps-pps-to-idr-frames=1 (compatibility)
+    // - More stable, works on all devices
+    if let Some(capture_orientation) = capture_orientation {
+        // Lock to current device orientation (absolute)
+        // @0 = lock to 0° (portrait), follows device's natural orientation
+        params.capture_orientation = Some(format!("@{}", capture_orientation));
+        info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
+    }
+
+    ScrcpyConnection::connect(serial, server_path, params)
+        .await
+        .map_err(|e| {
+            error!("Failed to establish scrcpy connection: {}", e);
+            e
+        })
+}
+
 fn start_device_monitor(serial: &str, tx: Sender<InitEvent>, token: CancellationToken) {
     let serial = serial.to_owned();
+    thread::spawn(move || -> Result<()> {
+        info!("Starting device monitor thread...");
+
+        if token.is_cancelled() {
+            info!("Device monitor initialization cancelled");
+            return Ok(());
+        }
+
+        // Create channel for rotation events
+        let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
+        tx.send(InitEvent::DeviceMonitor(event_rx))?;
+
+        start_device_state_monitor(&serial, event_tx.clone(), token.clone());
+        start_ime_state_monitor(&serial, event_tx.clone(), token.clone());
+        start_rotation_monitor(&serial, event_tx.clone(), token.clone());
+
+        Ok(())
+    });
+}
+
+fn start_device_state_monitor(
+    serial: &str,
+    tx: Sender<DeviceMonitorEvent>,
+    token: CancellationToken,
+) {
     thread::spawn(move || -> Result<()> {
         info!("Starting device monitor thread...");
 
@@ -299,6 +387,24 @@ fn start_device_monitor(serial: &str, tx: Sender<InitEvent>, token: Cancellation
                 info!("Device monitor cancellation requested, stopping...");
                 break;
             }
+            thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        }
+
+        info!("Device monitor thread stopped");
+
+        Ok(())
+    });
+}
+fn start_ime_state_monitor(serial: &str, tx: Sender<DeviceMonitorEvent>, token: CancellationToken) {
+    thread::spawn(move || {
+        info!("Starting IME state monitor thread...");
+
+        let mut consecutive_errors = 0;
+        loop {
+            if token.is_cancelled() {
+                info!("Device monitor cancellation requested, stopping...");
+                break;
+            }
 
             // Poll input method state (skip if device is disconnected)
             if consecutive_errors == 0
@@ -310,81 +416,7 @@ fn start_device_monitor(serial: &str, tx: Sender<InitEvent>, token: Cancellation
                 debug!("IME event channel disconnected, stopping monitor");
                 break;
             }
-
-            if token.is_cancelled() {
-                info!("Device monitor cancellation requested, stopping...");
-                break;
-            }
-            thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
         }
-
-        info!("Device monitor thread stopped");
-
-        Ok(())
     });
 }
-
-async fn scrcpy_connection(
-    serial: &str,
-    config: Arc<SAideConfig>,
-    capture_orientation: Option<u32>,
-) -> Result<ScrcpyConnection> {
-    let server_path = &config.general.scrcpy_server;
-
-    // Create server params from config
-    let mut params = ServerParams::for_device(serial)?;
-
-    // Apply config settings
-    let bit_rate = {
-        let rate_str = &config.scrcpy.video.bit_rate;
-        let multiplier = if rate_str.ends_with('M') || rate_str.ends_with('m') {
-            1_000_000
-        } else if rate_str.ends_with('K') || rate_str.ends_with('k') {
-            1_000
-        } else {
-            1
-        };
-        let num_str = rate_str.trim_end_matches(|c: char| !c.is_ascii_digit());
-        num_str.parse::<u32>().unwrap_or(8) * multiplier
-    };
-
-    params.video = true;
-    params.video_codec = config.scrcpy.video.codec.clone();
-    params.video_bit_rate = bit_rate;
-    params.max_size = config.scrcpy.video.max_size as u16;
-    params.max_fps = config.scrcpy.video.max_fps as u16;
-    params.audio = config.scrcpy.audio.enabled;
-    params.audio_codec = config.scrcpy.audio.codec.clone();
-    params.audio_source = config.scrcpy.audio.source.clone();
-    params.control = true;
-    params.send_device_meta = true;
-    params.send_codec_meta = true;
-    params.send_frame_meta = true;
-
-    // Apply screen control options
-    params.stay_awake = config.scrcpy.options.stay_awake;
-    params.screen_off_timeout = if config.scrcpy.options.turn_screen_off {
-        Some(-1) // Turn off immediately
-    } else {
-        None
-    };
-
-    // 🔒 NVDEC Optimization: Lock capture orientation to prevent resolution changes
-    // Benefits:
-    // - Avoid decoder rebuild overhead (~200ms + black screen)
-    // - No need for prepend-sps-pps-to-idr-frames=1 (compatibility)
-    // - More stable, works on all devices
-    if let Some(capture_orientation) = capture_orientation {
-        // Lock to current device orientation (absolute)
-        // @0 = lock to 0° (portrait), follows device's natural orientation
-        params.capture_orientation = Some(format!("@{}", capture_orientation));
-        info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
-    }
-
-    ScrcpyConnection::connect(serial, server_path, params)
-        .await
-        .map_err(|e| {
-            error!("Failed to establish scrcpy connection: {}", e);
-            e
-        })
-}
+fn start_rotation_monitor(serial: &str, tx: Sender<DeviceMonitorEvent>, token: CancellationToken) {}

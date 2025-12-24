@@ -206,7 +206,7 @@ impl AdbShell {
         let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if state.contains("unauthorized") {
             Ok(DeviceState::Unauthorized)
-        } else if state.contains("no devices") {
+        } else if state.contains("not found") {
             Ok(DeviceState::Disconnected)
         } else if state.contains("device") {
             Ok(DeviceState::Connected)

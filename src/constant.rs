@@ -11,7 +11,7 @@ pub const SCRCPY_SERVER_CLASS_NAME: &str = "com.genymobile.scrcpy.Server";
 pub const SCRCPY_SERVER_PATH: &str = "/data/local/tmp/scrcpy-server.jar";
 
 /// Time to wait for the server to shut down gracefully (in milliseconds)
-pub const GRACEFUL_WAIT_MS: u64 = 100;
+pub const GRACEFUL_WAIT_MS: u64 = 250;
 
 /// Default port range for ADB reverse/forward
 pub const DEFAULT_PORT_RANGE: (u16, u16) = (27183, 27199);
