@@ -11,9 +11,10 @@ use {
     crate::{
         constant::{DEFAULT_PORT_RANGE, GRACEFUL_WAIT_MS},
         controller::AdbShell,
-        error::{Result, SAideError},
+        error::{IoError, Result, SAideError},
     },
     std::{
+        fmt,
         io::{Read, Write},
         net::{TcpListener, TcpStream},
         process::Child,
@@ -22,6 +23,24 @@ use {
     },
     tracing::{debug, info},
 };
+
+/// Scrcpy communication channels
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Channel {
+    Video,
+    Audio,
+    Control,
+}
+
+impl fmt::Display for Channel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Channel::Video => write!(f, "video"),
+            Channel::Audio => write!(f, "audio"),
+            Channel::Control => write!(f, "control"),
+        }
+    }
+}
 
 /// Scrcpy connection with video, audio, and control channels
 pub struct ScrcpyConnection {
@@ -52,7 +71,7 @@ pub struct ScrcpyConnection {
     /// Server process handle
     server_process: Option<Child>,
 
-    /// Device serial number
+    /// Device serial
     serial: String,
 }
 
@@ -103,15 +122,9 @@ impl ScrcpyConnection {
         // (as per scrcpy: client must listen before server starts)
         let local_port = find_available_port(DEFAULT_PORT_RANGE.0, DEFAULT_PORT_RANGE.1)?;
 
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port)).map_err(|e| {
-            SAideError::Io(format!(
-                "Failed to bind local listener on port {}: {}",
-                local_port, e
-            ))
-        })?;
-        listener.set_nonblocking(false).map_err(|e| {
-            SAideError::Io(format!("Failed to set listener to blocking mode: {}", e))
-        })?;
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))?;
+
+        listener.set_nonblocking(false)?;
 
         debug!("Listening on 127.0.0.1:{}", local_port);
 
@@ -125,19 +138,19 @@ impl ScrcpyConnection {
 
         // Step 5: Accept connections in order: Video, Audio (optional), Control
         let mut video_stream = if params.video {
-            Some(accept_connection(&listener, "video")?)
+            Some(accept_connection(&listener, &Channel::Video)?)
         } else {
             None
         };
 
         let mut audio_stream = if params.audio {
-            Some(accept_connection(&listener, "audio")?)
+            Some(accept_connection(&listener, &Channel::Audio)?)
         } else {
             None
         };
 
         let control_stream = if params.control {
-            Some(accept_connection(&listener, "control")?)
+            Some(accept_connection(&listener, &Channel::Control)?)
         } else {
             None
         };
@@ -232,7 +245,7 @@ impl ScrcpyConnection {
             Ok(())
         } else {
             Err(SAideError::Other(
-                "Control stream not available".to_string(),
+                "Unexpected null control stream".to_string(),
             ))
         }
     }
@@ -242,7 +255,9 @@ impl ScrcpyConnection {
         if let Some(ref mut stream) = self.video_stream {
             Ok(stream.read(buf)?)
         } else {
-            Err(SAideError::Other("Video stream not available".to_string()))
+            Err(SAideError::Other(
+                "Unexpected null video stream".to_string(),
+            ))
         }
     }
 
@@ -251,7 +266,9 @@ impl ScrcpyConnection {
         if let Some(ref mut stream) = self.video_stream {
             Ok(stream.read_exact(buf)?)
         } else {
-            Err(SAideError::Other("Video stream not available".to_string()))
+            Err(SAideError::Other(
+                "Unexpected null video stream".to_string(),
+            ))
         }
     }
 
@@ -269,7 +286,7 @@ impl ScrcpyConnection {
         VideoPacket::read_from(
             self.video_stream
                 .as_mut()
-                .ok_or_else(|| SAideError::Other("Video stream not available".to_string()))?,
+                .ok_or_else(|| SAideError::Other("Unexpected null video stream".to_string()))?,
         )
     }
 
@@ -364,10 +381,10 @@ fn find_available_port(start: u16, end: u16) -> Result<u16> {
             return Ok(port);
         }
     }
-    Err(SAideError::Io(format!(
+    Err(SAideError::IoError(IoError::new_with_message(format!(
         "No available port found in range {}-{}",
         start, end
-    )))
+    ))))
 }
 
 /// Setup ADB reverse tunnel
@@ -394,28 +411,30 @@ fn remove_reverse_tunnel(serial: &str, socket_name: &str) -> Result<()> {
 }
 
 /// Accept a single connection with optional dummy byte handling
-fn accept_connection(listener: &TcpListener, channel: &str) -> Result<TcpStream> {
+fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStream> {
     debug!("Waiting for {} connection...", channel);
 
     // Set accept timeout
-    listener
-        .set_nonblocking(false)
-        .map_err(|e| SAideError::Io(format!("Failed to set listener to blocking mode: {}", e)))?;
+    listener.set_nonblocking(false).map_err(|e| {
+        SAideError::IoError(IoError::new(e).with_message("Failed to set listener to blocking mode"))
+    })?;
 
     // Accept connection
-    let (stream, addr) = listener
-        .accept()
-        .map_err(|e| SAideError::Io(format!("Failed to accept {} connection: {}", channel, e)))?;
+    let (stream, addr) = listener.accept().map_err(|e| {
+        SAideError::IoError(
+            IoError::new(e).with_message(format!("Failed to accept {} connection", channel)),
+        )
+    })?;
 
     debug!("{} connection accepted from {}", channel, addr);
 
     // 🚀 LOW LATENCY: Enable TCP_NODELAY to disable Nagle's algorithm
     // This reduces latency by 5-10ms by sending packets immediately
-    stream.set_nodelay(true).map_err(|_| {
-        SAideError::Io(format!(
+    stream.set_nodelay(true).map_err(|e| {
+        SAideError::IoError(IoError::new(e).with_message(format!(
             "Failed to set TCP_NODELAY for {} connection",
             channel
-        ))
+        )))
     })?;
 
     debug!("{} connection: TCP_NODELAY enabled", channel);
@@ -423,14 +442,14 @@ fn accept_connection(listener: &TcpListener, channel: &str) -> Result<TcpStream>
     // 🛡️ CRITICAL: Set read timeout to detect USB disconnection
     // Without timeout, read() blocks forever when USB is unplugged
     let timeout = match channel {
-        "control" => Duration::from_secs(2), // Faster detection for control
-        _ => Duration::from_secs(5),         // Video/Audio can tolerate more delay
+        Channel::Control => Duration::from_secs(2), // Faster detection for control
+        _ => Duration::from_secs(5),                // Video/Audio can tolerate more delay
     };
-    stream.set_read_timeout(Some(timeout)).map_err(|_| {
-        SAideError::Io(format!(
+    stream.set_read_timeout(Some(timeout)).map_err(|e| {
+        SAideError::IoError(IoError::new(e).with_message(format!(
             "Failed to set read timeout for {} connection",
             channel
-        ))
+        )))
     })?;
 
     debug!("{} connection: read timeout set to {:?}", channel, timeout);

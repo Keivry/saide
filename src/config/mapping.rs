@@ -253,8 +253,8 @@ impl Deref for KeyMapping {
 pub struct Profile {
     pub name: String,
 
-    /// Device ID this profile is associated with
-    pub device_id: String,
+    /// Device serial this profile is associated with
+    pub device_serial: String,
 
     /// Rotation this profile is associated with
     pub rotation: u32,
@@ -278,8 +278,8 @@ impl Profile {
     }
 
     /// Check if this profile matches the given device and rotation
-    pub fn matches(&self, device_id: &str, rotation: u32) -> bool {
-        self.device_id == device_id && self.rotation == rotation
+    pub fn matches(&self, device_serial: &str, rotation: u32) -> bool {
+        self.device_serial == device_serial && self.rotation == rotation
     }
 
     /// Get the ADB action for a given key, if it exists
@@ -315,12 +315,12 @@ pub struct Mappings {
 }
 
 impl Mappings {
-    /// Filter profiles based on device ID and rotation
-    pub fn filter_profiles(&self, device_id: &str, rotation: u32) -> Vec<Arc<Profile>> {
+    /// Filter profiles based on device serial and rotation
+    pub fn filter_profiles(&self, device_serial: &str, rotation: u32) -> Vec<Arc<Profile>> {
         self.profiles
             .read()
             .iter()
-            .filter(|profile| profile.matches(device_id, rotation))
+            .filter(|profile| profile.matches(device_serial, rotation))
             .cloned()
             .collect()
     }

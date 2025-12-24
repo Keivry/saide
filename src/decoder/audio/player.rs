@@ -1,11 +1,11 @@
 //! Audio playback using cpal
 
 use {
-    super::DecodedAudio,
-    crate::{
-        constant::{AUDIO_BUFFER_MS, AUDIO_PREBUFFER_MS},
-        error::{Result, SAideError},
+    super::{
+        DecodedAudio,
+        error::{AudioError, Result},
     },
+    crate::constant::{AUDIO_BUFFER_MS, AUDIO_PREBUFFER_MS},
     cpal::{
         Stream,
         StreamConfig,
@@ -125,12 +125,12 @@ impl AudioPlayer {
     /// * `channels` - Number of channels (1=mono, 2=stereo)
     pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
         let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or_else(|| SAideError::Audio("No default audio output device found".to_string()))?;
+        let device = host.default_output_device().ok_or_else(|| {
+            AudioError::InitializationError("No default audio output device found".to_string())
+        })?;
 
         let description = device.description().map_err(|e| {
-            SAideError::Audio(format!("Failed to get audio device description: {}", e))
+            AudioError::InitializationError(format!("Failed to get device description: {}", e))
         })?;
         info!("Using audio device: {}", description.name());
 
@@ -173,11 +173,14 @@ impl AudioPlayer {
                 },
                 None,
             )
-            .map_err(|e| SAideError::Audio(format!("Failed to create audio stream: {}", e)))?;
+            .map_err(|e| {
+                AudioError::InitializationError(format!("Failed to create audio stream: {}", e))
+            })?;
 
-        stream
-            .play()
-            .map_err(|e| SAideError::Audio(format!("Failed to start audio stream: {}", e)))?;
+        stream.play().map_err(|e| {
+            AudioError::InitializationError(format!("Failed to start audio stream: {}", e))
+        })?;
+
         info!(
             "Audio player started: {}Hz, {} channels, buffer={}ms, prebuffer={}ms",
             sample_rate, channels, AUDIO_BUFFER_MS, AUDIO_PREBUFFER_MS
@@ -198,14 +201,14 @@ impl AudioPlayer {
     pub fn play(&self, audio: &DecodedAudio) -> Result<()> {
         // Validate sample rate and channels match
         if audio.sample_rate != self.sample_rate {
-            return Err(SAideError::Audio(format!(
+            return Err(AudioError::PlaybackError(format!(
                 "Sample rate mismatch: expected {}, got {}",
                 self.sample_rate, audio.sample_rate
             )));
         }
 
         if audio.channels != self.channels {
-            return Err(SAideError::Audio(format!(
+            return Err(AudioError::PlaybackError(format!(
                 "Channel count mismatch: expected {}, got {}",
                 self.channels, audio.channels
             )));

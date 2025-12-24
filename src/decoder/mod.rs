@@ -2,6 +2,7 @@
 
 pub mod audio;
 mod auto;
+mod error;
 mod h264;
 mod h264_parser;
 mod nv12_render;
@@ -9,10 +10,10 @@ mod nvdec;
 mod rgba_render;
 mod vaapi;
 
-use {crate::error::Result, ffmpeg_next::format::Pixel};
 pub use {
     audio::{AudioDecoder, AudioPlayer, DecodedAudio, OpusDecoder},
     auto::AutoDecoder,
+    error::VideoError,
     h264::H264Decoder,
     h264_parser::extract_resolution_from_stream,
     nv12_render::{Nv12RenderResources, new_nv12_render_callback},
@@ -20,6 +21,7 @@ pub use {
     rgba_render::{RgbaRenderResources, new_rgba_render_callback},
     vaapi::VaapiDecoder,
 };
+use {error::Result, ffmpeg_next::format::Pixel};
 
 /// Decoded video frame
 #[derive(Debug)]

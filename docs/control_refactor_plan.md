@@ -236,6 +236,6 @@ fn on_init_ready(&mut self) {
 - `get_physical_screen_size()` - 用于初始化
 - `get_screen_orientation()` - 用于旋转检测
 - `get_ime_state()` - 用于输入法状态
-- `get_device_id()` - 用于设备识别
+- `get_device_serial()` - 用于设备识别
 
 这些方法不涉及实时输入，可以继续使用单次 adb 命令。

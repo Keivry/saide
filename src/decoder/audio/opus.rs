@@ -1,8 +1,11 @@
 //! Native Opus decoder using libopus directly
 
 use {
-    super::{AudioDecoder, DecodedAudio},
-    crate::error::{Result, SAideError},
+    super::{
+        AudioDecoder,
+        DecodedAudio,
+        error::{AudioError, Result},
+    },
     opus::{Channels, Decoder},
     tracing::{debug, info, trace},
 };
@@ -22,7 +25,7 @@ impl OpusDecoder {
     /// * `channels` - Number of channels (1=mono, 2=stereo)
     pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
         if sample_rate != 48000 {
-            return Err(SAideError::Format(
+            return Err(AudioError::UnsupportedFormat(
                 "Opus only supports 48000 Hz sample rate".to_string(),
             ));
         }
@@ -31,14 +34,15 @@ impl OpusDecoder {
             1 => Channels::Mono,
             2 => Channels::Stereo,
             _ => {
-                return Err(SAideError::Format(
+                return Err(AudioError::UnsupportedFormat(
                     "Opus only supports mono or stereo channels".to_string(),
                 ));
             }
         };
 
-        let decoder = Decoder::new(sample_rate, opus_channels)
-            .map_err(|e| SAideError::Audio(format!("Failed to create Opus decoder: {:?}", e)))?;
+        let decoder = Decoder::new(sample_rate, opus_channels).map_err(|e| {
+            AudioError::InitializationError(format!("Failed to create Opus decoder: {:?}", e))
+        })?;
 
         info!(
             "Initialized native Opus decoder: {}Hz, {} channels",

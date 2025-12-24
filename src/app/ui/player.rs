@@ -16,7 +16,7 @@ use {
             extract_resolution_from_stream,
             new_nv12_render_callback,
         },
-        error::{Result, SAideError},
+        error::{ConnectionLost, Result, SAideError},
         scrcpy::protocol::video::VideoPacket,
         sync::AVSync,
     },
@@ -170,16 +170,16 @@ impl StreamPlayer {
         video_stream: TcpStream,
         audio_stream: Option<TcpStream>,
         video_resolution: (u32, u32),
-        device_id: String,
+        serial: &str,
     ) {
         info!(
             "Starting stream with provided connections: {}x{} (device: {})",
-            video_resolution.0, video_resolution.1, device_id
+            video_resolution.0, video_resolution.1, serial
         );
         self.state = PlayerState::Connecting;
 
+        let serial = serial.to_owned();
         let event_tx = self.event_tx.clone();
-
         let cancel_token = self.cancel_token.clone();
         self.stream_thread = Some(thread::spawn(move || {
             if cancel_token.is_cancelled() {
@@ -191,7 +191,7 @@ impl StreamPlayer {
                 video_stream,
                 audio_stream,
                 video_resolution,
-                device_id,
+                &serial,
                 event_tx.clone(),
                 cancel_token,
             ) {
@@ -524,7 +524,7 @@ fn stream_worker(
     mut video_stream: TcpStream,
     audio_stream: Option<TcpStream>,
     video_resolution: (u32, u32),
-    device_id: String,
+    serial: &str,
     event_tx: Sender<PlayerEvent>,
     token: CancellationToken,
 ) -> Result<()> {
@@ -561,6 +561,7 @@ fn stream_worker(
     let stats = Arc::new(Mutex::new(StreamStats::default()));
 
     // Spawn audio thread (if audio stream available)
+    let audio_serial = serial.to_owned();
     let audio_token = token.clone();
     let _audio_thread = if let Some(mut audio_stream) = audio_stream {
         let stats_audio = stats.clone();
@@ -593,10 +594,10 @@ fn stream_worker(
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
                             if is_shutdown(&e) {
-                                return Err(SAideError::ConnectionLost {
-                                    device: device_id.clone(),
-                                    reason: "Audio stream connection closed".to_string(),
-                                });
+                                return Err(SAideError::ConnectionLost(ConnectionLost::new(
+                                    &audio_serial,
+                                    "Audio stream connection closed",
+                                )));
                             }
                             return Err(e);
                         }
@@ -643,10 +644,10 @@ fn stream_worker(
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
                             if is_shutdown(&e) {
-                                return Err(SAideError::ConnectionLost {
-                                    device: device_id.clone(),
-                                    reason: "Audio payload connection closed".to_string(),
-                                });
+                                return Err(SAideError::ConnectionLost(ConnectionLost::new(
+                                    &audio_serial,
+                                    "Audio payload connection closed",
+                                )));
                             }
                             return Err(e);
                         }
@@ -723,10 +724,10 @@ fn stream_worker(
                             consecutive_read_errors
                         );
                         if is_shutdown(&e) {
-                            return Err(SAideError::ConnectionLost {
-                                device: device_id.clone(),
-                                reason: "Video stream connection closed".to_string(),
-                            });
+                            return Err(SAideError::ConnectionLost(ConnectionLost::new(
+                                serial,
+                                "Video stream connection closed",
+                            )));
                         }
                         return Err(e);
                     }
@@ -774,7 +775,7 @@ fn stream_worker(
             let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
                 Ok(frame) => frame,
                 Err(e) => {
-                    let e = SAideError::Decode(e.to_string());
+                    let e = SAideError::DecodeError(e.to_string());
                     if is_shutdown(&e) {
                         info!("Video decode error (shutdown): {}", e);
                         return Err(e);

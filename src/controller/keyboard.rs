@@ -142,18 +142,18 @@ impl KeyboardMapper {
         }
     }
 
-    /// Refresh available profiles based on device ID and rotation
+    /// Refresh available profiles based on device serial and rotation
     ///
     /// # Parameters
-    /// - `device_id`: current device ID
+    /// - `device_serial`: current device serial
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
-    pub fn refresh_profiles(&self, device_id: &str, device_rotation: u32) {
-        let avail_profiles = self.config.filter_profiles(device_id, device_rotation);
+    pub fn refresh_profiles(&self, device_serial: &str, device_rotation: u32) {
+        let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
 
         if avail_profiles.is_empty() {
             info!(
-                "No matching profiles found for device ID '{}' with rotation {}.",
-                device_id, device_rotation
+                "No matching profiles found for device serial '{}' with rotation {}.",
+                device_serial, device_rotation
             );
             info!("Disable custom key mappings for this device/rotation.");
 
@@ -161,9 +161,9 @@ impl KeyboardMapper {
             self.active_mappings.write().clear();
         } else {
             info!(
-                "Found {} matching profiles for device ID '{}' with rotation {}.",
+                "Found {} matching profiles for device serial '{}' with rotation {}.",
                 avail_profiles.len(),
-                device_id,
+                device_serial,
                 device_rotation
             );
 

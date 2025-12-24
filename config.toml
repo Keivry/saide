@@ -32,7 +32,7 @@ show_notification = true
 
 [[mappings.profiles]]
 name = "AskTao"
-device_id = "10AF971ZLN004SU"
+device_serial = "10AF971ZLN004SU"
 rotation = 1
 
 [[mappings.profiles.mappings]]

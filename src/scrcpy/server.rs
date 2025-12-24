@@ -318,9 +318,7 @@ pub fn get_socket_name(scid: u32) -> String { format!("scrcpy_{:08x}", scid) }
 /// if send_device_meta=true (default)
 pub fn read_device_meta<R: std::io::Read>(stream: &mut R) -> Result<String> {
     let mut buffer = [0u8; 64]; // DEVICE_NAME_FIELD_LENGTH
-    stream
-        .read_exact(&mut buffer)
-        .map_err(|e| SAideError::Io(format!("Failed to read device metadata: {}", e)))?;
+    stream.read_exact(&mut buffer)?;
 
     // Find null terminator
     let len = buffer.iter().position(|&b| b == 0).unwrap_or(64);

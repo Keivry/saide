@@ -4,10 +4,7 @@
 //! input events to Android device via scrcpy protocol.
 
 use {
-    crate::{
-        error::{Result, SAideError},
-        scrcpy::protocol::control::ControlMessage,
-    },
+    crate::{error::Result, scrcpy::protocol::control::ControlMessage},
     parking_lot::Mutex,
     std::{io::Write, net::TcpStream, sync::Arc},
     tracing::trace,
@@ -46,19 +43,15 @@ impl ControlSender {
     /// Send a control message (internal helper)
     fn send_message(&self, msg: &ControlMessage) -> Result<()> {
         let mut buf = Vec::with_capacity(64);
-        msg.serialize(&mut buf)
-            .map_err(|e| SAideError::Channel(format!("Serialization error: {}", e)))?;
+
+        msg.serialize(&mut buf)?;
         trace!("Serialized message: {} bytes", buf.len());
 
         let mut stream = self.stream.lock();
-        stream.write_all(&buf).map_err(|e| {
-            SAideError::Channel(format!("Failed to write to control stream: {}", e))
-        })?;
-        stream
-            .flush()
-            .map_err(|e| SAideError::Channel(format!("Failed to flush control stream: {}", e)))?;
-
+        stream.write_all(&buf)?;
+        stream.flush()?;
         trace!("Sent control message: {:?}", msg);
+
         Ok(())
     }
 

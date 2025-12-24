@@ -1,8 +1,11 @@
 //! NVIDIA NVDEC hardware-accelerated H.264 decoder
 
 use {
-    super::{DecodedFrame, VideoDecoder},
-    crate::error::{Result, SAideError},
+    super::{
+        DecodedFrame,
+        VideoDecoder,
+        error::{Result, VideoError},
+    },
     ffmpeg::{
         codec,
         format::Pixel,
@@ -37,7 +40,7 @@ pub struct NvdecDecoder {
 impl NvdecDecoder {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         // Initialize FFmpeg
-        ffmpeg::init().map_err(|e| SAideError::Video(format!("Failed to init FFmpeg: {:?}", e)))?;
+        ffmpeg::init()?;
 
         // Set FFmpeg log level to error only (suppress warnings)
         unsafe {
@@ -56,9 +59,8 @@ impl NvdecDecoder {
                 0,
             );
             if ret < 0 {
-                return Err(SAideError::Video(format!(
-                    "Failed to create CUDA device context: {}",
-                    ret
+                return Err(VideoError::InitializationError(format!(
+                    "Failed to create CUDA device context: {ret}",
                 )));
             }
         }
@@ -66,8 +68,9 @@ impl NvdecDecoder {
         info!("CUDA device context created");
 
         // Find h264_cuvid decoder
-        let codec = ffmpeg::decoder::find_by_name("h264_cuvid")
-            .ok_or_else(|| SAideError::Video("H.264 CUVID decoder not found".to_string()))?;
+        let codec = ffmpeg::decoder::find_by_name("h264_cuvid").ok_or_else(|| {
+            VideoError::InitializationError("H.264 CUVID decoder not found".to_string())
+        })?;
 
         info!("Found H.264 CUVID decoder: {}", codec.name());
 
@@ -95,15 +98,11 @@ impl NvdecDecoder {
             (*ctx_ptr).thread_count = 1;
         }
 
-        let decoder = context
-            .decoder()
-            .video()
-            .map_err(|e| SAideError::Video(format!("Failed to create NVDEC decoder: {:?}", e)))?;
+        let decoder = context.decoder().video().map_err(|e| {
+            VideoError::InitializationError(format!("Failed to create NVDEC decoder: {e:?}"))
+        })?;
 
-        debug!(
-            "NVDEC H.264 decoder initialized (will auto-detect {}x{} from stream)",
-            width, height
-        );
+        debug!("NVDEC H.264 decoder initialized (will auto-detect {width}x{height} from stream)");
 
         Ok(Self {
             decoder,
@@ -129,7 +128,7 @@ impl NvdecDecoder {
             // EAGAIN is normal (decoder busy), others might indicate resolution change
             let err_str = format!("{:?}", e);
             if !err_str.contains("EAGAIN") {
-                warn!("send_packet failed (possibly resolution change): {:?}", e);
+                warn!("send_packet failed (possibly resolution change): {e:?}");
                 // Don't fail here - let receive_frames handle it
             }
         }
@@ -155,7 +154,7 @@ impl NvdecDecoder {
                             0,
                         );
                         if ret < 0 {
-                            warn!("Failed to transfer frame from GPU: {}", ret);
+                            warn!("Failed to transfer frame from GPU: {ret}");
                             continue;
                         }
                     }
@@ -179,8 +178,7 @@ impl NvdecDecoder {
                     let uv_linesize = sw_frame.stride(1);
 
                     trace!(
-                        "NV12 frame layout: {}x{}, Y linesize={} UV linesize={}",
-                        width, height, y_linesize, uv_linesize
+                        "NV12 frame layout: {width}x{height}, Y linesize={y_linesize} UV linesize={uv_linesize}"
                     );
 
                     // Copy NV12 data (Y + UV interleaved)
@@ -211,7 +209,7 @@ impl NvdecDecoder {
                 Err(e) => {
                     // Don't bail immediately - might be resolution change
                     // Let empty frame detection handle it
-                    warn!("receive_frame failed: {:?}", e);
+                    warn!("receive_frame failed: {e:?}");
                     break;
                 }
             }
@@ -236,7 +234,7 @@ impl VideoDecoder for NvdecDecoder {
 
             // After 3 consecutive empty frames, assume resolution changed
             if self.consecutive_empty_frames >= 3 {
-                return Err(SAideError::Video(format!(
+                return Err(VideoError::DecodingError(format!(
                     "NVDEC decoder stuck: {} consecutive empty frames (likely resolution change)",
                     self.consecutive_empty_frames
                 )));
@@ -266,9 +264,7 @@ impl VideoDecoder for NvdecDecoder {
 
     fn flush(&mut self) -> Result<Vec<DecodedFrame>> {
         debug!("Flushing decoder");
-        self.decoder.send_eof().map_err(|e| {
-            SAideError::Video(format!("Failed to send EOF to NVDEC decoder: {:?}", e))
-        })?;
+        self.decoder.send_eof()?;
         self.receive_frames()
     }
 }

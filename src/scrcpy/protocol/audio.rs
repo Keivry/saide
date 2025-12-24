@@ -33,7 +33,7 @@ impl AudioPacket {
     /// ```
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         if data.len() < 12 {
-            return Err(SAideError::Decode(format!(
+            return Err(SAideError::DecodeError(format!(
                 "Audio packet too short: expected at least 12 bytes, got {}",
                 data.len()
             )));
@@ -44,10 +44,10 @@ impl AudioPacket {
         // Read header (12 bytes)
         let pts_and_flags = cursor
             .read_u64::<BigEndian>()
-            .map_err(|e| SAideError::Decode(format!("Failed to read pts_and_flags: {}", e)))?;
+            .map_err(|e| SAideError::DecodeError(format!("Failed to read pts_and_flags: {}", e)))?;
         let packet_size = cursor
             .read_u32::<BigEndian>()
-            .map_err(|e| SAideError::Decode(format!("Failed to read packet_size: {}", e)))?;
+            .map_err(|e| SAideError::DecodeError(format!("Failed to read packet_size: {}", e)))?;
 
         // Extract PTS (lower 63 bits)
         let pts = (pts_and_flags & 0x7FFF_FFFF_FFFF_FFFF) as i64;
@@ -58,7 +58,7 @@ impl AudioPacket {
         let expected_total = payload_start + packet_size as usize;
 
         if data.len() != expected_total {
-            return Err(SAideError::Decode(format!(
+            return Err(SAideError::DecodeError(format!(
                 "Audio packet size mismatch: expected {}, got {}",
                 expected_total,
                 data.len()

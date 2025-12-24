@@ -82,8 +82,8 @@ pub struct SAideApp {
     /// Timestamp of last paint
     last_paint_instant: Option<Instant>,
 
-    /// Device ID
-    device_id: Option<String>,
+    /// Device serial
+    device_serial: String,
 
     /// Device orientation (0-3), clockwise
     device_orientation: u32,
@@ -134,7 +134,11 @@ pub struct SAideApp {
 }
 
 impl SAideApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, config_manager: ConfigManager) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        serial: &str,
+        config_manager: ConfigManager,
+    ) -> Self {
         let config = config_manager.config();
 
         let keyboard_enabled = config.general.keyboard_enabled;
@@ -166,7 +170,7 @@ impl SAideApp {
 
             last_paint_instant: None,
 
-            device_id: None,
+            device_serial: serial.to_owned(),
 
             device_orientation: 0,
 
@@ -216,7 +220,12 @@ impl SAideApp {
         let (tx, rx) = bounded::<InitEvent>(INIT_RESULT_CHANNEL_CAPACITY);
         self.init_rx = Some(rx);
 
-        start_initialization(self.config_manager.config(), tx, self.cancel_token.clone());
+        start_initialization(
+            &self.device_serial,
+            self.config_manager.config(),
+            tx,
+            self.cancel_token.clone(),
+        );
     }
 
     /// Check initialization progress and update state
@@ -232,18 +241,18 @@ impl SAideApp {
                         video_stream,
                         audio_stream,
                         video_resolution,
-                        device_id,
                         device_name,
                         audio_disabled_reason,
                         capture_orientation: corientation,
                     } => {
                         info!(
                             "ScrcpyConnection ready: {}x{}, device: {} ({:?}), capture_orientation: {:?}",
-                            video_resolution.0, video_resolution.1, device_id, device_name, corientation
+                            video_resolution.0,
+                            video_resolution.1,
+                            self.device_serial,
+                            device_name,
+                            corientation
                         );
-
-                        // Store device_id
-                        self.device_id = Some(device_id.clone());
 
                         // Store audio warning if present
                         self.audio_warning = audio_disabled_reason;
@@ -255,8 +264,12 @@ impl SAideApp {
                         self.control_sender = Some(control_sender);
 
                         // Start player with streams
-                        self.player
-                            .start(video_stream, audio_stream, video_resolution, device_id);
+                        self.player.start(
+                            video_stream,
+                            audio_stream,
+                            video_resolution,
+                            &self.device_serial,
+                        );
 
                         // Save capture_orientation for later use (after borrow ends)
                         capture_orientation = corientation;
@@ -292,7 +305,7 @@ impl SAideApp {
                 && video_rect.height() > 0.0
                 && !video_rect.min.x.is_nan();
 
-            if self.device_monitor_rx.is_some() && self.device_id.is_some() && stream_ready {
+            if self.device_monitor_rx.is_some() && stream_ready {
                 self.init_state = InitState::Ready;
                 info!("Initialization completed successfully");
 
@@ -876,17 +889,13 @@ impl SAideApp {
     fn refresh_mapping_profiles(&mut self) {
         let device_orientation = self.device_orientation;
 
-        let (keyboard_mapper, device_id) =
-            match (self.keyboard_mapper.as_mut(), self.device_id.as_ref()) {
-                (Some(km), Some(did)) => (km, did),
-                _ => {
-                    debug!("Keyboard mapper or device ID not available for profile refresh");
-                    self.indicator.reset_profiles();
-                    return;
-                }
-            };
+        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+            debug!("Keyboard mapper not available for profile refresh");
+            self.indicator.reset_profiles();
+            return;
+        };
 
-        keyboard_mapper.refresh_profiles(device_id, device_orientation);
+        keyboard_mapper.refresh_profiles(&self.device_serial, device_orientation);
 
         let avail_profile_names = keyboard_mapper.get_avail_profiles();
         let active_profile_name = keyboard_mapper.get_active_profile_name();

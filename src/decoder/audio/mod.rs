@@ -1,12 +1,12 @@
 //! Audio decoding and playback
 
+mod error;
 mod opus;
 mod player;
 
 // Export both for flexibility
-pub use {opus::OpusDecoder, player::AudioPlayer};
-
-use crate::error::Result;
+use error::Result;
+pub use {error::AudioError, opus::OpusDecoder, player::AudioPlayer};
 
 /// Decoded audio frame
 #[derive(Debug, Clone)]

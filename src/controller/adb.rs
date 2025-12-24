@@ -1,7 +1,7 @@
 //! Module for interacting with Android devices via adb commands.
 //!
 //! This module provides functions to retrieve device information such as
-//! screen size, orientation, input method state, and device ID using adb commands.
+//! screen size, orientation, input method state, and device serial using adb commands.
 
 use {
     crate::error::{Result, SAideError},
@@ -26,58 +26,59 @@ pub struct AdbShell;
 impl AdbShell {
     /// Get Android device screen size using separate adb command
     /// blocking until command completes.
-    pub fn get_physical_screen_size() -> Result<(u32, u32)> {
+    pub fn get_physical_screen_size(serial: &str) -> Result<(u32, u32)> {
+        check_serial(serial)?;
+
         // Use separate adb command to get screen size, not through shell session
         let output = Command::new("adb")
+            .args(["-s", serial])
             .args(["shell", "wm size"])
             .output()
             .map_err(|e| {
-                SAideError::Adb(format!("Failed to query Android device screen size: {}", e))
+                SAideError::AdbError(format!(
+                    "Failed to query screen size for device {serial}: {e}",
+                ))
             })?;
 
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
         // Parse output like "Physical size: 1080x2340"
-        let Some(line) = output_str
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        output_str
             .lines()
             .find(|line| line.contains("Physical size:"))
-        else {
-            return Err(SAideError::Adb(format!(
-                "Failed to find 'Physical size' in output: {}",
-                output_str.trim()
-            )));
-        };
+            .and_then(|line| line.split(':').nth(1))
+            .and_then(|size_part| {
+                let size_str = size_part.trim();
+                let mut parts = size_str.split('x');
+                let width = parts.next().and_then(|w| w.trim().parse::<u32>().ok());
+                let height = parts.next().and_then(|h| h.trim().parse::<u32>().ok());
 
-        let Some(size_part) = line.split(':').nth(1) else {
-            return Err(SAideError::Adb(format!(
-                "Failed to parse size from line: {}",
-                line
-            )));
-        };
-
-        let size_str = size_part.trim();
-        let mut parts = size_str.split('x');
-        let width = parts
-            .next()
-            .and_then(|w| w.trim().parse::<u32>().ok())
-            .ok_or_else(|| SAideError::Adb(format!("Failed to parse width from: {}", size_str)))?;
-        let height = parts
-            .next()
-            .and_then(|h| h.trim().parse::<u32>().ok())
-            .ok_or_else(|| SAideError::Adb(format!("Failed to parse height from: {}", size_str)))?;
-
-        Ok((width, height))
+                match (width, height) {
+                    (Some(w), Some(h)) => Some((w, h)),
+                    _ => None,
+                }
+            })
+            .ok_or_else(|| {
+                SAideError::AdbError(format!(
+                    "Failed to parse screen size from output: {}",
+                    output_str.trim()
+                ))
+            })
     }
 
     /// Get Android device screen orientation using separate adb command (with 3s timeout)
-    pub fn get_screen_orientation() -> Result<u32> {
+    pub fn get_screen_orientation(serial: &str) -> Result<u32> {
+        check_serial(serial)?;
+
         let child = Command::new("adb")
+            .args(["-s", serial])
             .args(["shell", "dumpsys window displays | grep mCurrentRotation"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
-                SAideError::Adb(format!("Failed to query Android device orientation: {}", e))
+                SAideError::AdbError(format!(
+                    "Failed to query orientation for device {serial}: {e}"
+                ))
             })?;
 
         // Wait with 3 second timeout
@@ -89,65 +90,57 @@ impl AdbShell {
         let output = match rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
-                return Err(SAideError::Adb(format!(
+                return Err(SAideError::AdbError(format!(
                     "Failed to query Android device orientation: {}",
                     e
                 )));
             }
             Err(_) => {
-                return Err(SAideError::Adb(
+                return Err(SAideError::AdbError(
                     "Timeout to query Android device orientation".to_string(),
                 ));
             }
         };
 
         if !output.status.success() {
-            return Err(SAideError::Adb(format!(
+            return Err(SAideError::AdbError(format!(
                 "Failed to query Android device orientation, adb exited with status: {}",
                 output.status
             )));
         }
 
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
         // Parse output like "mCurrentRotation=ROTATION_0"
         // TODO: Support different Android versions if output format changes
-        let Some(line) = output_str
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        output_str
             .lines()
             .find(|line| line.contains("mCurrentRotation"))
-        else {
-            return Err(SAideError::Adb(format!(
-                "Failed to find 'mCurrentRotation' in output: {}",
-                output_str.trim()
-            )));
-        };
-
-        let Some(rotation_part) = line.split('=').nth(1) else {
-            return Err(SAideError::Adb(format!(
-                "Failed to parse rotation from line: {}",
-                line
-            )));
-        };
-
-        let rotation_str = rotation_part.trim();
-        // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
-        Ok(match rotation_str {
-            "ROTATION_0" => 0,
-            "ROTATION_90" => 1,
-            "ROTATION_180" => 2,
-            "ROTATION_270" => 3,
-            other => {
-                return Err(SAideError::Adb(format!(
-                    "Unknown rotation value: {}",
-                    other
-                )));
-            }
-        })
+            .and_then(|line| line.split('=').nth(1))
+            .and_then(|rotation_part| {
+                let rotation_str = rotation_part.trim();
+                // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
+                match rotation_str {
+                    "ROTATION_0" => Some(0),
+                    "ROTATION_90" => Some(1),
+                    "ROTATION_180" => Some(2),
+                    "ROTATION_270" => Some(3),
+                    _ => None,
+                }
+            })
+            .ok_or_else(|| {
+                SAideError::AdbError(format!(
+                    "Failed to parse rotation from output: {}",
+                    output_str.trim()
+                ))
+            })
     }
 
     /// Get android device input method state (with 3s timeout)
-    pub fn get_ime_state() -> Result<bool> {
+    pub fn get_ime_state(serial: &str) -> Result<bool> {
+        check_serial(serial)?;
+
         let child = Command::new("adb")
+            .args(["-s", serial])
             .args([
                 "shell",
                 "dumpsys window InputMethod | grep 'isVisible=true'",
@@ -155,7 +148,11 @@ impl AdbShell {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| SAideError::Adb(format!("Failed to query ime state in device: {}", e)))?;
+            .map_err(|e| {
+                SAideError::AdbError(format!(
+                    "Failed to query ime state for device {serial}: {e}"
+                ))
+            })?;
 
         // Wait with 3 second timeout
         let (tx, rx) = mpsc::channel();
@@ -166,13 +163,12 @@ impl AdbShell {
         let output = match rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
-                return Err(SAideError::Adb(format!(
-                    "Failed to query ime state in device: {}",
-                    e
+                return Err(SAideError::AdbError(format!(
+                    "Failed to query ime state in device: {e}",
                 )));
             }
             Err(_) => {
-                return Err(SAideError::Adb(
+                return Err(SAideError::AdbError(
                     "Timeout to query ime state in device".to_string(),
                 ));
             }
@@ -181,24 +177,31 @@ impl AdbShell {
         Ok(output.status.success())
     }
 
-    /// Get Android device ID using adb command, blocking until command completes.
-    pub fn get_device_id() -> Result<String> {
+    /// Get Android device serial using adb command, blocking until command completes.
+    pub fn get_device_serial() -> Result<String> {
         let output = Command::new("adb")
             .args(["get-serialno"])
             .output()
-            .map_err(|e| SAideError::Adb(format!("Failed to query Android device Id: {}", e)))?;
+            .map_err(|e| {
+                SAideError::AdbError(format!("Failed to query Android device Id: {}", e))
+            })?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let device_id = output_str.trim().to_string();
-        Ok(device_id)
+        let device_serial = output_str.trim().to_string();
+        Ok(device_serial)
     }
 
     /// Get ADB device state (device/offline/unauthorized/no device)
-    pub fn get_device_state() -> Result<DeviceState> {
+    pub fn get_device_state(serial: &str) -> Result<DeviceState> {
+        check_serial(serial)?;
+
         let output = Command::new("adb")
+            .args(["-s", serial])
             .args(["get-state"])
             .output()
-            .map_err(|e| SAideError::Adb(format!("Failed to query Android device state: {}", e)))?;
+            .map_err(|e| {
+                SAideError::AdbError(format!("Failed to query state for device {serial}: {e}"))
+            })?;
 
         let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if state.contains("unauthorized") {
@@ -208,27 +211,19 @@ impl AdbShell {
         } else if state.contains("device") {
             Ok(DeviceState::Connected)
         } else {
-            Err(SAideError::Adb(format!(
-                "Unknown Android device state: {}",
-                state
+            Err(SAideError::AdbError(format!(
+                "Unknown Android device state: {state}",
             )))
         }
     }
 
     /// Get Android API level, e.g., 30 for Android 11. Blocking until command completes.
     pub fn get_android_version(serial: &str) -> Result<u32> {
-        if serial.is_empty() {
-            return Err(SAideError::Adb(
-                "Device serial cannot be empty for querying Android version".to_string(),
-            ));
-        }
-
         let output = AdbShell::get_prop(serial, "ro.build.version.sdk")?;
-
         output
             .trim()
             .parse()
-            .map_err(|e| SAideError::Adb(format!("Failed to parse Android version: {}", e)))
+            .map_err(|e| SAideError::AdbError(format!("Failed to parse Android version: {}", e)))
     }
 
     /// Get device platform
@@ -243,11 +238,7 @@ impl AdbShell {
 
     /// Get Android system property
     pub fn get_prop(serial: &str, prop_name: &str) -> Result<String> {
-        if serial.is_empty() {
-            return Err(SAideError::Adb(
-                "Device serial cannot be empty for querying property".to_string(),
-            ));
-        }
+        check_serial(serial)?;
 
         let output = Command::new("adb")
             .args(["-s", serial, "shell", "getprop", prop_name])
@@ -266,11 +257,7 @@ impl AdbShell {
 
     /// Push file to Android device using adb push command, blocking until command completes.
     pub fn push_file(serial: &str, file: &str, path: &str) -> Result<()> {
-        if serial.is_empty() {
-            return Err(SAideError::Adb(
-                "Device serial cannot be empty for pushing file to device".to_string(),
-            ));
-        }
+        check_serial(serial)?;
 
         let status = Command::new("adb")
             .args(["-s", serial, "push", file, path])
@@ -278,14 +265,14 @@ impl AdbShell {
             .stderr(Stdio::piped())
             .status()
             .map_err(|e| {
-                SAideError::Adb(format!(
+                SAideError::AdbError(format!(
                     "Failed to push file [{}] to device [{}]: {}",
                     file, path, e
                 ))
             })?;
 
         if !status.success() {
-            return Err(SAideError::Adb(format!(
+            return Err(SAideError::AdbError(format!(
                 "Failed to push file [{}] to device [{}], adb exited with status: {}",
                 file, path, status
             )));
@@ -307,12 +294,7 @@ impl AdbShell {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        if serial.is_empty() {
-            return Err(SAideError::Adb(
-                "Device serial cannot be empty for executing JAR file on Android device"
-                    .to_string(),
-            ));
-        }
+        check_serial(serial)?;
 
         let child = Command::new("adb")
             .args(["-s", serial])
@@ -329,7 +311,7 @@ impl AdbShell {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
-                SAideError::Adb(format!(
+                SAideError::AdbError(format!(
                     "Failed to execute JAR file [{}] on device [{}]: {}",
                     jar, serial, e
                 ))
@@ -342,11 +324,7 @@ impl AdbShell {
     ///
     /// Command: `adb reverse localabstract:<socket_name> tcp:<local_port>`
     pub fn setup_reverse_tunnel(serial: &str, socket_name: &str, local_port: u16) -> Result<()> {
-        if serial.is_empty() {
-            return Err(SAideError::Adb(
-                "Device serial cannot be empty for setting up reverse tunnel".to_string(),
-            ));
-        }
+        check_serial(serial)?;
 
         let status = Command::new("adb")
             .args([
@@ -358,14 +336,14 @@ impl AdbShell {
             ])
             .status()
             .map_err(|e| {
-                SAideError::Adb(format!(
+                SAideError::AdbError(format!(
                     "Failed to setup adb reverse tunnel for device [{}]: {}",
                     serial, e
                 ))
             })?;
 
         if !status.success() {
-            return Err(SAideError::Adb(format!(
+            return Err(SAideError::AdbError(format!(
                 "Failed to setup adb reverse tunnel for device [{}], adb exited with status: {}",
                 serial, status
             )));
@@ -376,11 +354,7 @@ impl AdbShell {
 
     /// Remove ADB reverse tunnel
     pub fn remove_reverse_tunnel(serial: &str, socket_name: &str) -> Result<()> {
-        if serial.is_empty() {
-            return Err(SAideError::Adb(
-                "Device serial cannot be empty for removing reverse tunnel".to_string(),
-            ));
-        }
+        check_serial(serial)?;
 
         let status = Command::new("adb")
             .args([
@@ -397,7 +371,7 @@ impl AdbShell {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 // Ignore "not found" errors (tunnel already removed)
                 if !stderr.contains("not found") && !stderr.is_empty() {
-                    return Err(SAideError::Adb(format!(
+                    return Err(SAideError::AdbError(format!(
                         "Failed to remove adb reverse tunnel for device [{}], adb exited with status: {}, stderr: {}",
                         serial, output.status, stderr
                     )));
@@ -405,7 +379,7 @@ impl AdbShell {
             }
             Ok(_) => {}
             Err(e) => {
-                return Err(SAideError::Adb(format!(
+                return Err(SAideError::AdbError(format!(
                     "Failed to remove adb reverse tunnel for device [{}]: {}",
                     serial, e
                 )));
@@ -414,4 +388,13 @@ impl AdbShell {
 
         Ok(())
     }
+}
+
+fn check_serial(serial: &str) -> Result<()> {
+    if serial.is_empty() {
+        return Err(SAideError::AdbError(
+            "Device serial cannot be empty".to_string(),
+        ));
+    }
+    Ok(())
 }

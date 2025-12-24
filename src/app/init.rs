@@ -56,7 +56,6 @@ pub enum InitEvent {
         video_stream: TcpStream,
         audio_stream: Option<TcpStream>,
         video_resolution: (u32, u32),
-        device_id: String,
         device_name: Option<String>,
         audio_disabled_reason: Option<String>,
         capture_orientation: Option<u32>,
@@ -69,6 +68,7 @@ pub enum InitEvent {
 
 /// Background initialization function
 pub fn start_initialization(
+    serial: &str,
     config: Arc<SAideConfig>,
     tx: Sender<InitEvent>,
     cancellation_token: CancellationToken,
@@ -93,19 +93,21 @@ pub fn start_initialization(
     }
 
     // Device monitor initialization
-    start_device_monitor(tx.clone(), cancellation_token.clone());
+    start_device_monitor(serial, tx.clone(), cancellation_token.clone());
 
     // Scrcpy connection initialization
-    start_scrcpy_connection(config, tx.clone(), cancellation_token.clone());
+    start_scrcpy_connection(serial, config, tx.clone(), cancellation_token.clone());
 }
 
 fn start_scrcpy_connection(
+    serial: &str,
     config: Arc<SAideConfig>,
     tx: Sender<InitEvent>,
     token: CancellationToken,
 ) {
     // ScrcpyConnection initialization (async - moved to separate thread)
     // This will create mappers AFTER connection is established
+    let serial = serial.to_owned();
     thread::spawn(move || -> Result<()> {
         info!("Establishing scrcpy connection...");
 
@@ -114,7 +116,7 @@ fn start_scrcpy_connection(
             info!("Scrcpy connection initialization cancelled");
             return Ok(());
         }
-        let serial = AdbShell::get_device_id()?;
+
         debug!("Connecting to device: {}", serial);
 
         // Check if we should lock orientation for NVDEC
@@ -138,7 +140,7 @@ fn start_scrcpy_connection(
                 _ = token.cancelled() => {
                     Err(SAideError::Cancelled)
                 },
-                conn = scrcpy_connection(config.clone(), serial, capture_orientation) => {
+                conn = scrcpy_connection(&serial, config.clone(), capture_orientation) => {
                     conn
                 }
             }
@@ -189,7 +191,6 @@ fn start_scrcpy_connection(
             video_stream,
             audio_stream,
             video_resolution,
-            device_id: serial.clone(),
             device_name,
             audio_disabled_reason,
             capture_orientation,
@@ -217,7 +218,8 @@ fn start_scrcpy_connection(
     });
 }
 
-fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
+fn start_device_monitor(serial: &str, tx: Sender<InitEvent>, token: CancellationToken) {
+    let serial = serial.to_owned();
     thread::spawn(move || -> Result<()> {
         info!("Starting device monitor thread...");
 
@@ -242,7 +244,7 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
                 break;
             }
 
-            if let Ok(state) = AdbShell::get_device_state()
+            if let Ok(state) = AdbShell::get_device_state(&serial)
                 && state != DeviceState::Connected
             {
                 info!("ADB state: {:?} - sending DeviceOffline event", state);
@@ -257,7 +259,7 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
                 break;
             }
 
-            match AdbShell::get_screen_orientation() {
+            match AdbShell::get_screen_orientation(&serial) {
                 Ok(current_rotation) => {
                     consecutive_errors = 0; // Reset error counter on success
 
@@ -300,7 +302,7 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
 
             // Poll input method state (skip if device is disconnected)
             if consecutive_errors == 0
-                && let Ok(im_state) = AdbShell::get_ime_state()
+                && let Ok(im_state) = AdbShell::get_ime_state(&serial)
                 && event_tx
                     .send(DeviceMonitorEvent::ImStateChanged(im_state))
                     .is_err()
@@ -323,14 +325,14 @@ fn start_device_monitor(tx: Sender<InitEvent>, token: CancellationToken) {
 }
 
 async fn scrcpy_connection(
+    serial: &str,
     config: Arc<SAideConfig>,
-    serial: String,
     capture_orientation: Option<u32>,
 ) -> Result<ScrcpyConnection> {
     let server_path = &config.general.scrcpy_server;
 
     // Create server params from config
-    let mut params = ServerParams::for_device(&serial)?;
+    let mut params = ServerParams::for_device(serial)?;
 
     // Apply config settings
     let bit_rate = {
@@ -379,7 +381,7 @@ async fn scrcpy_connection(
         info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
     }
 
-    ScrcpyConnection::connect(&serial, server_path, params)
+    ScrcpyConnection::connect(serial, server_path, params)
         .await
         .map_err(|e| {
             error!("Failed to establish scrcpy connection: {}", e);

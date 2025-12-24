@@ -11,7 +11,7 @@ use {
     crate::{
         config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
         constant::SCRCPY_SERVER_VERSION_STRING,
-        error::{Result, SAideError},
+        error::Result,
     },
     directories::ProjectDirs,
     lazy_static::lazy_static,
@@ -147,17 +147,14 @@ impl SAideConfig {
     /// Load configuration from file
     pub fn load(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
-        toml::from_str(&content)
-            .map_err(|e| SAideError::Config(format!("Failed to parse config file {}: {}", path, e)))
+        let config: SAideConfig = toml::from_str(&content)?;
+        Ok(config)
     }
 
     /// Save configuration to file
     pub fn save(&self, path: &str) -> Result<()> {
-        let content = toml::to_string_pretty(self).map_err(|e| {
-            SAideError::Config(format!("Failed to serialize config for {}: {}", path, e))
-        })?;
-        fs::write(path, content)
-            .map_err(|e| SAideError::Io(format!("Failed to write config file {}: {}", path, e)))?;
+        let content = toml::to_string_pretty(self)?;
+        fs::write(path, content)?;
         Ok(())
     }
 }

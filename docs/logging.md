@@ -151,7 +151,7 @@ trace!("Frame decoded: {}x{}", width, height);
 debug!("State transition: {:?} -> {:?}", old, new);
 
 // 关键流程
-info!("Connected to device: {}", device_id);
+info!("Connected to device: {}", device_serial);
 
 // 警告
 warn!("Using fallback decoder due to: {}", reason);

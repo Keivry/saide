@@ -72,7 +72,7 @@ scrcpy: Option<Scrcpy>,       → // 移除（内置）
 StreamPlayer::new(cc)          // 简化，无需 config
 
 // 启动
-player.start(device_id)        // 直接传 serial
+player.start(device_serial)        // 直接传 serial
 
 // 移除所有 scrcpy 进程管理代码
 ```

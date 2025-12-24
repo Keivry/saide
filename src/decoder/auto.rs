@@ -4,8 +4,8 @@
 //! based on the detected GPU type (NVIDIA, Intel/AMD, or software fallback).
 
 use {
-    super::{DecodedFrame, H264Decoder, NvdecDecoder, VaapiDecoder, VideoDecoder},
-    crate::{GpuType, detect_gpu, error::Result},
+    super::{DecodedFrame, H264Decoder, NvdecDecoder, VaapiDecoder, VideoDecoder, error::Result},
+    crate::{GpuType, detect_gpu},
     tracing::{info, warn},
 };
 
@@ -20,7 +20,7 @@ impl AutoDecoder {
     /// Create decoder with automatic GPU detection
     pub fn new(width: u32, height: u32) -> Result<Self> {
         let gpu_type = detect_gpu();
-        info!("Detected GPU type: {:?}", gpu_type);
+        info!("Detected GPU type: {gpu_type:?}");
 
         match gpu_type {
             GpuType::Nvidia => {
@@ -28,10 +28,7 @@ impl AutoDecoder {
                 match NvdecDecoder::new(width, height) {
                     Ok(decoder) => Ok(Self::Nvdec(decoder)),
                     Err(e) => {
-                        warn!(
-                            "Failed to initialize NVDEC: {}, falling back to software",
-                            e
-                        );
+                        warn!("Failed to initialize NVDEC: {e:?}, falling back to software",);
                         Ok(Self::Software(H264Decoder::new(width, height)?))
                     }
                 }
@@ -41,10 +38,7 @@ impl AutoDecoder {
                 match VaapiDecoder::new(width, height) {
                     Ok(decoder) => Ok(Self::Vaapi(decoder)),
                     Err(e) => {
-                        warn!(
-                            "Failed to initialize VAAPI: {}, falling back to software",
-                            e
-                        );
+                        warn!("Failed to initialize VAAPI: {e:?}, falling back to software",);
                         Ok(Self::Software(H264Decoder::new(width, height)?))
                     }
                 }

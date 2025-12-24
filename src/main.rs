@@ -3,6 +3,7 @@ use {
     saide::{
         app::ui::{SAideApp, Toolbar},
         config::ConfigManager,
+        controller::AdbShell,
         error::{Result, SAideError},
     },
     tracing::info,
@@ -49,10 +50,11 @@ fn main() -> Result<()> {
     info!("Max FPS: {}", config.scrcpy.video.max_fps);
     info!("Logging level: {}", config.logging.level);
 
-    start_ui(config_manager)
+    let serial = AdbShell::get_device_serial()?;
+    start_ui(&serial, config_manager)
 }
 
-fn start_ui(config_manager: ConfigManager) -> Result<()> {
+fn start_ui(serial: &str, config_manager: ConfigManager) -> Result<()> {
     let toolbar_width = Toolbar::width();
 
     let options = eframe::NativeOptions {
@@ -88,7 +90,7 @@ fn start_ui(config_manager: ConfigManager) -> Result<()> {
     eframe::run_native(
         "SAide",
         options,
-        Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, config_manager)))),
+        Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, serial, config_manager)))),
     )
-    .map_err(|e| SAideError::Ui(e.to_string()))
+    .map_err(|e| SAideError::UiError(e.to_string()))
 }

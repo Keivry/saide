@@ -8,7 +8,7 @@ use {
         GpuType,
         controller::AdbShell,
         detect_gpu,
-        error::{Result, SAideError},
+        error::{IoError, Result, SAideError},
     },
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, fs, path::PathBuf},
@@ -42,7 +42,7 @@ fn get_profile_for_gpu(gpu_type: GpuType) -> (&'static str, &'static str) {
 /// Device codec compatibility profile
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceProfile {
-    /// Device serial number
+    /// Device serial
     pub serial: String,
 
     /// Device model name
@@ -130,24 +130,26 @@ impl ProfileDatabase {
             return Ok(Self::default());
         }
 
-        let content = fs::read_to_string(&path)
-            .map_err(|e| SAideError::Io(format!("Failed to read profile database: {}", e)))?;
-        serde_json::from_str(&content)
-            .map_err(|e| SAideError::Io(format!("Failed to parse profile database: {}", e)))
+        let content = fs::read_to_string(&path).map_err(|e| {
+            SAideError::IoError(IoError::new(e).with_message("Failed to read profile database"))
+        })?;
+        serde_json::from_str(&content).map_err(|e| {
+            SAideError::IoError(IoError::new_with_message(format!(
+                "Failed to parse profile database: {}",
+                e
+            )))
+        })
     }
 
     /// Save to config file
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| SAideError::Io(format!("Failed to create config directory: {}", e)))?;
+            fs::create_dir_all(parent)?;
         }
 
-        let content = serde_json::to_string_pretty(&self)
-            .map_err(|e| SAideError::Io(format!("Failed to serialize profile database: {}", e)))?;
-        fs::write(&path, content)
-            .map_err(|e| SAideError::Io(format!("Failed to write profile database: {}", e)))?;
+        let content = serde_json::to_string_pretty(&self)?;
+        fs::write(&path, content)?;
 
         info!("Saved device profiles to {:?}", path);
         Ok(())
@@ -155,12 +157,7 @@ impl ProfileDatabase {
 
     /// Get config file path
     fn config_path() -> Result<PathBuf> {
-        let home = std::env::var("HOME").map_err(|e| {
-            SAideError::Io(format!(
-                "Failed to get HOME directory for profile database: {}",
-                e
-            ))
-        })?;
+        let home = std::env::var("HOME")?;
         Ok(PathBuf::from(home)
             .join(".config")
             .join("saide")

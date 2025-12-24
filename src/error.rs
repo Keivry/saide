@@ -8,65 +8,131 @@
 //! - Io: Network/file I/O errors (preserves ErrorKind)
 //! - Other: Unexpected errors
 
-use {std::io, thiserror::Error};
+use {
+    super::decoder::{VideoError, audio::AudioError},
+    serde_json::Error as SerdeError,
+    std::{env::VarError, fmt, io},
+    thiserror::Error,
+    toml::{de::Error as TomlDeError, ser::Error as TomlError},
+};
+
+#[derive(Clone, Debug)]
+pub struct IoError {
+    source_kind: io::ErrorKind,
+    message: String,
+}
+
+impl IoError {
+    pub fn new(source: io::Error) -> Self {
+        Self {
+            source_kind: source.kind(),
+            message: source.to_string(),
+        }
+    }
+
+    pub fn new_with_message(message: impl Into<String>) -> Self {
+        Self {
+            source_kind: io::ErrorKind::Other,
+            message: message.into(),
+        }
+    }
+
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
+        self
+    }
+
+    pub fn message(&self) -> &str { &self.message }
+
+    pub fn kind(&self) -> io::ErrorKind { self.source_kind }
+}
+
+impl fmt::Display for IoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.message, self.kind())?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ConnectionLost {
+    device: String,
+    reason: String,
+}
+
+impl ConnectionLost {
+    pub fn new(device: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            device: device.into(),
+            reason: reason.into(),
+        }
+    }
+}
+
+impl fmt::Display for ConnectionLost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Connection lost for device {}: {}",
+            self.device, self.reason
+        )
+    }
+}
 
 /// SAide unified error type
-#[derive(Error, Debug)]
+#[derive(Clone, Debug, Error)]
 pub enum SAideError {
     /// Normal shutdown via CancellationToken
-    #[error("Operation cancelled")]
+    #[error("Application shutdown requested")]
     Cancelled,
 
     /// Device connection lost (USB/WiFi disconnect)
-    #[error("Connection lost: {reason} (device: {device})")]
-    ConnectionLost { device: String, reason: String },
+    #[error("{0}")]
+    ConnectionLost(ConnectionLost),
 
     /// Video error
     #[error("Video error: {0}")]
-    Video(String),
+    VideoError(#[from] VideoError),
 
     /// Audio error
     #[error("Audio error: {0}")]
-    Audio(String),
+    AudioError(#[from] AudioError),
 
     /// Video/audio decoding error
     #[error("Decode error: {0}")]
-    Decode(String),
+    DecodeError(String),
 
     /// A/V Format error
     #[error("Format error: {0}")]
-    Format(String),
+    FormatError(String),
 
     /// ADB command execution error
-    #[error("ADB command failed: {command} on device {device}: {message}")]
-    Adb {
-        device: String,
-        command: String,
-        message: String,
-    },
+    #[error("ADB command failed: {0}")]
+    AdbError(String),
 
-    /// Network I/O error (preserves original ErrorKind for precise detection)
-    #[error("I/O error: {source}")]
-    Io {
-        #[source]
-        source: io::Error,
-    },
+    /// I/O error (preserves original ErrorKind for precise detection)
+    #[error("I/O error: {0}")]
+    IoError(IoError),
 
     /// Scrcpy protocol error
     #[error("Scrcpy protocol error: {0}")]
-    Protocol(String),
+    ProtocolError(String),
 
     /// Configuration error
     #[error("Configuration error: {0}")]
-    Config(String),
+    ConfigError(String),
 
     /// Channel send/receive error
     #[error("Channel error: {0}")]
-    Channel(String),
+    ChannelError(String),
 
     /// Ui error
     #[error("UI error: {0}")]
-    Ui(String),
+    UiError(String),
+
+    /// System error
+    #[error("System error: {0}")]
+    SystemError(String),
 
     /// Other unexpected errors
     #[error("Unexpected error: {0}")]
@@ -90,9 +156,9 @@ impl SAideError {
 
     /// Check if error indicates connection shutdown (using ErrorKind for precision)
     pub fn is_io_shutdown(&self) -> bool {
-        if let SAideError::Io { source } = self {
+        if let SAideError::IoError(err) = self {
             matches!(
-                source.kind(),
+                err.kind(),
                 io::ErrorKind::ConnectionReset
                     | io::ErrorKind::BrokenPipe
                     | io::ErrorKind::ConnectionAborted
@@ -105,9 +171,9 @@ impl SAideError {
 
     /// Check if error is a timeout (using ErrorKind)
     pub fn is_timeout(&self) -> bool {
-        if let SAideError::Io { source } = self {
+        if let SAideError::IoError(err) = self {
             matches!(
-                source.kind(),
+                err.kind(),
                 io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
             )
         } else {
@@ -118,15 +184,33 @@ impl SAideError {
 
 // Automatic conversions from common error types
 impl From<io::Error> for SAideError {
-    fn from(source: io::Error) -> Self { SAideError::Io { source } }
+    fn from(source: io::Error) -> Self { SAideError::IoError(IoError::new(source)) }
 }
 
 impl<T> From<crossbeam_channel::SendError<T>> for SAideError {
-    fn from(err: crossbeam_channel::SendError<T>) -> Self { SAideError::Channel(err.to_string()) }
+    fn from(err: crossbeam_channel::SendError<T>) -> Self {
+        SAideError::ChannelError(err.to_string())
+    }
 }
 
 impl From<crossbeam_channel::RecvError> for SAideError {
-    fn from(err: crossbeam_channel::RecvError) -> Self { SAideError::Channel(err.to_string()) }
+    fn from(err: crossbeam_channel::RecvError) -> Self { SAideError::ChannelError(err.to_string()) }
+}
+
+impl From<SerdeError> for SAideError {
+    fn from(err: SerdeError) -> Self { SAideError::ConfigError(err.to_string()) }
+}
+
+impl From<VarError> for SAideError {
+    fn from(err: VarError) -> Self { SAideError::SystemError(err.to_string()) }
+}
+
+impl From<TomlError> for SAideError {
+    fn from(err: TomlError) -> Self { SAideError::ConfigError(err.to_string()) }
+}
+
+impl From<TomlDeError> for SAideError {
+    fn from(err: TomlDeError) -> Self { SAideError::ConfigError(err.to_string()) }
 }
 
 #[cfg(test)]
@@ -143,10 +227,8 @@ mod tests {
 
     #[test]
     fn test_connection_lost_detection() {
-        let err = SAideError::ConnectionLost {
-            device: "emulator-5554".to_string(),
-            reason: "USB disconnected".to_string(),
-        };
+        let err =
+            SAideError::ConnectionLost(ConnectionLost::new("emulator-5554", "USB disconnected"));
         assert!(!err.is_cancelled());
         assert!(err.is_connection_lost());
         assert!(err.should_show_overlay());
@@ -157,7 +239,7 @@ mod tests {
     fn test_io_error_conversion() {
         let io_err = io::Error::new(io::ErrorKind::BrokenPipe, "pipe broken");
         let err = SAideError::from(io_err);
-        assert!(matches!(err, SAideError::Io { .. }));
+        assert!(matches!(err, SAideError::IoError { .. }));
         assert!(err.is_io_shutdown());
     }
 
