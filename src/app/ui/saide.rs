@@ -964,6 +964,13 @@ impl Drop for SAideApp {
 }
 
 impl eframe::App for SAideApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        debug!("SAideApp exiting, cancelling background tasks");
+
+        // Cancel background tasks
+        self.cancel_token.cancel();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Draw base UI (toolbar) - always visible
         self.draw_toolbar(ctx);
