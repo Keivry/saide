@@ -97,10 +97,10 @@ fn main() -> Result<()> {
 
                         if packet_count % 50 == 0 {
                             println!(
-                                "  📊 Packets: {}, Decoded: {}, Buffer: {:.1}%",
+                                "  📊 Packets: {}, Decoded: {}, Underruns: {}",
                                 packet_count,
                                 decode_count,
-                                player.buffer_level() * 100.0
+                                player.underrun_count()
                             );
                         }
                     }

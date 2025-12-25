@@ -129,9 +129,9 @@ fn main() -> Result<()> {
                 {
                     stats.last_report_sec = elapsed as u32;
                     println!(
-                        "[{:.0}s] Buffer: {:.1}%, Packets: {}, Decoded: {}",
+                        "[{:.0}s] Underruns: {}, Packets: {}, Decoded: {}",
                         elapsed,
-                        player.buffer_level() * 100.0,
+                        player.underrun_count(),
                         stats.packets_received,
                         stats.frames_decoded
                     );

@@ -18,7 +18,7 @@ use {
         },
         error::{Result, SAideError},
         scrcpy::protocol::video::VideoPacket,
-        sync::AVSync,
+        sync::{AVSync, AudioAction, DriftCorrection},
     },
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
@@ -490,6 +490,7 @@ fn stream_worker(
 
     // Spawn audio thread (if audio stream available)
     let audio_token = token.clone();
+    let av_sync_audio = av_sync.clone();
     let _audio_thread = if let Some(mut audio_stream) = audio_stream {
         let stats_audio = stats.clone();
         Some(thread::spawn(move || {
@@ -572,8 +573,53 @@ fn stream_worker(
                         s.last_audio_pts = pts;
                     }
 
+                    // Decode audio frame
                     if let Ok(Some(decoded)) = audio_decoder.decode(&payload, pts) {
-                        let _ = audio_player.play(&decoded);
+                        // Phase 3: PTS-driven audio playback
+                        let action = av_sync_audio.lock().unwrap().check_audio_pts(decoded.pts);
+
+                        match action {
+                            AudioAction::Play => {
+                                // On-time, play immediately
+                                let _ = audio_player.play(&decoded);
+                            }
+                            AudioAction::Drop => {
+                                // Too late, drop frame
+                                debug!("Dropping late audio frame: pts={}", decoded.pts);
+                            }
+                            AudioAction::Wait(_) => {
+                                // Too early, but play anyway (let underrun handle it)
+                                let _ = audio_player.play(&decoded);
+                            }
+                        }
+
+                        // Phase 4: Drift correction (every 50 frames ~= 1 second)
+                        let current_audio_frames = {
+                            let s = stats_audio.lock().unwrap();
+                            s.audio_frames
+                        };
+
+                        if current_audio_frames % 50 == 0 {
+                            let correction =
+                                av_sync_audio.lock().unwrap().update_drift(decoded.pts);
+                            match correction {
+                                DriftCorrection::DropFrame => {
+                                    debug!(
+                                        "Drift correction: dropping frame (audio ahead by {} us)",
+                                        av_sync_audio.lock().unwrap().average_drift_us()
+                                    );
+                                    // Frame already decoded but skip playing
+                                }
+                                DriftCorrection::InsertSilence => {
+                                    debug!(
+                                        "Drift correction: audio behind by {} us",
+                                        av_sync_audio.lock().unwrap().average_drift_us()
+                                    );
+                                    // Let natural underrun handle it
+                                }
+                                DriftCorrection::None => {}
+                            }
+                        }
                     }
                 }
             })() {

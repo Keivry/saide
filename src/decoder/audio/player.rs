@@ -1,21 +1,28 @@
 //! Audio playback using cpal
+//!
+//! Ultra-low latency design:
+//! - Lock-free ring buffer (rtrb, sample-level buffering)
+//! - Small fixed buffer size (128 frames = 2.67ms @ 48kHz)
+//! - No prebuffering (first sample plays immediately)
+//! - Underrun = silence (minimal latency over glitch-free)
 
 use {
     super::{
         DecodedAudio,
         error::{AudioError, Result},
     },
-    crate::constant::{AUDIO_BUFFER_MS, AUDIO_PREBUFFER_MS},
+    crate::constant::{AUDIO_BUFFER_FRAMES, AUDIO_RING_CAPACITY},
     cpal::{
+        BufferSize,
         Stream,
         StreamConfig,
         traits::{DeviceTrait, HostTrait, StreamTrait},
     },
+    rtrb::{Consumer, Producer, RingBuffer},
     std::{
         sync::{
             Arc,
-            Mutex,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread,
         time::Duration,
@@ -23,92 +30,19 @@ use {
     tracing::{debug, info, warn},
 };
 
-/// Ring buffer for audio samples
-struct RingBuffer {
-    buffer: Vec<f32>,
-    capacity: usize,
-    read_pos: usize,
-    write_pos: usize,
-    size: usize,
-}
-
-impl RingBuffer {
-    fn new(capacity: usize) -> Self {
-        Self {
-            buffer: vec![0.0; capacity],
-            capacity,
-            read_pos: 0,
-            write_pos: 0,
-            size: 0,
-        }
-    }
-
-    fn write(&mut self, data: &[f32]) -> usize {
-        let available = self.capacity - self.size;
-        let to_write = data.len().min(available);
-
-        for &sample in &data[..to_write] {
-            self.buffer[self.write_pos] = sample;
-            self.write_pos = (self.write_pos + 1) % self.capacity;
-            self.size += 1;
-        }
-
-        to_write
-    }
-
-    fn read(&mut self, output: &mut [f32]) -> usize {
-        let to_read = output.len().min(self.size);
-
-        for item in output.iter_mut().take(to_read) {
-            *item = self.buffer[self.read_pos];
-            self.read_pos = (self.read_pos + 1) % self.capacity;
-            self.size -= 1;
-        }
-
-        // Fill remaining with silence if buffer underrun
-        // Use gradual fade to avoid pops
-        if to_read < output.len() {
-            let fade_samples = (to_read).min(32); // Fade last 32 samples
-
-            // Fade out the last few samples before silence
-            for i in 0..fade_samples {
-                let idx = to_read.saturating_sub(fade_samples) + i;
-                if idx < to_read {
-                    let fade = 1.0 - (i as f32 / fade_samples as f32);
-                    output[idx] *= fade;
-                }
-            }
-
-            // Fill rest with silence
-            for item in output.iter_mut().skip(to_read) {
-                *item = 0.0;
-            }
-        }
-
-        to_read
-    }
-
-    fn fill_level(&self) -> f32 { self.size as f32 / self.capacity as f32 }
-}
-
-/// Audio player using cpal
+/// Audio player using cpal with lock-free ring buffer
 pub struct AudioPlayer {
     /// Audio output stream
     _stream: Stream,
 
-    /// Ring buffer (shared with callback)
-    ring_buffer: Arc<Mutex<RingBuffer>>,
+    /// Sample producer (write from decoder thread, needs mutex)
+    producer: parking_lot::Mutex<Producer<f32>>,
 
     /// Player running flag
     running: Arc<AtomicBool>,
 
-    /// Playback started flag (after prebuffering)
-    #[allow(dead_code)]
-    started: Arc<AtomicBool>,
-
-    /// Target prebuffer size (samples)
-    #[allow(dead_code)]
-    prebuffer_threshold: usize,
+    /// Underrun counter (for diagnostics)
+    underruns: Arc<AtomicU64>,
 
     /// Sample rate
     sample_rate: u32,
@@ -137,36 +71,27 @@ impl AudioPlayer {
         let config = StreamConfig {
             channels,
             sample_rate,
-            buffer_size: cpal::BufferSize::Default,
+            // CRITICAL: Fixed small buffer for minimal latency
+            buffer_size: BufferSize::Fixed(AUDIO_BUFFER_FRAMES as u32),
         };
 
         debug!("Audio config: {:?}", config);
 
-        // Create ring buffer for audio samples
-        let buffer_samples = (sample_rate as usize * AUDIO_BUFFER_MS / 1000) * channels as usize;
-        let prebuffer_samples =
-            (sample_rate as usize * AUDIO_PREBUFFER_MS / 1000) * channels as usize;
-        let ring_buffer = Arc::new(Mutex::new(RingBuffer::new(buffer_samples)));
+        // Create lock-free ring buffer (sample-level)
+        let (producer, mut consumer) = RingBuffer::<f32>::new(AUDIO_RING_CAPACITY);
 
         let running = Arc::new(AtomicBool::new(true));
-        let started = Arc::new(AtomicBool::new(false));
+        let underruns = Arc::new(AtomicU64::new(0));
 
         let running_clone = running.clone();
-        let started_clone = started.clone();
-        let ring_buffer_clone = ring_buffer.clone();
+        let underruns_clone = underruns.clone();
 
         // Create audio output stream
         let stream = device
             .build_output_stream(
                 &config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    audio_callback(
-                        data,
-                        &ring_buffer_clone,
-                        &running_clone,
-                        &started_clone,
-                        prebuffer_samples,
-                    );
+                    audio_callback(data, &mut consumer, &running_clone, &underruns_clone);
                 },
                 move |err| {
                     warn!("Audio stream error: {}", err);
@@ -182,16 +107,18 @@ impl AudioPlayer {
         })?;
 
         info!(
-            "Audio player started: {}Hz, {} channels, buffer={}ms, prebuffer={}ms",
-            sample_rate, channels, AUDIO_BUFFER_MS, AUDIO_PREBUFFER_MS
+            "Audio player started: {}Hz, {} channels, buffer={}frames ({}ms)",
+            sample_rate,
+            channels,
+            AUDIO_BUFFER_FRAMES,
+            (AUDIO_BUFFER_FRAMES as f64 / sample_rate as f64 * 1000.0)
         );
 
         Ok(Self {
             _stream: stream,
-            ring_buffer,
+            producer: parking_lot::Mutex::new(producer),
             running,
-            started,
-            prebuffer_threshold: prebuffer_samples,
+            underruns,
             sample_rate,
             channels,
         })
@@ -214,13 +141,21 @@ impl AudioPlayer {
             )));
         }
 
-        // Write samples to ring buffer
-        let mut buffer = self.ring_buffer.lock().unwrap();
-        let written = buffer.write(&audio.samples);
+        // Write samples to ring buffer (sample-by-sample, lock-free ring, mutex producer)
+        let mut producer = self.producer.lock();
+        let written = match producer.write_chunk_uninit(audio.samples.len()) {
+            Ok(chunk) => {
+                // fill_from_iter() consumes chunk and commits automatically
+                let len = chunk.len();
+                chunk.fill_from_iter(audio.samples.iter().copied());
+                len
+            }
+            Err(_) => 0,
+        };
 
         if written < audio.samples.len() {
             debug!(
-                "Buffer overflow: dropped {} samples",
+                "Buffer overflow: dropped {} samples (buffer full)",
                 audio.samples.len() - written
             );
         }
@@ -228,45 +163,48 @@ impl AudioPlayer {
         Ok(())
     }
 
-    /// Get buffer fill level (0.0 to 1.0)
-    pub fn buffer_level(&self) -> f32 { self.ring_buffer.lock().unwrap().fill_level() }
+    /// Get underrun count
+    pub fn underrun_count(&self) -> u64 { self.underruns.load(Ordering::Relaxed) }
 
     /// Stop playback
     pub fn stop(&self) { self.running.store(false, Ordering::Relaxed); }
 }
 
-/// Audio output callback with prebuffering support
+/// Audio output callback (NO MUTEX, lock-free)
 fn audio_callback(
     output: &mut [f32],
-    ring_buffer: &Arc<Mutex<RingBuffer>>,
+    consumer: &mut Consumer<f32>,
     running: &AtomicBool,
-    started: &AtomicBool,
-    prebuffer_threshold: usize,
+    underruns: &AtomicU64,
 ) {
     if !running.load(Ordering::Relaxed) {
         output.fill(0.0);
         return;
     }
 
-    let mut buffer = ring_buffer.lock().unwrap();
-
-    // Check if we should start playback (prebuffering phase)
-    let is_started = started.load(Ordering::Relaxed);
-    if !is_started {
-        // Wait until buffer is filled to prebuffer threshold
-        if buffer.size < prebuffer_threshold {
-            // Still prebuffering, output silence
-            output.fill(0.0);
-            return;
+    // Read samples from lock-free ring buffer
+    let read = match consumer.read_chunk(output.len()) {
+        Ok(chunk) => {
+            let len = chunk.len();
+            let (first, second) = chunk.as_slices();
+            output[..first.len()].copy_from_slice(first);
+            if !second.is_empty() {
+                output[first.len()..len].copy_from_slice(second);
+            }
+            // CRITICAL: Must commit to actually remove data from ring buffer!
+            chunk.commit_all();
+            len
         }
+        Err(_) => 0,
+    };
 
-        // Prebuffer complete, start playback
-        started.store(true, Ordering::Relaxed);
-        debug!("Audio prebuffering complete, starting playback");
+    // If underrun (not enough data), fill rest with silence
+    if read < output.len() {
+        output[read..].fill(0.0);
+        if read == 0 {
+            underruns.fetch_add(1, Ordering::Relaxed);
+        }
     }
-
-    // Normal playback: read from buffer
-    buffer.read(output);
 }
 
 impl Drop for AudioPlayer {
@@ -276,7 +214,12 @@ impl Drop for AudioPlayer {
         // Give audio stream time to finish current callback
         thread::sleep(Duration::from_millis(50));
 
-        debug!("Audio player stopped");
+        let underruns = self.underrun_count();
+        if underruns > 0 {
+            debug!("Audio player stopped ({} underruns)", underruns);
+        } else {
+            debug!("Audio player stopped");
+        }
     }
 }
 

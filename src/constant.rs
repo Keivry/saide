@@ -16,8 +16,11 @@ pub const GRACEFUL_WAIT_MS: u64 = 250;
 /// Default port range for ADB reverse/forward
 pub const DEFAULT_PORT_RANGE: (u16, u16) = (27183, 27199);
 
-/// Audio playback buffer size (milliseconds)
-pub const AUDIO_BUFFER_MS: usize = 100;
+/// Audio playback buffer size (frames per CPAL callback)
+/// 128 frames = 2.67ms @ 48kHz (ultra-low latency)
+pub const AUDIO_BUFFER_FRAMES: usize = 128;
 
-/// Target buffering before starting playback (milliseconds)
-pub const AUDIO_PREBUFFER_MS: usize = 50;
+/// Ring buffer capacity (total samples, interleaved)
+/// Opus frame: ~1920 samples (20ms @ 48kHz stereo)
+/// Capacity should be at least 2x the frame size to account for jitter
+pub const AUDIO_RING_CAPACITY: usize = 5120;

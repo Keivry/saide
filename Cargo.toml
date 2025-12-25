@@ -89,6 +89,7 @@ chrono = { version = "0.4.42", features = ["serde"] }
 
 # Audio playback
 cpal = "0.17"
+rtrb = "0.3"  # Lock-free ring buffer
 
 # Opus codec (direct libopus binding)
 opus = "0.3"
