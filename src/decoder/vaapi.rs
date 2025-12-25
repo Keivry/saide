@@ -14,7 +14,7 @@ use {
     },
     ffmpeg_next as ffmpeg,
     std::ptr,
-    tracing::{debug, info, warn},
+    tracing::{debug, info, trace, warn},
 };
 
 pub struct VaapiDecoder {
@@ -198,7 +198,7 @@ impl VaapiDecoder {
                         }
                     }
 
-                    debug!(
+                    trace!(
                         "Decoded frame (VAAPI): {}x{} {:?} PTS={:?}",
                         sw_frame.width(),
                         sw_frame.height(),

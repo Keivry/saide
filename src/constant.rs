@@ -17,9 +17,7 @@ pub const GRACEFUL_WAIT_MS: u64 = 250;
 pub const DEFAULT_PORT_RANGE: (u16, u16) = (27183, 27199);
 
 /// Audio playback buffer size (milliseconds)
-/// Increased for better network streaming stability
-pub const AUDIO_BUFFER_MS: usize = 200;
+pub const AUDIO_BUFFER_MS: usize = 100;
 
 /// Target buffering before starting playback (milliseconds)
-/// Wait for initial buffering to avoid immediate underrun
-pub const AUDIO_PREBUFFER_MS: usize = 100;
+pub const AUDIO_PREBUFFER_MS: usize = 50;
