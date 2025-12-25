@@ -22,7 +22,7 @@ use {
         net::TcpStream,
         process::Command,
         sync::Arc,
-        thread,
+        thread::{self, JoinHandle},
         time::{Duration, Instant},
     },
     tokio_util::sync::CancellationToken,
@@ -32,8 +32,8 @@ use {
 // Device monitor polling interval (ms)
 pub const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
 
-// Allow buffering 3 rotation events to avoid blocking monitor thread
-pub const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 3;
+// Allow buffering rotation events to avoid blocking monitor thread
+pub const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 64;
 pub enum DeviceMonitorEvent {
     /// Device rotated event with new orientation (0-3), clockwise
     Rotated(u32),
@@ -93,10 +93,11 @@ pub fn start_initialization(
     // Device monitor initialization
     start_device_monitor(serial, tx.clone(), cancellation_token.clone());
 
-    // Scrcpy connection initialization
+    // Scrcpy connection and input mappers initialization
     start_scrcpy_connection(serial, config, tx.clone(), cancellation_token.clone());
 }
 
+/// Start scrcpy connection and input mappers in a separate thread
 fn start_scrcpy_connection(
     serial: &str,
     config: Arc<SAideConfig>,
@@ -216,6 +217,7 @@ fn start_scrcpy_connection(
     });
 }
 
+/// Establish scrcpy connection with given config
 async fn scrcpy_connection(
     serial: &str,
     config: Arc<SAideConfig>,
@@ -281,7 +283,13 @@ async fn scrcpy_connection(
         })
 }
 
-fn start_device_monitor(serial: &str, tx: Sender<InitEvent>, token: CancellationToken) {
+/// Start device monitor thread
+/// Monitors device state, rotation, and IME state
+fn start_device_monitor(
+    serial: &str,
+    tx: Sender<InitEvent>,
+    token: CancellationToken,
+) -> JoinHandle<Result<()>> {
     let serial = serial.to_owned();
     thread::spawn(move || -> Result<()> {
         info!("Starting device monitor thread...");
@@ -295,128 +303,178 @@ fn start_device_monitor(serial: &str, tx: Sender<InitEvent>, token: Cancellation
         let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
         tx.send(InitEvent::DeviceMonitor(event_rx))?;
 
-        start_device_state_monitor(&serial, event_tx.clone(), token.clone());
-        start_ime_state_monitor(&serial, event_tx.clone(), token.clone());
-        start_rotation_monitor(&serial, event_tx.clone(), token.clone());
+        // Start monitor threads
+        let handles = vec![
+            start_device_state_monitor(&serial, event_tx.clone(), token.clone()),
+            start_ime_state_monitor(&serial, event_tx.clone(), token.clone()),
+            start_rotation_monitor(&serial, event_tx.clone(), token.clone()),
+        ];
 
-        Ok(())
-    });
-}
-
-fn start_device_state_monitor(
-    serial: &str,
-    tx: Sender<DeviceMonitorEvent>,
-    token: CancellationToken,
-) {
-    thread::spawn(move || -> Result<()> {
-        info!("Starting device monitor thread...");
-
-        if token.is_cancelled() {
-            info!("Device monitor initialization cancelled");
-            return Ok(());
+        // Wait for all monitor threads to finish
+        for handle in handles {
+            if let Err(e) = handle.join().unwrap_or_else(|e| {
+                Err(SAideError::Other(format!(
+                    "Device monitor thread panicked: {:?}",
+                    e
+                )))
+            }) {
+                error!("Device monitor thread error: {}", e);
+            }
         }
 
-        // Create channel for rotation events
-        let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
-        tx.send(InitEvent::DeviceMonitor(event_rx))?;
+        Ok(())
+    })
+}
 
-        // Start rotation and im state monitoring
-        const MAX_CONSECUTIVE_ERRORS: u32 = 3; // Exit after 3 consecutive failures
+/// Device state monitor thread, checks if device is still connected
+/// Sends DeviceOffline event if device disconnects
+fn start_device_state_monitor(
+    serial: &str,
+    event_tx: Sender<DeviceMonitorEvent>,
+    token: CancellationToken,
+) -> JoinHandle<Result<()>> {
+    let serial = serial.to_owned();
+    thread::spawn(move || -> Result<()> {
+        info!("Starting device state monitor thread...");
 
-        let mut last_rotation = None;
-        let mut consecutive_errors = 0;
         loop {
             // Check for cancellation
             if token.is_cancelled() {
-                info!("Device monitor cancellation requested, stopping...");
+                info!("Device state monitor cancellation requested, stopping...");
                 break;
             }
 
-            if let Ok(state) = AdbShell::get_device_state(&serial)
-                && state != DeviceState::Connected
-            {
-                info!("ADB state: {:?} - sending DeviceOffline event", state);
-                let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
+            match retry_adb_command(|| AdbShell::get_device_state(&serial)) {
+                Ok(state) => {
+                    if state != DeviceState::Connected {
+                        info!("Device went offline: {:?}", state);
 
-                // Device is offline, exit monitoring
-                break;
-            }
+                        event_tx
+                            .send(DeviceMonitorEvent::DeviceOffline)
+                            .unwrap_or_else(|e| {
+                                error!("Failed to send DeviceOffline event: {}", e);
+                            });
 
-            if token.is_cancelled() {
-                info!("Device monitor cancellation requested, stopping...");
-                break;
-            }
-
-            match AdbShell::get_screen_orientation(&serial) {
-                Ok(current_rotation) => {
-                    consecutive_errors = 0; // Reset error counter on success
-
-                    if Some(current_rotation) != last_rotation {
-                        debug!(
-                            "Rotation changed: {:?} -> {}",
-                            last_rotation, current_rotation
-                        );
-                        last_rotation = Some(current_rotation);
-
-                        // Send rotation event
-                        if let Err(e) = event_tx.send(DeviceMonitorEvent::Rotated(current_rotation))
-                        {
-                            debug!("Rotation event channel disconnected: {}", e);
-                            break;
-                        }
+                        // Device is offline, exit monitoring
+                        break;
                     }
                 }
                 Err(e) => {
-                    consecutive_errors += 1;
-                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                        warn!(
-                            "Device disconnected (adb failed {} times): {}",
-                            consecutive_errors, e
-                        );
-
-                        break; // Exit monitoring thread
-                    }
-                    error!(
-                        "Failed to get screen orientation ({}/{}): {}",
-                        consecutive_errors, MAX_CONSECUTIVE_ERRORS, e
-                    );
+                    // Failed to get device state, report error and exit monitoring
+                    error!("Failed to get device state: {}", e);
+                    return Err(e);
                 }
             }
 
+            thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        }
+        Ok(())
+    })
+}
+
+/// IME state monitor thread, checks if input method (keyboard) is shown or hidden
+/// Sends ImStateChanged event when state changes
+fn start_ime_state_monitor(
+    serial: &str,
+    event_tx: Sender<DeviceMonitorEvent>,
+    token: CancellationToken,
+) -> JoinHandle<Result<()>> {
+    let serial = serial.to_owned();
+    thread::spawn(move || -> Result<()> {
+        info!("Starting IME state monitor thread...");
+
+        loop {
             if token.is_cancelled() {
-                info!("Device monitor cancellation requested, stopping...");
+                info!("Device IME monitor cancellation requested, stopping...");
                 break;
             }
+
+            match retry_adb_command(|| AdbShell::get_ime_state(&serial)) {
+                Ok(is_shown) => {
+                    event_tx
+                        .send(DeviceMonitorEvent::ImStateChanged(is_shown))
+                        .unwrap_or_else(|e| {
+                            error!("Failed to send IME state event: {}", e);
+                        });
+                }
+                Err(e) => {
+                    error!("Failed to get IME state: {}", e);
+                    return Err(e);
+                }
+            }
+
             thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
         }
 
-        info!("Device monitor thread stopped");
-
         Ok(())
-    });
+    })
 }
-fn start_ime_state_monitor(serial: &str, tx: Sender<DeviceMonitorEvent>, token: CancellationToken) {
-    thread::spawn(move || {
-        info!("Starting IME state monitor thread...");
+fn start_rotation_monitor(
+    serial: &str,
+    event_tx: Sender<DeviceMonitorEvent>,
+    token: CancellationToken,
+) -> JoinHandle<Result<()>> {
+    let serial = serial.to_owned();
+    thread::spawn(move || -> Result<()> {
+        info!("Starting device rotation monitor thread...");
 
-        let mut consecutive_errors = 0;
+        let mut last_orientation: Option<u32> = None;
+
         loop {
             if token.is_cancelled() {
-                info!("Device monitor cancellation requested, stopping...");
+                info!("Device rotation monitor cancellation requested, stopping...");
                 break;
             }
 
-            // Poll input method state (skip if device is disconnected)
-            if consecutive_errors == 0
-                && let Ok(im_state) = AdbShell::get_ime_state(&serial)
-                && event_tx
-                    .send(DeviceMonitorEvent::ImStateChanged(im_state))
-                    .is_err()
-            {
-                debug!("IME event channel disconnected, stopping monitor");
-                break;
+            match retry_adb_command(|| AdbShell::get_screen_orientation(&serial)) {
+                Ok(orientation) => {
+                    if Some(orientation) != last_orientation {
+                        info!("Device rotated to orientation: {}", orientation);
+
+                        last_orientation = Some(orientation);
+
+                        event_tx
+                            .send(DeviceMonitorEvent::Rotated(orientation))
+                            .unwrap_or_else(|e| {
+                                error!("Failed to send rotation event: {}", e);
+                            });
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to get device orientation: {}", e);
+                    return Err(e);
+                }
+            }
+
+            thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        }
+
+        Ok(())
+    })
+}
+
+fn retry_adb_command<F, T>(mut command_fn: F) -> Result<T>
+where
+    F: FnMut() -> Result<T>,
+{
+    const MAX_RETRIES: u32 = 3;
+    const RETRY_DELAY_MS: u64 = 100;
+
+    let mut attempts = 0;
+    loop {
+        match command_fn() {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                attempts += 1;
+                if attempts >= MAX_RETRIES {
+                    return Err(e);
+                }
+                warn!(
+                    "ADB command failed (attempt {}): {}. Retrying in {} ms...",
+                    attempts, e, RETRY_DELAY_MS
+                );
+                thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
             }
         }
-    });
+    }
 }
-fn start_rotation_monitor(serial: &str, tx: Sender<DeviceMonitorEvent>, token: CancellationToken) {}

@@ -55,6 +55,12 @@ enum InitState {
 
 /// Main UI state
 pub struct SAideApp {
+    /// Ctrl + C receiver
+    shutdown_rx: Receiver<()>,
+
+    /// Shutdown requested flag
+    shutdown_requested: bool,
+
     toolbar: Toolbar,
 
     indicator: Indicator,
@@ -119,9 +125,6 @@ pub struct SAideApp {
     /// Android device input method state
     device_ime_state: bool,
 
-    /// Device offline state (confirmed by ADB monitor)
-    device_offline: bool,
-
     /// Mapping configuration window
     mapping_config_window: MappingConfigWindow,
 
@@ -138,6 +141,7 @@ impl SAideApp {
         cc: &eframe::CreationContext<'_>,
         serial: &str,
         config_manager: ConfigManager,
+        shutdown_rx: Receiver<()>,
     ) -> Self {
         let config = config_manager.config();
 
@@ -152,6 +156,9 @@ impl SAideApp {
         let cancel_token = CancellationToken::new();
 
         Self {
+            shutdown_rx,
+            shutdown_requested: false,
+
             toolbar: Toolbar::new(),
             indicator: Indicator::new(indicator_position, max_fps as f32),
             player: StreamPlayer::new(cc, cancel_token.clone()),
@@ -199,7 +206,6 @@ impl SAideApp {
             keyboard_custom_mapping_enabled,
 
             device_ime_state: false,
-            device_offline: false,
 
             mapping_config_window: MappingConfigWindow::new(),
 
@@ -404,17 +410,12 @@ impl SAideApp {
                     }
                     DeviceMonitorEvent::DeviceOffline => {
                         warn!("Device went offline - USB/ADB connection lost");
-                        self.device_offline = true;
+
+                        // Request application shutdown
+                        self.shutdown_requested = true;
                     }
                 }
             }
-        }
-
-        // Handle device offline outside the borrow scope
-        if self.device_offline && matches!(self.player.state(), PlayerState::Failed(_)) {
-            info!("Converting Failed → ConnectionLost due to device offline");
-            self.player
-                .set_state(PlayerState::Failed("Device offline".to_string()));
         }
 
         // Refresh keyboard profiles if needed
@@ -972,6 +973,19 @@ impl eframe::App for SAideApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.shutdown_requested {
+            // Check for shutdown signal
+            if self.shutdown_rx.try_recv().is_ok() {
+                info!("Shutdown signal received, closing application");
+                self.shutdown_requested = true;
+            }
+        }
+
+        if self.shutdown_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
         // Draw base UI (toolbar) - always visible
         self.draw_toolbar(ctx);
 
@@ -1048,7 +1062,7 @@ impl eframe::App for SAideApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
-                self.player.render(ui);
+                self.player.draw(ui);
             });
 
         // Draw indicator overlay on top of video

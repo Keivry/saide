@@ -54,41 +54,12 @@ impl fmt::Display for IoError {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct ConnectionLost {
-    device: String,
-    reason: String,
-}
-
-impl ConnectionLost {
-    pub fn new(device: impl Into<String>, reason: impl Into<String>) -> Self {
-        Self {
-            device: device.into(),
-            reason: reason.into(),
-        }
-    }
-}
-
-impl fmt::Display for ConnectionLost {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Connection lost for device {}: {}",
-            self.device, self.reason
-        )
-    }
-}
-
 /// SAide unified error type
 #[derive(Clone, Debug, Error)]
 pub enum SAideError {
     /// Normal shutdown via CancellationToken
     #[error("Application shutdown requested")]
     Cancelled,
-
-    /// Device connection lost (USB/WiFi disconnect)
-    #[error("{0}")]
-    ConnectionLost(ConnectionLost),
 
     /// Video error
     #[error("Video error: {0}")]
@@ -145,30 +116,6 @@ impl SAideError {
     /// Check if error is a normal shutdown
     pub fn is_cancelled(&self) -> bool { matches!(self, SAideError::Cancelled) }
 
-    /// Check if error is connection lost
-    pub fn is_connection_lost(&self) -> bool { matches!(self, SAideError::ConnectionLost { .. }) }
-
-    /// Check if error should show UI overlay
-    pub fn should_show_overlay(&self) -> bool { self.is_connection_lost() }
-
-    /// Check if error should be logged
-    pub fn should_log(&self) -> bool { !self.is_cancelled() }
-
-    /// Check if error indicates connection shutdown (using ErrorKind for precision)
-    pub fn is_io_shutdown(&self) -> bool {
-        if let SAideError::IoError(err) = self {
-            matches!(
-                err.kind(),
-                io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::BrokenPipe
-                    | io::ErrorKind::ConnectionAborted
-                    | io::ErrorKind::UnexpectedEof
-            )
-        } else {
-            false
-        }
-    }
-
     /// Check if error is a timeout (using ErrorKind)
     pub fn is_timeout(&self) -> bool {
         if let SAideError::IoError(err) = self {
@@ -221,18 +168,6 @@ mod tests {
     fn test_cancelled_detection() {
         let err = SAideError::Cancelled;
         assert!(err.is_cancelled());
-        assert!(!err.is_connection_lost());
-        assert!(!err.should_log());
-    }
-
-    #[test]
-    fn test_connection_lost_detection() {
-        let err =
-            SAideError::ConnectionLost(ConnectionLost::new("emulator-5554", "USB disconnected"));
-        assert!(!err.is_cancelled());
-        assert!(err.is_connection_lost());
-        assert!(err.should_show_overlay());
-        assert!(err.should_log());
     }
 
     #[test]
@@ -240,26 +175,6 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::BrokenPipe, "pipe broken");
         let err = SAideError::from(io_err);
         assert!(matches!(err, SAideError::IoError { .. }));
-        assert!(err.is_io_shutdown());
-    }
-
-    #[test]
-    fn test_io_shutdown_detection() {
-        let errors = vec![
-            io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"),
-            io::Error::new(io::ErrorKind::ConnectionReset, "connection reset"),
-            io::Error::new(io::ErrorKind::ConnectionAborted, "connection aborted"),
-            io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected eof"),
-        ];
-
-        for io_err in errors {
-            let err = SAideError::from(io_err);
-            assert!(
-                err.is_io_shutdown(),
-                "Expected is_io_shutdown() to be true for {:?}",
-                err
-            );
-        }
     }
 
     #[test]

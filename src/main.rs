@@ -1,4 +1,5 @@
 use {
+    crossbeam_channel::Receiver,
     eframe::{egui, egui_wgpu},
     saide::{
         app::ui::{SAideApp, Toolbar},
@@ -50,11 +51,19 @@ fn main() -> Result<()> {
     info!("Max FPS: {}", config.scrcpy.video.max_fps);
     info!("Logging level: {}", config.logging.level);
 
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let tx_clone = tx.clone();
+    ctrlc::set_handler(move || {
+        info!("Received Ctrl-C, shutting down...");
+        let _ = tx_clone.send(());
+    })
+    .map_err(|e| SAideError::Other(format!("Failed to set Ctrl-C handler: {}", e)))?;
+
     let serial = AdbShell::get_device_serial()?;
-    start_ui(&serial, config_manager)
+    start_ui(&serial, config_manager, rx)
 }
 
-fn start_ui(serial: &str, config_manager: ConfigManager) -> Result<()> {
+fn start_ui(serial: &str, config_manager: ConfigManager, shutdown_rx: Receiver<()>) -> Result<()> {
     let toolbar_width = Toolbar::width();
 
     let options = eframe::NativeOptions {
@@ -90,7 +99,14 @@ fn start_ui(serial: &str, config_manager: ConfigManager) -> Result<()> {
     eframe::run_native(
         "SAide",
         options,
-        Box::new(move |cc| Ok(Box::new(SAideApp::new(cc, serial, config_manager)))),
+        Box::new(move |cc| {
+            Ok(Box::new(SAideApp::new(
+                cc,
+                serial,
+                config_manager,
+                shutdown_rx,
+            )))
+        }),
     )
     .map_err(|e| SAideError::UiError(e.to_string()))
 }

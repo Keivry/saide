@@ -133,12 +133,8 @@ impl ProfileDatabase {
         let content = fs::read_to_string(&path).map_err(|e| {
             SAideError::IoError(IoError::new(e).with_message("Failed to read profile database"))
         })?;
-        serde_json::from_str(&content).map_err(|e| {
-            SAideError::IoError(IoError::new_with_message(format!(
-                "Failed to parse profile database: {}",
-                e
-            )))
-        })
+        let config = serde_json::from_str(&content)?;
+        Ok(config)
     }
 
     /// Save to config file

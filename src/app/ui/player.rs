@@ -16,7 +16,7 @@ use {
             extract_resolution_from_stream,
             new_nv12_render_callback,
         },
-        error::{ConnectionLost, Result, SAideError},
+        error::{Result, SAideError},
         scrcpy::protocol::video::VideoPacket,
         sync::AVSync,
     },
@@ -30,7 +30,7 @@ use {
         time::{Duration, Instant},
     },
     tokio_util::sync::CancellationToken,
-    tracing::{debug, error, info, trace, warn},
+    tracing::{debug, error, info, warn},
 };
 
 // Ultra-low latency mode: single frame buffer
@@ -81,7 +81,6 @@ pub enum PlayerState {
     Idle,
     Connecting,
     Streaming,
-    ConnectionLost(String),
     Failed(String),
 }
 
@@ -173,12 +172,11 @@ impl StreamPlayer {
         serial: &str,
     ) {
         info!(
-            "Starting stream with provided connections: {}x{} (device: {})",
+            "Starting stream: {}x{} for device {}",
             video_resolution.0, video_resolution.1, serial
         );
         self.state = PlayerState::Connecting;
 
-        let serial = serial.to_owned();
         let event_tx = self.event_tx.clone();
         let cancel_token = self.cancel_token.clone();
         self.stream_thread = Some(thread::spawn(move || {
@@ -191,14 +189,15 @@ impl StreamPlayer {
                 video_stream,
                 audio_stream,
                 video_resolution,
-                &serial,
                 event_tx.clone(),
                 cancel_token,
             ) {
-                if e.should_log() {
-                    error!("Stream worker error: {}", e);
+                if !e.is_cancelled() {
+                    error!("Stream worker error: {e}");
                 }
-                let _ = event_tx.send(PlayerEvent::Failed(e));
+                event_tx.send(PlayerEvent::Failed(e)).unwrap_or_else(|err| {
+                    error!("Failed to send PlayerEvent::Failed: {err}");
+                });
             }
         }));
     }
@@ -228,7 +227,7 @@ impl StreamPlayer {
                     width,
                     height,
                 } => {
-                    info!("Stream ready: {}x{}", width, height);
+                    info!("Stream ready: {width}x{height}");
                     self.frame_rx = Some(frame_rx);
                     self.stats_rx = Some(stats_rx);
                     self.video_width = width;
@@ -236,21 +235,16 @@ impl StreamPlayer {
                     self.state = PlayerState::Streaming;
                 }
                 PlayerEvent::ResolutionChanged { width, height } => {
-                    info!("Resolution changed: {}x{}", width, height);
+                    info!("Resolution changed: {width}x{height}");
                     self.video_width = width;
                     self.video_height = height;
                 }
                 PlayerEvent::Failed(err) => {
-                    if err.should_log() {
+                    if !err.is_cancelled() {
                         error!("Stream failed: {}", err);
                     }
 
-                    // Distinguish ConnectionLost from other errors
-                    if err.is_connection_lost() {
-                        self.state = PlayerState::ConnectionLost(err.to_string());
-                    } else {
-                        self.state = PlayerState::Failed(err.to_string());
-                    }
+                    self.state = PlayerState::Failed(err.to_string());
                 }
             }
         }
@@ -279,8 +273,8 @@ impl StreamPlayer {
         }
     }
 
-    /// Render video frame
-    pub fn render(&mut self, ui: &mut egui::Ui) -> egui::Response {
+    /// Draw video frame or placeholder in the UI
+    pub fn draw(&mut self, ui: &mut egui::Ui) -> egui::Response {
         // Update state first (process events)
         self.update();
 
@@ -343,9 +337,6 @@ impl StreamPlayer {
                 PlayerState::Streaming => {
                     ui.label(egui::RichText::new("Loading...").size(20.0));
                 }
-                PlayerState::ConnectionLost(err) => {
-                    self.draw_connection_lost_overlay(ui, err);
-                }
                 PlayerState::Failed(err) => {
                     self.draw_failed_overlay(ui, err);
                 }
@@ -386,73 +377,11 @@ impl StreamPlayer {
     /// Get player state
     pub fn state(&self) -> &PlayerState { &self.state }
 
-    /// Set player state
-    pub fn set_state(&mut self, state: PlayerState) { self.state = state; }
-
     /// Check if player is ready (streaming)
     pub fn ready(&self) -> bool { matches!(self.state, PlayerState::Streaming) }
 
     /// Set video rotation (0-3, clockwise 90°)
     pub fn set_rotation(&mut self, rotation: u32) { self.video_rotation = rotation % 4; }
-
-    fn draw_connection_lost_overlay(&self, ui: &mut egui::Ui, err_msg: &str) {
-        // Connection Lost overlay (USB/WiFi disconnected)
-        let ctx = ui.ctx();
-        egui::Area::new(egui::Id::new("connection_lost_overlay"))
-            .fixed_pos(egui::pos2(0.0, 0.0))
-            .show(ui.ctx(), |ui| {
-                let screen_rect = ctx.content_rect();
-                let mut child_ui = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(screen_rect)
-                        .layout(egui::Layout::top_down(egui::Align::Center)),
-                );
-                {
-                    let ui = &mut child_ui;
-                    // Semi-transparent dark background
-                    ui.painter().rect_filled(
-                        screen_rect,
-                        0.0,
-                        egui::Color32::from_black_alpha(220),
-                    );
-
-                    // Center content
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(screen_rect.height() / 3.0);
-
-                        ui.label(
-                            egui::RichText::new("📡 Connection Lost")
-                                .size(42.0)
-                                .color(egui::Color32::from_rgb(255, 120, 100)),
-                        );
-
-                        ui.add_space(25.0);
-
-                        ui.label(
-                            egui::RichText::new("Device disconnected (USB/WiFi)")
-                                .size(22.0)
-                                .color(egui::Color32::WHITE),
-                        );
-
-                        ui.add_space(20.0);
-
-                        ui.label(
-                            egui::RichText::new("Please check connection and restart")
-                                .size(18.0)
-                                .color(egui::Color32::GRAY),
-                        );
-
-                        ui.add_space(15.0);
-
-                        ui.label(
-                            egui::RichText::new(format!("Details: {}", err_msg))
-                                .size(14.0)
-                                .color(egui::Color32::DARK_GRAY),
-                        );
-                    });
-                }
-            });
-    }
 
     fn draw_failed_overlay(&self, ui: &mut egui::Ui, err_msg: &str) {
         // General error overlay (decode errors, protocol errors, etc.)
@@ -524,7 +453,6 @@ fn stream_worker(
     mut video_stream: TcpStream,
     audio_stream: Option<TcpStream>,
     video_resolution: (u32, u32),
-    serial: &str,
     event_tx: Sender<PlayerEvent>,
     token: CancellationToken,
 ) -> Result<()> {
@@ -561,7 +489,6 @@ fn stream_worker(
     let stats = Arc::new(Mutex::new(StreamStats::default()));
 
     // Spawn audio thread (if audio stream available)
-    let audio_serial = serial.to_owned();
     let audio_token = token.clone();
     let _audio_thread = if let Some(mut audio_stream) = audio_stream {
         let stats_audio = stats.clone();
@@ -578,41 +505,24 @@ fn stream_worker(
                     // Read header with error tolerance
                     let mut header = [0u8; 12];
                     if let Err(e) = audio_stream.read_exact(&mut header) {
-                        let e = SAideError::from(e);
+                        if audio_token.is_cancelled() {
+                            debug!("Audio thread exiting due to cancellation");
 
-                        // Check if timeout (audio may have no data)
-                        if is_timeout(&e) {
-                            trace!("Audio read timeout (no audio data) - retrying");
-
-                            // Timeout is normal: no audio data
-                            // Just retry
-                            continue;
+                            // Graceful exit
+                            return Ok(());
                         }
 
-                        // Real error (check if shutdown-related)
                         consecutive_read_errors += 1;
-
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                            if is_shutdown(&e) {
-                                return Err(SAideError::ConnectionLost(ConnectionLost::new(
-                                    &audio_serial,
-                                    "Audio stream connection closed",
-                                )));
-                            }
-                            return Err(e);
+                            warn!(
+                                "Failed to read audio header {consecutive_read_errors} times consecutively",
+                            );
+                            return Err(e.into());
                         }
 
-                        if is_shutdown(&e) {
-                            debug!(
-                                "Audio header read error ({}/{}): {} (connection closing)",
-                                consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
-                            );
-                        } else {
-                            warn!(
-                                "Audio header read error ({}/{}): {} - skipping",
-                                consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
-                            );
-                        }
+                        warn!(
+                            "Audio header read error ({consecutive_read_errors}/{MAX_CONSECUTIVE_READ_ERRORS}): {e} - skipping"
+                        );
 
                         thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
                         continue;
@@ -630,39 +540,25 @@ fn stream_worker(
                     // Read payload with error tolerance
                     let mut payload = vec![0u8; packet_size];
                     if let Err(e) = audio_stream.read_exact(&mut payload) {
-                        let e = SAideError::from(e);
+                        if audio_token.is_cancelled() {
+                            debug!("Audio thread exiting due to cancellation");
 
-                        if is_timeout(&e) {
-                            trace!("Audio payload timeout - retrying");
-
-                            // Timeout is normal: no audio data
-                            // Just retry
-                            continue;
+                            // Graceful exit
+                            return Ok(());
                         }
 
                         consecutive_read_errors += 1;
 
                         if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                            if is_shutdown(&e) {
-                                return Err(SAideError::ConnectionLost(ConnectionLost::new(
-                                    &audio_serial,
-                                    "Audio payload connection closed",
-                                )));
-                            }
-                            return Err(e);
+                            warn!(
+                                "Failed to read audio payload {consecutive_read_errors} times consecutively"
+                            );
+                            return Err(e.into());
                         }
 
-                        if is_shutdown(&e) {
-                            debug!(
-                                "Audio payload read error ({}/{}): {} (connection closing)",
-                                consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
-                            );
-                        } else {
-                            warn!(
-                                "Audio payload read error ({}/{}): {} - skipping",
-                                consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
-                            );
-                        }
+                        warn!(
+                            "Audio payload read error ({consecutive_read_errors}/{MAX_CONSECUTIVE_READ_ERRORS}): {e} - skipping",
+                        );
 
                         thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
                         continue;
@@ -682,7 +578,7 @@ fn stream_worker(
                 }
             })() {
                 Ok(_) => {}
-                Err(e) => debug!("Audio thread terminated: {}", e),
+                Err(e) => debug!("Audio thread terminated: {e}"),
             }
         }))
     } else {
@@ -700,50 +596,38 @@ fn stream_worker(
                 return Ok(());
             }
 
-            // Try to read packet with timeout tolerance
+            // Read video packet with error tolerance
             let video_packet = match VideoPacket::read_from(&mut video_stream) {
                 Ok(packet) => {
                     consecutive_read_errors = 0; // Reset on success
                     packet
                 }
                 Err(e) => {
-                    // Check if this is a timeout (screen static/locked) or real error
-                    if is_timeout(&e) {
-                        // Timeout is normal: screen static, locked, or no changes
-                        trace!("Video read timeout (screen may be static/locked) - retrying");
+                    if token.is_cancelled() {
+                        debug!("Video decode loop exiting due to cancellation");
 
-                        consecutive_read_errors = 0; // Reset counter for timeouts
+                        // Graceful exit
+                        return Ok(());
+                    }
+
+                    if e.is_timeout() {
+                        // Ignore timeouts, continue reading
+                        // For example, no video packets will be sent while the device is locked
                         continue;
                     }
 
-                    // Real error (not timeout)
                     consecutive_read_errors += 1;
                     if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                        debug!(
-                            "Failed to read video packet {} times consecutively",
-                            consecutive_read_errors
+                        warn!(
+                            "Failed to read video packet {consecutive_read_errors} times consecutively"
                         );
-                        if is_shutdown(&e) {
-                            return Err(SAideError::ConnectionLost(ConnectionLost::new(
-                                serial,
-                                "Video stream connection closed",
-                            )));
-                        }
                         return Err(e);
                     }
 
-                    if is_shutdown(&e) {
-                        debug!(
-                            "Video packet read error ({}/{}): {} (connection closing)",
-                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
-                        );
-                    } else {
-                        warn!(
-                            "Video packet read error ({}/{}): {} - skipping",
-                            consecutive_read_errors, MAX_CONSECUTIVE_READ_ERRORS, e
-                        );
-                    }
-                    thread::sleep(Duration::from_millis(10));
+                    warn!(
+                        "Video packet read error ({consecutive_read_errors}/{MAX_CONSECUTIVE_READ_ERRORS}): {e} - retrying"
+                    );
+                    thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
                     continue;
                 }
             };
@@ -775,12 +659,12 @@ fn stream_worker(
             let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
                 Ok(frame) => frame,
                 Err(e) => {
-                    let e = SAideError::DecodeError(e.to_string());
-                    if is_shutdown(&e) {
-                        info!("Video decode error (shutdown): {}", e);
-                        return Err(e);
+                    if token.is_cancelled() {
+                        debug!("Video decode loop exiting due to cancellation");
+                        return Ok(());
                     }
-                    warn!("Video decode error: {} - skipping frame", e);
+
+                    warn!("Video decode error: {e} - skipping frame");
                     continue;
                 }
             };
@@ -831,21 +715,14 @@ fn stream_worker(
             Ok(())
         }
         Err(e) => {
-            if is_shutdown(&e) {
-                debug!("Video decode loop terminated due to shutdown: {}", e);
-                return Ok(());
-            }
-
-            error!("Connection error: {}", e);
-            let _ = event_tx.send(PlayerEvent::Failed(e.clone()));
+            error!("Connection error: {e}");
+            event_tx
+                .send(PlayerEvent::Failed(e.clone()))
+                .unwrap_or_else(|err| {
+                    error!("Failed to send PlayerEvent::Failed: {err}");
+                });
 
             Err(e)
         }
     }
 }
-
-/// Check if error is a timeout-related IO error
-fn is_timeout(err: &SAideError) -> bool { err.is_timeout() }
-
-/// Check if error is a shutdown-related IO error (connection lost)
-fn is_shutdown(err: &SAideError) -> bool { err.is_io_shutdown() }

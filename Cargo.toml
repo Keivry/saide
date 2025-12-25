@@ -95,6 +95,8 @@ opus = "0.3"
 
 directories = "6"
 thiserror = "2"
+wait-timeout = "0.2.1"
+ctrlc = "3.5.1"
 
 [profile.dev]
 opt-level = 0

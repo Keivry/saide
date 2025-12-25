@@ -7,214 +7,146 @@ use {
     crate::error::{Result, SAideError},
     std::{
         ffi::OsStr,
-        process::{Child, Command, Stdio},
-        sync::mpsc,
-        thread,
+        fmt,
+        io::Read,
+        process::{Child, Command, ExitStatus, Stdio},
         time::Duration,
     },
+    tracing::trace,
+    wait_timeout::ChildExt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceState {
     Connected,
     Disconnected,
-    Unauthorized,
+    Unknown,
 }
 
 pub struct AdbShell;
 
 impl AdbShell {
     /// Get Android device screen size using separate adb command
-    /// blocking until command completes.
     pub fn get_physical_screen_size(serial: &str) -> Result<(u32, u32)> {
         check_serial(serial)?;
 
-        // Use separate adb command to get screen size, not through shell session
-        let output = Command::new("adb")
-            .args(["-s", serial])
-            .args(["shell", "wm size"])
-            .output()
-            .map_err(|e| {
-                SAideError::AdbError(format!(
-                    "Failed to query screen size for device {serial}: {e}",
-                ))
-            })?;
+        run_adb_command(
+            ["-s", serial, "shell", "wm", "size"],
+            None,
+            |status, output| {
+                // Parse output like "Physical size: 1080x2340"
+                status
+                    .success()
+                    .then(|| {
+                        output
+                            .lines()
+                            .find(|line| line.contains("Physical size:"))
+                            .and_then(|line| line.split(':').nth(1))
+                            .and_then(|size_part| {
+                                let size_str = size_part.trim();
+                                let mut parts = size_str.split('x');
+                                let width = parts.next().and_then(|w| w.trim().parse::<u32>().ok());
+                                let height =
+                                    parts.next().and_then(|h| h.trim().parse::<u32>().ok());
 
-        // Parse output like "Physical size: 1080x2340"
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        output_str
-            .lines()
-            .find(|line| line.contains("Physical size:"))
-            .and_then(|line| line.split(':').nth(1))
-            .and_then(|size_part| {
-                let size_str = size_part.trim();
-                let mut parts = size_str.split('x');
-                let width = parts.next().and_then(|w| w.trim().parse::<u32>().ok());
-                let height = parts.next().and_then(|h| h.trim().parse::<u32>().ok());
-
-                match (width, height) {
-                    (Some(w), Some(h)) => Some((w, h)),
-                    _ => None,
-                }
-            })
-            .ok_or_else(|| {
-                SAideError::AdbError(format!(
-                    "Failed to parse screen size from output: {}",
-                    output_str.trim()
-                ))
-            })
+                                match (width, height) {
+                                    (Some(w), Some(h)) => Some((w, h)),
+                                    _ => None,
+                                }
+                            })
+                    })
+                    .flatten()
+                    .ok_or_else(|| {
+                        SAideError::AdbError(format!(
+                            "Failed to parse screen size from output: {}",
+                            output.trim()
+                        ))
+                    })
+            },
+        )
     }
 
     /// Get Android device screen orientation using separate adb command (with 3s timeout)
     pub fn get_screen_orientation(serial: &str) -> Result<u32> {
         check_serial(serial)?;
 
-        let child = Command::new("adb")
-            .args(["-s", serial])
-            .args(["shell", "dumpsys window displays | grep mCurrentRotation"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                SAideError::AdbError(format!(
-                    "Failed to query orientation for device {serial}: {e}"
-                ))
-            })?;
+        run_adb_command(
+            ["-s", serial, "shell", "dumpsys", "window", "displays"],
+            Some(Duration::from_secs(3)),
+            |status, output| {
+                status
+                    .success()
+                    .then(|| {
+                        output
+                            .lines()
+                            .find(|line| line.contains("mCurrentRotation"))
+                            .and_then(|line| line.split('=').nth(1))
+                            .and_then(|rotation_part| {
+                                let rotation_str = rotation_part.trim();
 
-        // Wait with 3 second timeout
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let _ = tx.send(child.wait_with_output());
-        });
-
-        let output = match rx.recv_timeout(Duration::from_secs(3)) {
-            Ok(Ok(output)) => output,
-            Ok(Err(e)) => {
-                return Err(SAideError::AdbError(format!(
-                    "Failed to query Android device orientation: {}",
-                    e
-                )));
-            }
-            Err(_) => {
-                return Err(SAideError::AdbError(
-                    "Timeout to query Android device orientation".to_string(),
-                ));
-            }
-        };
-
-        if !output.status.success() {
-            return Err(SAideError::AdbError(format!(
-                "Failed to query Android device orientation, adb exited with status: {}",
-                output.status
-            )));
-        }
-
-        // Parse output like "mCurrentRotation=ROTATION_0"
-        // TODO: Support different Android versions if output format changes
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        output_str
-            .lines()
-            .find(|line| line.contains("mCurrentRotation"))
-            .and_then(|line| line.split('=').nth(1))
-            .and_then(|rotation_part| {
-                let rotation_str = rotation_part.trim();
-                // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
-                match rotation_str {
-                    "ROTATION_0" => Some(0),
-                    "ROTATION_90" => Some(1),
-                    "ROTATION_180" => Some(2),
-                    "ROTATION_270" => Some(3),
-                    _ => None,
-                }
-            })
-            .ok_or_else(|| {
-                SAideError::AdbError(format!(
-                    "Failed to parse rotation from output: {}",
-                    output_str.trim()
-                ))
-            })
+                                // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
+                                // TODO: Support different Android versions if output format changes
+                                match rotation_str {
+                                    "ROTATION_0" => Some(0),
+                                    "ROTATION_90" => Some(1),
+                                    "ROTATION_180" => Some(2),
+                                    "ROTATION_270" => Some(3),
+                                    _ => None,
+                                }
+                            })
+                    })
+                    .flatten()
+                    .ok_or_else(|| {
+                        SAideError::AdbError(
+                            "Failed to parse screen orientation in dumpsys output".to_string(),
+                        )
+                    })
+            },
+        )
     }
 
     /// Get android device input method state (with 3s timeout)
     pub fn get_ime_state(serial: &str) -> Result<bool> {
         check_serial(serial)?;
 
-        let child = Command::new("adb")
-            .args(["-s", serial])
-            .args([
-                "shell",
-                "dumpsys window InputMethod | grep 'isVisible=true'",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                SAideError::AdbError(format!(
-                    "Failed to query ime state for device {serial}: {e}"
-                ))
-            })?;
-
-        // Wait with 3 second timeout
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let _ = tx.send(child.wait_with_output());
-        });
-
-        let output = match rx.recv_timeout(Duration::from_secs(3)) {
-            Ok(Ok(output)) => output,
-            Ok(Err(e)) => {
-                return Err(SAideError::AdbError(format!(
-                    "Failed to query ime state in device: {e}",
-                )));
-            }
-            Err(_) => {
-                return Err(SAideError::AdbError(
-                    "Timeout to query ime state in device".to_string(),
-                ));
-            }
-        };
-
-        Ok(output.status.success())
+        run_adb_command(
+            ["-s", serial, "shell", "dumpsys", "window", "InputMethod"],
+            Some(Duration::from_secs(3)),
+            |status, output| {
+                // Parse output to find "isVisible=true" line
+                Ok(status.success() && output.lines().any(|line| line.contains("isVisible=true")))
+            },
+        )
     }
 
     /// Get Android device serial using adb command, blocking until command completes.
     pub fn get_device_serial() -> Result<String> {
-        let output = Command::new("adb")
-            .args(["get-serialno"])
-            .output()
-            .map_err(|e| {
-                SAideError::AdbError(format!("Failed to query Android device Id: {}", e))
-            })?;
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        let device_serial = output_str.trim().to_string();
-        Ok(device_serial)
+        run_adb_command(["get-serialno"], None, |status, output| {
+            status
+                .success()
+                .then(|| output.trim().to_string())
+                .ok_or_else(|| {
+                    SAideError::AdbError(format!(
+                        "Failed to get device serial, adb exited with status: {}",
+                        status
+                    ))
+                })
+        })
     }
 
     /// Get ADB device state (device/offline/unauthorized/no device)
     pub fn get_device_state(serial: &str) -> Result<DeviceState> {
         check_serial(serial)?;
 
-        let output = Command::new("adb")
-            .args(["-s", serial])
-            .args(["get-state"])
-            .output()
-            .map_err(|e| {
-                SAideError::AdbError(format!("Failed to query state for device {serial}: {e}"))
-            })?;
-
-        let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if state.contains("unauthorized") {
-            Ok(DeviceState::Unauthorized)
-        } else if state.contains("not found") {
-            Ok(DeviceState::Disconnected)
-        } else if state.contains("device") {
-            Ok(DeviceState::Connected)
-        } else {
-            Err(SAideError::AdbError(format!(
-                "Unknown Android device state: {state}",
-            )))
-        }
+        run_adb_command(["-s", serial, "get-state"], None, |status, output| {
+            if !status.success() {
+                return Ok(DeviceState::Disconnected);
+            }
+            match output.trim() {
+                "device" => Ok(DeviceState::Connected),
+                _ => Ok(DeviceState::Unknown),
+            }
+        })
     }
 
     /// Get Android API level, e.g., 30 for Android 11. Blocking until command completes.
@@ -240,19 +172,21 @@ impl AdbShell {
     pub fn get_prop(serial: &str, prop_name: &str) -> Result<String> {
         check_serial(serial)?;
 
-        let output = Command::new("adb")
-            .args(["-s", serial, "shell", "getprop", prop_name])
-            .output()?;
-
-        if !output.status.success() {
-            return Ok("unknown".to_string());
-        }
-
-        let value = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_lowercase();
-
-        Ok(value)
+        run_adb_command(
+            ["-s", serial, "shell", "getprop", prop_name],
+            None,
+            |status, output| {
+                status
+                    .success()
+                    .then(|| output.trim().to_string())
+                    .ok_or_else(|| {
+                        SAideError::AdbError(format!(
+                            "Failed to get property [{}], adb exited with status: {}",
+                            prop_name, status
+                        ))
+                    })
+            },
+        )
     }
 
     /// Push file to Android device using adb push command, blocking until command completes.
@@ -307,8 +241,8 @@ impl AdbShell {
                 version.to_string(),
             ])
             .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .map_err(|e| {
                 SAideError::AdbError(format!(
@@ -390,6 +324,55 @@ impl AdbShell {
     }
 }
 
+/// Run adb command with given arguments and optional timeout, parsing output with provided closure.
+fn run_adb_command<I, S, F, R>(args: I, timeout: Option<Duration>, parse: F) -> Result<R>
+where
+    I: IntoIterator<Item = S> + fmt::Debug,
+    S: AsRef<OsStr>,
+    F: FnOnce(ExitStatus, &str) -> Result<R>,
+{
+    trace!("Running adb command with args: {:?}", args);
+    let mut child = Command::new("adb")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| SAideError::AdbError(format!("Failed to spawn adb: {e}")))?;
+
+    let status = if let Some(to) = timeout {
+        match child.wait_timeout(to).map_err(|e| {
+            SAideError::AdbError(format!("Failed to wait with timeout for adb: {e}"))
+        })? {
+            Some(s) => s,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SAideError::AdbError(
+                    "Timeout while waiting for adb command".to_string(),
+                ));
+            }
+        }
+    } else {
+        child
+            .wait()
+            .map_err(|e| SAideError::AdbError(format!("Failed to wait: {e}")))?
+    };
+
+    let output = read_child_stdout(&mut child)?;
+    parse(status, &output)
+}
+
+/// Read child stdout safely (UTF-8 lossy)
+fn read_child_stdout(child: &mut std::process::Child) -> Result<String> {
+    let mut buf = Vec::new();
+    if let Some(mut s) = child.stdout.take() {
+        s.read_to_end(&mut buf)
+            .map_err(|e| SAideError::AdbError(format!("Failed to read adb stdout: {}", e)))?;
+    }
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
+// Check if device serial is valid (non-empty)
 fn check_serial(serial: &str) -> Result<()> {
     if serial.is_empty() {
         return Err(SAideError::AdbError(
