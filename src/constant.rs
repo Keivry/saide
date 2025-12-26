@@ -23,4 +23,4 @@ pub const AUDIO_BUFFER_FRAMES: usize = 128;
 /// Ring buffer capacity (total samples, interleaved)
 /// Opus frame: ~1920 samples (20ms @ 48kHz stereo)
 /// Capacity should be at least 2x the frame size to account for jitter
-pub const AUDIO_RING_CAPACITY: usize = 5120;
+pub const AUDIO_RING_CAPACITY: usize = 5760;

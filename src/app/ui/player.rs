@@ -22,10 +22,11 @@ use {
     },
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
+    parking_lot::Mutex,
     std::{
         io::Read,
         net::TcpStream,
-        sync::{Arc, Mutex},
+        sync::Arc,
         thread,
         time::{Duration, Instant},
     },
@@ -568,7 +569,7 @@ fn stream_worker(
                     consecutive_read_errors = 0; // Reset on success
 
                     {
-                        let mut s = stats_audio.lock().unwrap();
+                        let mut s = stats_audio.lock();
                         s.audio_frames += 1;
                         s.last_audio_pts = pts;
                     }
@@ -576,7 +577,7 @@ fn stream_worker(
                     // Decode audio frame
                     if let Ok(Some(decoded)) = audio_decoder.decode(&payload, pts) {
                         // Phase 3: PTS-driven audio playback
-                        let action = av_sync_audio.lock().unwrap().check_audio_pts(decoded.pts);
+                        let action = av_sync_audio.lock().check_audio_pts(decoded.pts);
 
                         match action {
                             AudioAction::Play => {
@@ -588,32 +589,31 @@ fn stream_worker(
                                 debug!("Dropping late audio frame: pts={}", decoded.pts);
                             }
                             AudioAction::Wait(_) => {
-                                // Too early, but play anyway (let underrun handle it)
-                                let _ = audio_player.play(&decoded);
+                                // DO NOTHING
+                                // Audio player will handle underrun naturally
                             }
                         }
 
                         // Phase 4: Drift correction (every 50 frames ~= 1 second)
                         let current_audio_frames = {
-                            let s = stats_audio.lock().unwrap();
+                            let s = stats_audio.lock();
                             s.audio_frames
                         };
 
                         if current_audio_frames % 50 == 0 {
-                            let correction =
-                                av_sync_audio.lock().unwrap().update_drift(decoded.pts);
+                            let correction = av_sync_audio.lock().update_drift(decoded.pts);
                             match correction {
                                 DriftCorrection::DropFrame => {
                                     debug!(
                                         "Drift correction: dropping frame (audio ahead by {} us)",
-                                        av_sync_audio.lock().unwrap().average_drift_us()
+                                        av_sync_audio.lock().average_drift_us()
                                     );
                                     // Frame already decoded but skip playing
                                 }
                                 DriftCorrection::InsertSilence => {
                                     debug!(
                                         "Drift correction: audio behind by {} us",
-                                        av_sync_audio.lock().unwrap().average_drift_us()
+                                        av_sync_audio.lock().average_drift_us()
                                     );
                                     // Let natural underrun handle it
                                 }
@@ -717,7 +717,7 @@ fn stream_worker(
 
             if let Some(frame) = frame_opt {
                 let current_stats = {
-                    let mut s = stats.lock().unwrap();
+                    let mut s = stats.lock();
                     s.video_frames += 1;
                     s.last_video_pts = frame.pts;
                     *s
@@ -725,12 +725,12 @@ fn stream_worker(
 
                 // Check sync and update stats
                 let should_drop = {
-                    let sync = av_sync.lock().unwrap();
+                    let sync = av_sync.lock();
                     sync.should_drop_video(frame.pts)
                 };
 
                 if should_drop {
-                    let mut s = stats.lock().unwrap();
+                    let mut s = stats.lock();
                     s.dropped_frames += 1;
                     continue;
                 }
@@ -738,7 +738,7 @@ fn stream_worker(
                 // Send frame - if channel is closed, receiver dropped, exit gracefully
                 if frame_tx.try_send(Arc::new(frame)).is_err() {
                     if frame_tx.is_full() {
-                        let mut s = stats.lock().unwrap();
+                        let mut s = stats.lock();
                         s.dropped_frames += 1;
                     } else {
                         // Channel disconnected, exit gracefully

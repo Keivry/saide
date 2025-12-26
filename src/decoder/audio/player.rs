@@ -20,6 +20,7 @@ use {
     },
     rtrb::{Consumer, Producer, RingBuffer},
     std::{
+        cell::RefCell,
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -35,8 +36,8 @@ pub struct AudioPlayer {
     /// Audio output stream
     _stream: Stream,
 
-    /// Sample producer (write from decoder thread, needs mutex)
-    producer: parking_lot::Mutex<Producer<f32>>,
+    /// Ring buffer producer
+    producer: RefCell<Producer<f32>>,
 
     /// Player running flag
     running: Arc<AtomicBool>,
@@ -116,7 +117,7 @@ impl AudioPlayer {
 
         Ok(Self {
             _stream: stream,
-            producer: parking_lot::Mutex::new(producer),
+            producer: RefCell::new(producer),
             running,
             underruns,
             sample_rate,
@@ -141,9 +142,12 @@ impl AudioPlayer {
             )));
         }
 
-        // Write samples to ring buffer (sample-by-sample, lock-free ring, mutex producer)
-        let mut producer = self.producer.lock();
-        let written = match producer.write_chunk_uninit(audio.samples.len()) {
+        // Write samples to ring buffer (sample-by-sample, lock-free ring)
+        let written = match self
+            .producer
+            .borrow_mut()
+            .write_chunk_uninit(audio.samples.len())
+        {
             Ok(chunk) => {
                 // fill_from_iter() consumes chunk and commits automatically
                 let len = chunk.len();

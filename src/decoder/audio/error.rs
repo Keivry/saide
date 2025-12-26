@@ -1,4 +1,4 @@
-use thiserror::Error;
+use {opus::Error as OpusError, thiserror::Error};
 
 pub type Result<T> = std::result::Result<T, AudioError>;
 
@@ -24,4 +24,8 @@ impl std::fmt::Display for AudioError {
             AudioError::UnsupportedFormat(msg) => write!(f, "Unsupported audio format: {}", msg),
         }
     }
+}
+
+impl From<OpusError> for AudioError {
+    fn from(err: OpusError) -> Self { AudioError::PlaybackError(format!("Opus error: {:?}", err)) }
 }

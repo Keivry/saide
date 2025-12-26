@@ -17,6 +17,9 @@ pub struct OpusDecoder {
     channels: u16,
 }
 
+/// Number of samples per scrcpy audio frame
+const SCRCPY_FRAME_SAMPLES: usize = 960; // 20ms at 48kHz
+
 impl OpusDecoder {
     /// Create new Opus decoder
     ///
@@ -67,33 +70,22 @@ impl AudioDecoder for OpusDecoder {
 
         // Decode to PCM (f32, interleaved)
         // Opus can decode up to 5760 samples per channel (120ms at 48kHz)
-        let max_frame_size = 5760;
-        let mut output = vec![0f32; max_frame_size * self.channels as usize];
+        // But scrcpy-server typically sends 20ms frames (960 samples)
+        let mut output = vec![0f32; SCRCPY_FRAME_SAMPLES * self.channels as usize];
 
-        match self.decoder.decode_float(packet, &mut output, false) {
-            Ok(samples_per_channel) => {
-                // Trim to actual decoded size
-                let total_samples = samples_per_channel * self.channels as usize;
-                output.truncate(total_samples);
-
-                trace!(
-                    "Decoded audio: {} samples per channel, {} total samples",
-                    samples_per_channel, total_samples
-                );
-
-                Ok(Some(DecodedAudio {
-                    samples: output,
-                    sample_rate: self.sample_rate,
-                    channels: self.channels,
-                    pts,
-                }))
-            }
-            Err(e) => {
-                // Opus errors are usually config packets, skip them
-                debug!("Opus decode error (skipping): {:?}", e);
-                Ok(None)
-            }
+        let samples_per_channel = self.decoder.decode_float(packet, &mut output, false)?;
+        if samples_per_channel == 0 {
+            trace!("No samples decoded from packet");
+            return Ok(None);
         }
+
+        output.truncate(samples_per_channel * self.channels as usize);
+        Ok(Some(DecodedAudio {
+            samples: output,
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            pts,
+        }))
     }
 
     fn flush(&mut self) -> Result<Vec<DecodedAudio>> {
