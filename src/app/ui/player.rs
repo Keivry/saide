@@ -485,13 +485,14 @@ fn stream_worker(
         video_decoder.decoder_type()
     );
 
-    // Shared state
-    let av_sync = Arc::new(Mutex::new(AVSync::new(20)));
+    // Create AVSync (audio = master clock)
+    let mut av_sync = AVSync::new(20);
+    let av_snapshot = av_sync.snapshot(); // For video thread
+
     let stats = Arc::new(Mutex::new(StreamStats::default()));
 
-    // Spawn audio thread (if audio stream available)
+    // Spawn audio thread (if audio stream available) - holds mutable AVSync
     let audio_token = token.clone();
-    let av_sync_audio = av_sync.clone();
     let _audio_thread = if let Some(mut audio_stream) = audio_stream {
         let stats_audio = stats.clone();
         Some(thread::spawn(move || {
@@ -568,6 +569,9 @@ fn stream_worker(
 
                     consecutive_read_errors = 0; // Reset on success
 
+                    // Update AVSync (audio = master clock)
+                    av_sync.update_audio_pts(pts);
+
                     {
                         let mut s = stats_audio.lock();
                         s.audio_frames += 1;
@@ -577,7 +581,7 @@ fn stream_worker(
                     // Decode audio frame
                     if let Ok(Some(decoded)) = audio_decoder.decode(&payload, pts) {
                         // Phase 3: PTS-driven audio playback
-                        let action = av_sync_audio.lock().check_audio_pts(decoded.pts);
+                        let action = av_sync.check_audio_pts(decoded.pts);
 
                         match action {
                             AudioAction::Play => {
@@ -601,19 +605,19 @@ fn stream_worker(
                         };
 
                         if current_audio_frames % 50 == 0 {
-                            let correction = av_sync_audio.lock().update_drift(decoded.pts);
+                            let correction = av_sync.update_drift(decoded.pts);
                             match correction {
                                 DriftCorrection::DropFrame => {
                                     debug!(
                                         "Drift correction: dropping frame (audio ahead by {} us)",
-                                        av_sync_audio.lock().average_drift_us()
+                                        av_sync.average_drift_us()
                                     );
                                     // Frame already decoded but skip playing
                                 }
                                 DriftCorrection::InsertSilence => {
                                     debug!(
                                         "Drift correction: audio behind by {} us",
-                                        av_sync_audio.lock().average_drift_us()
+                                        av_sync.average_drift_us()
                                     );
                                     // Let natural underrun handle it
                                 }
@@ -723,13 +727,8 @@ fn stream_worker(
                     *s
                 };
 
-                // Check sync and update stats
-                let should_drop = {
-                    let sync = av_sync.lock();
-                    sync.should_drop_video(frame.pts)
-                };
-
-                if should_drop {
+                // Check sync and update stats (lock-free read from snapshot)
+                if av_snapshot.should_drop_video(frame.pts) {
                     let mut s = stats.lock();
                     s.dropped_frames += 1;
                     continue;

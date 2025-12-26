@@ -2,4 +2,4 @@
 
 mod clock;
 
-pub use clock::{AVClock, AVSync, AudioAction, DriftCorrection};
+pub use clock::{AVClock, AVSync, AVSyncSnapshot, AudioAction, DriftCorrection};

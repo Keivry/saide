@@ -236,11 +236,13 @@ fn av_worker(
 
     info!("Streams extracted: video + audio ready");
 
-    // Shared sync state
-    let av_sync = Arc::new(std::sync::Mutex::new(AVSync::new(20)));
+    // Create AVSync (audio = master clock)
+    let mut av_sync = AVSync::new(20);
+    let av_snapshot = av_sync.snapshot(); // For video thread
+
     let stats = Arc::new(std::sync::Mutex::new(AVStats::default()));
 
-    // Spawn audio thread
+    // Spawn audio thread (holds mutable AVSync)
     let stats_audio = stats.clone();
     let audio_thread = thread::spawn(move || {
         info!("Audio thread spawned, entering read loop...");
@@ -265,6 +267,9 @@ fn av_worker(
 
                 let mut payload = vec![0u8; packet_size];
                 audio_stream.read_exact(&mut payload)?;
+
+                // Update AVSync (audio = master clock)
+                av_sync.update_audio_pts(pts);
 
                 // Update stats
                 {
@@ -320,14 +325,11 @@ fn av_worker(
                 *s
             };
 
-            // Check sync
-            {
-                let sync = av_sync.lock().unwrap();
-                if sync.should_drop_video(frame.pts) {
-                    let mut stats_guard = stats.lock().unwrap();
-                    stats_guard.dropped_frames += 1;
-                    continue;
-                }
+            // Check sync (lock-free read from snapshot)
+            if av_snapshot.should_drop_video(frame.pts) {
+                let mut stats_guard = stats.lock().unwrap();
+                stats_guard.dropped_frames += 1;
+                continue;
             }
 
             // Send frame to UI

@@ -4,8 +4,18 @@
 //!
 //! Uses PTS-to-system-time mapping for minimal latency synchronization.
 //! Both audio and video use the same PTS time base from the device.
+//!
+//! Lock-free architecture:
+//! - Audio thread = master clock (唯一写者)
+//! - Video thread = reads atomic snapshot (无锁)
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicI64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 /// Audio-video clock for PTS synchronization
 ///
@@ -53,24 +63,70 @@ impl AVClock {
     }
 }
 
+/// Atomic snapshot for video thread (read-only)
+///
+/// Lock-free access to current sync state.
+/// Updated only by audio thread via Release ordering.
+#[derive(Debug)]
+pub struct AVSyncSnapshot {
+    /// Current audio PTS (microseconds)
+    audio_pts: AtomicI64,
+    /// Average drift (microseconds, positive = audio ahead)
+    avg_drift_us: AtomicI64,
+    /// Sync threshold (microseconds)
+    threshold_us: i64,
+    /// Whether clock is initialized
+    clock_ready: AtomicBool,
+}
+
+impl AVSyncSnapshot {
+    /// Check if video frame should be dropped (too late)
+    ///
+    /// Uses audio PTS as reference. Frame is late if it's behind
+    /// audio by more than threshold.
+    pub fn should_drop_video(&self, video_pts: i64) -> bool {
+        if !self.clock_ready.load(Ordering::Acquire) {
+            return false; // No clock yet, don't drop
+        }
+
+        let audio_pts = self.audio_pts.load(Ordering::Acquire);
+        let drift = video_pts - audio_pts;
+
+        // Video too far behind audio → drop
+        drift < -(self.threshold_us)
+    }
+
+    /// Get average drift in microseconds
+    pub fn avg_drift(&self) -> i64 { self.avg_drift_us.load(Ordering::Acquire) }
+
+    /// Get current audio PTS
+    pub fn audio_pts(&self) -> i64 { self.audio_pts.load(Ordering::Acquire) }
+
+    /// Get sync threshold
+    pub fn threshold_us(&self) -> i64 { self.threshold_us }
+}
+
 /// AV sync state for coordinating audio and video
 ///
+/// Lock-free architecture:
+/// - Audio thread holds `&mut AVSync` (唯一写者)
+/// - Video thread holds `Arc<AVSyncSnapshot>` (只读)
+///
 /// Implements scrcpy's synchronization strategy:
-/// - Video: render at PTS deadline (minimal buffering)
-/// - Audio: adaptive buffering with compensation
+/// - Audio = master clock
+/// - Video = reads snapshot, drops late frames
 #[derive(Debug)]
 pub struct AVSync {
     clock: Option<AVClock>,
     /// Sync threshold (microseconds)
-    /// Frames within ±threshold are considered in sync
     threshold_us: i64,
     /// Drift correction threshold (microseconds)
-    /// If audio drift exceeds this, apply compensation
     drift_correction_threshold_us: i64,
-    /// Accumulated drift samples (for averaging)
+    /// Drift history for averaging
     drift_history: Vec<i64>,
-    /// Max drift history size
     max_drift_history: usize,
+    /// Atomic snapshot for video thread
+    snapshot: Arc<AVSyncSnapshot>,
 }
 
 impl AVSync {
@@ -79,14 +135,24 @@ impl AVSync {
     /// # Arguments
     /// * `threshold_ms` - Sync threshold in milliseconds (default: 20ms)
     pub fn new(threshold_ms: u32) -> Self {
+        let threshold_us = threshold_ms as i64 * 1000;
         Self {
             clock: None,
-            threshold_us: threshold_ms as i64 * 1000,
+            threshold_us,
             drift_correction_threshold_us: 8000, // 8ms
             drift_history: Vec::with_capacity(10),
             max_drift_history: 10,
+            snapshot: Arc::new(AVSyncSnapshot {
+                audio_pts: AtomicI64::new(0),
+                avg_drift_us: AtomicI64::new(0),
+                threshold_us,
+                clock_ready: AtomicBool::new(false),
+            }),
         }
     }
+
+    /// Get snapshot for video thread (lock-free read)
+    pub fn snapshot(&self) -> Arc<AVSyncSnapshot> { Arc::clone(&self.snapshot) }
 
     /// Initialize clock with first video PTS
     ///
@@ -96,6 +162,35 @@ impl AVSync {
     pub fn init_clock_from_video(&mut self, first_video_pts: i64) {
         if self.clock.is_none() {
             self.clock = Some(AVClock::new(first_video_pts));
+            // Mark clock as ready
+            self.snapshot.clock_ready.store(true, Ordering::Release);
+        }
+    }
+
+    /// Update audio PTS and drift (audio thread only)
+    ///
+    /// This is the ONLY method that writes to snapshot.
+    /// Called by audio thread on every frame.
+    pub fn update_audio_pts(&mut self, audio_pts: i64) {
+        // Update snapshot atomically
+        self.snapshot.audio_pts.store(audio_pts, Ordering::Release);
+
+        // Update drift tracking
+        if let Some(drift) = self.audio_drift_us(audio_pts) {
+            self.drift_history.push(drift);
+            if self.drift_history.len() > self.max_drift_history {
+                self.drift_history.remove(0);
+            }
+
+            let avg_drift = if !self.drift_history.is_empty() {
+                self.drift_history.iter().sum::<i64>() / self.drift_history.len() as i64
+            } else {
+                0
+            };
+
+            self.snapshot
+                .avg_drift_us
+                .store(avg_drift, Ordering::Release);
         }
     }
 
