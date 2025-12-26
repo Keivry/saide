@@ -18,7 +18,7 @@ use {
         },
         error::{Result, SAideError},
         scrcpy::protocol::video::VideoPacket,
-        sync::{AVSync, AudioAction, DriftCorrection},
+        sync::AVSync,
     },
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
@@ -533,12 +533,9 @@ fn stream_worker(
 
                     consecutive_read_errors = 0; // Reset on success
 
+                    let pts = i64::from_be_bytes(header[0..8].try_into().unwrap());
                     let packet_size =
-                        u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
-                    let pts = i64::from_be_bytes([
-                        header[0], header[1], header[2], header[3], header[4], header[5],
-                        header[6], header[7],
-                    ]);
+                        u32::from_be_bytes(header[8..12].try_into().unwrap()) as usize;
 
                     // Read payload with error tolerance
                     let mut payload = vec![0u8; packet_size];
@@ -578,52 +575,10 @@ fn stream_worker(
                         s.last_audio_pts = pts;
                     }
 
-                    // Decode audio frame
+                    // Decode and play audio frame
+                    // Audio = master clock, always play immediately (no PTS check needed)
                     if let Ok(Some(decoded)) = audio_decoder.decode(&payload, pts) {
-                        // Phase 3: PTS-driven audio playback
-                        let action = av_sync.check_audio_pts(decoded.pts);
-
-                        match action {
-                            AudioAction::Play => {
-                                // On-time, play immediately
-                                let _ = audio_player.play(&decoded);
-                            }
-                            AudioAction::Drop => {
-                                // Too late, drop frame
-                                debug!("Dropping late audio frame: pts={}", decoded.pts);
-                            }
-                            AudioAction::Wait(_) => {
-                                // DO NOTHING
-                                // Audio player will handle underrun naturally
-                            }
-                        }
-
-                        // Phase 4: Drift correction (every 50 frames ~= 1 second)
-                        let current_audio_frames = {
-                            let s = stats_audio.lock();
-                            s.audio_frames
-                        };
-
-                        if current_audio_frames % 50 == 0 {
-                            let correction = av_sync.update_drift(decoded.pts);
-                            match correction {
-                                DriftCorrection::DropFrame => {
-                                    debug!(
-                                        "Drift correction: dropping frame (audio ahead by {} us)",
-                                        av_sync.average_drift_us()
-                                    );
-                                    // Frame already decoded but skip playing
-                                }
-                                DriftCorrection::InsertSilence => {
-                                    debug!(
-                                        "Drift correction: audio behind by {} us",
-                                        av_sync.average_drift_us()
-                                    );
-                                    // Let natural underrun handle it
-                                }
-                                DriftCorrection::None => {}
-                            }
-                        }
+                        let _ = audio_player.play(&decoded);
                     }
                 }
             })() {

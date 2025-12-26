@@ -31,13 +31,16 @@
 - 如果 audio 先到，整个时间轴被 audio 锁死
 - video 会被系统性"认为迟到或提前"
 
-**修改**：
+**修改**（已废弃 - 新架构下 audio 自动初始化 clock）：
 ```rust
-// 旧 API（危险）
-pub fn init_clock(&mut self, first_pts: i64)
-
-// 新 API（安全）
-pub fn init_clock_from_video(&mut self, first_video_pts: i64)
+// Lock-free 架构：audio thread 持有 &mut AVSync
+// update_audio_pts() 自动初始化 clock
+pub fn update_audio_pts(&mut self, audio_pts: i64) {
+    if self.clock.is_none() {
+        self.clock = Some(AVClock::new(audio_pts));
+    }
+    // ...
+}
 ```
 
 #### 1.2 修正 should_drop_video()
@@ -137,28 +140,22 @@ match rx.try_recv() {
 
 ## 下一步（TODO）
 
-### Phase 3: PTS-driven audio playback ✅ 已集成
+### Phase 3: Audio playback (Lock-free 架构) ✅ 已完成
 
 **实现位置**：`src/app/ui/player.rs` audio decode loop
 
-**工作流程**：
+**Lock-free 架构下的 audio 播放**：
 ```rust
-// 每个音频帧解码后
-let action = av_sync.check_audio_pts(decoded.pts);
-match action {
-    AudioAction::Play => audio_player.play(&decoded),
-    AudioAction::Drop => { /* 丢弃晚到帧 */ }
-    AudioAction::Wait(d) => { 
-        if d < 10ms { sleep(d); play(); }
-        else { play(); }  // 避免长时间阻塞
-    }
-}
+// Audio = master clock，直接播放（无需 PTS 检查）
+av_sync.update_audio_pts(pts);  // 更新 master clock
+let _ = audio_player.play(&decoded);  // 直接播放
 ```
 
-**效果**：
-- 自动丢弃晚到音频帧（> 20ms）
-- 短暂等待早到帧（< 10ms）
-- 防止音频堆积导致延迟
+**关键改变**：
+- ❌ 移除 `check_audio_pts()`（audio 不检查自己）
+- ❌ 移除 `AudioAction` 枚举（不再需要）
+- ✅ Audio 定义"准时"标准，直接播放
+- ✅ Video 通过 snapshot 读取 audio PTS，判断是否丢帧
 
 ### Phase 4: Audio drift correction ✅ 已集成
 

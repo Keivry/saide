@@ -6,8 +6,8 @@
 //! Both audio and video use the same PTS time base from the device.
 //!
 //! Lock-free architecture:
-//! - Audio thread = master clock (唯一写者)
-//! - Video thread = reads atomic snapshot (无锁)
+//! - Audio thread = master clock (unique writer)
+//! - Video thread = reads atomic snapshot (non-locking)
 
 use std::{
     sync::{
@@ -118,13 +118,6 @@ impl AVSyncSnapshot {
 #[derive(Debug)]
 pub struct AVSync {
     clock: Option<AVClock>,
-    /// Sync threshold (microseconds)
-    threshold_us: i64,
-    /// Drift correction threshold (microseconds)
-    drift_correction_threshold_us: i64,
-    /// Drift history for averaging
-    drift_history: Vec<i64>,
-    max_drift_history: usize,
     /// Atomic snapshot for video thread
     snapshot: Arc<AVSyncSnapshot>,
 }
@@ -138,10 +131,6 @@ impl AVSync {
         let threshold_us = threshold_ms as i64 * 1000;
         Self {
             clock: None,
-            threshold_us,
-            drift_correction_threshold_us: 8000, // 8ms
-            drift_history: Vec::with_capacity(10),
-            max_drift_history: 10,
             snapshot: Arc::new(AVSyncSnapshot {
                 audio_pts: AtomicI64::new(0),
                 avg_drift_us: AtomicI64::new(0),
@@ -154,225 +143,25 @@ impl AVSync {
     /// Get snapshot for video thread (lock-free read)
     pub fn snapshot(&self) -> Arc<AVSyncSnapshot> { Arc::clone(&self.snapshot) }
 
-    /// Initialize clock with first video PTS
-    ///
-    /// CRITICAL: Only video should initialize the clock, never audio.
-    /// Audio arrival time != video capture time, initializing with audio
-    /// creates systematic drift in ≤20ms scenarios.
-    pub fn init_clock_from_video(&mut self, first_video_pts: i64) {
-        if self.clock.is_none() {
-            self.clock = Some(AVClock::new(first_video_pts));
-            // Mark clock as ready
-            self.snapshot.clock_ready.store(true, Ordering::Release);
-        }
-    }
-
-    /// Update audio PTS and drift (audio thread only)
+    /// Update audio PTS (audio thread only)
     ///
     /// This is the ONLY method that writes to snapshot.
     /// Called by audio thread on every frame.
+    /// Automatically initializes clock on first call.
     pub fn update_audio_pts(&mut self, audio_pts: i64) {
+        // Auto-initialize clock on first audio frame
+        if self.clock.is_none() {
+            self.clock = Some(AVClock::new(audio_pts));
+            self.snapshot.clock_ready.store(true, Ordering::Release);
+        }
+
         // Update snapshot atomically
         self.snapshot.audio_pts.store(audio_pts, Ordering::Release);
-
-        // Update drift tracking
-        if let Some(drift) = self.audio_drift_us(audio_pts) {
-            self.drift_history.push(drift);
-            if self.drift_history.len() > self.max_drift_history {
-                self.drift_history.remove(0);
-            }
-
-            let avg_drift = if !self.drift_history.is_empty() {
-                self.drift_history.iter().sum::<i64>() / self.drift_history.len() as i64
-            } else {
-                0
-            };
-
-            self.snapshot
-                .avg_drift_us
-                .store(avg_drift, Ordering::Release);
-        }
     }
-
-    /// Get current AV clock
-    pub fn clock(&self) -> Option<&AVClock> { self.clock.as_ref() }
-
-    /// Calculate sleep duration until PTS deadline
-    ///
-    /// Returns:
-    /// - `Some(duration)` if frame is early (should wait)
-    /// - `None` if frame is late or on-time (render immediately)
-    pub fn time_until_pts(&self, pts: i64) -> Option<Duration> {
-        let clock = self.clock.as_ref()?;
-        let deadline = clock.pts_to_system_time(pts);
-        let now = Instant::now();
-
-        if deadline > now {
-            Some(deadline.duration_since(now))
-        } else {
-            None
-        }
-    }
-
-    /// Check if video frame should be dropped (too late)
-    ///
-    /// Returns true if frame is more than threshold behind system time.
-    /// Uses pure system-time comparison (scrcpy approach), avoiding
-    /// current_pts() drift issues.
-    pub fn should_drop_video(&self, pts: i64) -> bool {
-        let clock = match &self.clock {
-            Some(c) => c,
-            None => return false,
-        };
-
-        let deadline = clock.pts_to_system_time(pts);
-        let now = Instant::now();
-
-        // Frame is late if deadline has passed by more than threshold
-        now.saturating_duration_since(deadline).as_micros() as i64 > self.threshold_us
-    }
-
-    /// Check if audio should be played based on PTS
-    ///
-    /// Returns:
-    /// - `AudioAction::Play` if audio is on-time (within threshold)
-    /// - `AudioAction::Drop` if audio is too late (> threshold behind)
-    /// - `AudioAction::Wait(duration)` if audio is too early
-    pub fn check_audio_pts(&self, audio_pts: i64) -> AudioAction {
-        let clock = match &self.clock {
-            Some(c) => c,
-            None => return AudioAction::Play, // No clock yet, play immediately
-        };
-
-        let deadline = clock.pts_to_system_time(audio_pts);
-        let now = Instant::now();
-
-        // Calculate how early/late the audio is
-        if deadline > now {
-            // Audio is early - should wait
-            let wait_time = deadline.duration_since(now);
-            if wait_time.as_micros() as i64 > self.threshold_us {
-                // Too early, wait
-                AudioAction::Wait(wait_time)
-            } else {
-                // Close enough, play now
-                AudioAction::Play
-            }
-        } else {
-            // Audio is late
-            let lateness = now.saturating_duration_since(deadline);
-            if lateness.as_micros() as i64 > self.threshold_us {
-                // Too late, drop
-                AudioAction::Drop
-            } else {
-                // Close enough, play now
-                AudioAction::Play
-            }
-        }
-    }
-
-    /// Get sync drift in microseconds (positive = audio ahead, negative = audio behind)
-    pub fn audio_drift_us(&self, audio_pts: i64) -> Option<i64> {
-        let clock = self.clock.as_ref()?;
-        let deadline = clock.pts_to_system_time(audio_pts);
-        let now = Instant::now();
-
-        if deadline > now {
-            Some(deadline.duration_since(now).as_micros() as i64)
-        } else {
-            Some(-(now.saturating_duration_since(deadline).as_micros() as i64))
-        }
-    }
-
-    /// Update drift tracking and get correction action
-    ///
-    /// Call this periodically (e.g., every audio frame) to track drift.
-    /// Returns `DriftCorrection` action to take.
-    pub fn update_drift(&mut self, audio_pts: i64) -> DriftCorrection {
-        let drift = match self.audio_drift_us(audio_pts) {
-            Some(d) => d,
-            None => return DriftCorrection::None,
-        };
-
-        // Add to history
-        self.drift_history.push(drift);
-        if self.drift_history.len() > self.max_drift_history {
-            self.drift_history.remove(0);
-        }
-
-        // Calculate average drift
-        let avg_drift = self.drift_history.iter().sum::<i64>() / self.drift_history.len() as i64;
-
-        // Check if correction is needed
-        if avg_drift.abs() < self.drift_correction_threshold_us {
-            DriftCorrection::None
-        } else if avg_drift > 0 {
-            // Audio ahead - slow down (drop occasional frame)
-            DriftCorrection::DropFrame
-        } else {
-            // Audio behind - speed up (duplicate frame or reduce buffering)
-            DriftCorrection::InsertSilence
-        }
-    }
-
-    /// Get average drift from recent history
-    pub fn average_drift_us(&self) -> i64 {
-        if self.drift_history.is_empty() {
-            0
-        } else {
-            self.drift_history.iter().sum::<i64>() / self.drift_history.len() as i64
-        }
-    }
-
-    /// Get sync status for debugging
-    pub fn sync_status(&self, video_pts: i64, audio_pts: i64) -> SyncStatus {
-        let diff_us = video_pts - audio_pts;
-        let diff_ms = diff_us / 1000;
-
-        SyncStatus {
-            video_pts,
-            audio_pts,
-            diff_us,
-            diff_ms,
-            in_sync: diff_us.abs() < self.threshold_us,
-        }
-    }
-}
-
-/// Action to take for audio playback based on PTS
-#[derive(Debug, Clone, Copy)]
-pub enum AudioAction {
-    /// Play audio immediately
-    Play,
-    /// Drop audio (too late)
-    Drop,
-    /// Wait before playing
-    Wait(Duration),
-}
-
-/// Drift correction action
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DriftCorrection {
-    /// No correction needed
-    None,
-    /// Drop one audio frame (audio ahead)
-    DropFrame,
-    /// Insert silence (audio behind)
-    InsertSilence,
 }
 
 impl Default for AVSync {
     fn default() -> Self { Self::new(20) }
-}
-
-/// Sync status for monitoring
-#[derive(Debug, Clone, Copy)]
-pub struct SyncStatus {
-    pub video_pts: i64,
-    pub audio_pts: i64,
-    pub diff_us: i64,
-    pub diff_ms: i64,
-    pub in_sync: bool,
 }
 
 #[cfg(test)]
@@ -412,48 +201,31 @@ mod tests {
     #[test]
     fn test_av_sync_init() {
         let mut sync = AVSync::new(20);
-        assert!(sync.clock().is_none());
 
-        sync.init_clock_from_video(1000000);
-        assert!(sync.clock().is_some());
-        assert_eq!(sync.clock().unwrap().pts_base, 1000000);
+        // Clock auto-initialized on first audio frame
+        sync.update_audio_pts(1000000);
+
+        // Verify snapshot is updated
+        let snapshot = sync.snapshot();
+        assert_eq!(snapshot.audio_pts(), 1000000);
+        assert!(snapshot.clock_ready.load(Ordering::Acquire));
     }
 
     #[test]
-    fn test_time_until_pts() {
+    fn test_snapshot_should_drop_video() {
         let mut sync = AVSync::new(20);
-        sync.init_clock_from_video(0);
 
-        // Frame 100ms in the future
-        let future_pts = 100_000;
-        let wait_time = sync.time_until_pts(future_pts);
+        // Initialize with audio
+        sync.update_audio_pts(1000000);
+        let snapshot = sync.snapshot();
 
-        assert!(wait_time.is_some());
-        let duration = wait_time.unwrap();
-        assert!(duration.as_millis() >= 95 && duration.as_millis() <= 105);
-    }
+        // Video far behind audio → should drop
+        assert!(snapshot.should_drop_video(950_000)); // 50ms behind
 
-    #[test]
-    fn test_should_drop_video() {
-        let mut sync = AVSync::new(20);
-        sync.init_clock_from_video(0);
+        // Video close to audio → should not drop
+        assert!(!snapshot.should_drop_video(990_000)); // 10ms behind
 
-        thread::sleep(Duration::from_millis(50));
-
-        // Old frame (100ms behind)
-        assert!(sync.should_drop_video(-100_000));
-
-        // Current frame
-        assert!(!sync.should_drop_video(sync.clock().unwrap().current_pts()));
-    }
-
-    #[test]
-    fn test_sync_status() {
-        let sync = AVSync::new(20);
-        let status = sync.sync_status(1000000, 999000);
-
-        assert_eq!(status.diff_us, 1000);
-        assert_eq!(status.diff_ms, 1);
-        assert!(status.in_sync); // Within 20ms threshold
+        // Video ahead of audio → should not drop
+        assert!(!snapshot.should_drop_video(1_010_000));
     }
 }
