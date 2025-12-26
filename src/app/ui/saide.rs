@@ -439,73 +439,67 @@ impl SAideApp {
         }
 
         // Get current mappings for display
-        let mappings = self
-            .keyboard_mapper
-            .as_ref()
-            .unwrap()
-            .get_active_profile()
-            .map(|profile| profile.mappings.clone())
-            .unwrap_or_default();
+        if let Some(mappings) = self.keyboard_mapper.as_ref().unwrap().get_active_mappings() {
+            // Draw the config window and handle events
+            let video_rect = self.player.video_rect();
+            let event = self.mapping_config_window.draw(
+                ctx,
+                &mappings,
+                video_rect,
+                &self.visual_coords,
+                &self.scrcpy_coords,
+                &self.mapping_coords,
+            );
 
-        // Draw the config window and handle events
-        let video_rect = self.player.video_rect();
-        let event = self.mapping_config_window.draw(
-            ctx,
-            &mappings,
-            video_rect,
-            &self.visual_coords,
-            &self.scrcpy_coords,
-            &self.mapping_coords,
-        );
-
-        match event {
-            MappingConfigEvent::Close => {
-                self.mapping_config_window.hide();
-            }
-            MappingConfigEvent::RequestAddMapping(screen_pos) => {
-                // Convert screen position to mapping percentage coordinates (0.0-1.0)
-                // Visual -> Scrcpy -> Mapping
-                let video_rect = self.player.video_rect();
-                if let Some(percent_pos) = self.visual_coords.to_mapping(
-                    &screen_pos,
-                    &video_rect,
-                    &self.scrcpy_coords,
-                    &self.mapping_coords,
-                ) {
-                    info!(
-                        "Add mapping: screen=({:.1},{:.1}) -> percent=({:.6},{:.6}) [device_orientation={}]",
-                        screen_pos.x,
-                        screen_pos.y,
-                        percent_pos.x,
-                        percent_pos.y,
-                        self.device_orientation
-                    );
-
-                    self.mapping_config_window
-                        .request_input_dialog(&percent_pos);
+            match event {
+                MappingConfigEvent::Close => {
+                    self.mapping_config_window.hide();
                 }
-            }
-            MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
-                // Find nearest mapping to delete
-                // Visual -> Scrcpy -> Mapping
-                let video_rect = self.player.video_rect();
-                if let Some(percent_pos) = self.visual_coords.to_mapping(
-                    &screen_pos,
-                    &video_rect,
-                    &self.scrcpy_coords,
-                    &self.mapping_coords,
-                ) && let Some((nearest_key, nearest_pos)) =
-                    find_nearest_mapping(&percent_pos, &mappings)
-                {
-                    info!(
-                        "Delete mapping: {:?} at ({:.6}, {:.6})",
-                        nearest_key, nearest_pos.x, nearest_pos.y
-                    );
-                    self.mapping_config_window
-                        .request_delete_dialog(nearest_key, &nearest_pos);
+                MappingConfigEvent::RequestAddMapping(screen_pos) => {
+                    // Convert screen position to mapping percentage coordinates (0.0-1.0)
+                    // Visual -> Scrcpy -> Mapping
+                    let video_rect = self.player.video_rect();
+                    if let Some(percent_pos) = self.visual_coords.to_mapping(
+                        &screen_pos,
+                        &video_rect,
+                        &self.scrcpy_coords,
+                        &self.mapping_coords,
+                    ) {
+                        info!(
+                            "Add mapping: screen=({:.1},{:.1}) -> percent=({:.6},{:.6}) [device_orientation={}]",
+                            screen_pos.x,
+                            screen_pos.y,
+                            percent_pos.x,
+                            percent_pos.y,
+                            self.device_orientation
+                        );
+
+                        self.mapping_config_window
+                            .request_input_dialog(&percent_pos);
+                    }
                 }
+                MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
+                    // Find nearest mapping to delete
+                    // Visual -> Scrcpy -> Mapping
+                    let video_rect = self.player.video_rect();
+                    if let Some(percent_pos) = self.visual_coords.to_mapping(
+                        &screen_pos,
+                        &video_rect,
+                        &self.scrcpy_coords,
+                        &self.mapping_coords,
+                    ) && let Some((nearest_key, nearest_pos)) =
+                        find_nearest_mapping(&percent_pos, &mappings)
+                    {
+                        info!(
+                            "Delete mapping: {:?} at ({:.6}, {:.6})",
+                            nearest_key, nearest_pos.x, nearest_pos.y
+                        );
+                        self.mapping_config_window
+                            .request_delete_dialog(nearest_key, &nearest_pos);
+                    }
+                }
+                MappingConfigEvent::None => {}
             }
-            MappingConfigEvent::None => {}
         }
 
         // Handle dialogs
@@ -554,7 +548,7 @@ impl SAideApp {
         };
 
         let action = MappingAction::Tap { pos: *pos };
-        keyboard_mapper.add_profile_mapping(key, action);
+        keyboard_mapper.add_mapping(key, action);
 
         // Save to config file
         if let Err(e) = self.config_manager.save() {
@@ -573,7 +567,7 @@ impl SAideApp {
             return;
         };
 
-        keyboard_mapper.delete_profile_mapping(&key);
+        keyboard_mapper.delete_mapping(&key);
 
         // Save to config file
         if let Err(e) = self.config_manager.save() {
@@ -588,7 +582,7 @@ impl SAideApp {
             return None;
         };
 
-        keyboard_mapper.get_profile_mapping(key)
+        keyboard_mapper.get_mapping(key)
     }
 
     /// Process keyboard event

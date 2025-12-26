@@ -191,7 +191,7 @@ impl ScrcpyAction {
 }
 
 /// Key to MappingAction map with serialization support
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct KeyMapping {
     inner: Arc<RwLock<HashMap<Key, MappingAction>>>,
 }
@@ -249,7 +249,7 @@ impl Deref for KeyMapping {
 }
 
 /// Profile for a specific device and rotation
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
 
@@ -293,7 +293,7 @@ impl Profile {
 }
 
 /// Overall mappings configuration
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Mappings {
     /// Key to toggle mappings on/off
     #[serde(default = "default_toggle_key")]
@@ -337,7 +337,19 @@ impl Mappings {
     }
 }
 
+impl Default for Mappings {
+    fn default() -> Self {
+        Mappings {
+            toggle: default_toggle_key(),
+            initial_state: default_false(),
+            show_notification: default_true(),
+            profiles: RwLock::new(Vec::new()),
+        }
+    }
+}
+
 fn default_toggle_key() -> String { "F10".to_string() }
+fn default_false() -> bool { false }
 fn default_true() -> bool { true }
 
 fn deserialize_profiles<'de, D>(deserializer: D) -> Result<RwLock<Vec<Arc<Profile>>>, D::Error>

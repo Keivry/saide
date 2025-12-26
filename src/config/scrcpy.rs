@@ -12,7 +12,7 @@ pub struct ScrcpyConfig {
     pub options: OptionsConfig,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoConfig {
     #[serde(default = "default_bitrate")]
     pub bit_rate: String,
@@ -24,6 +24,18 @@ pub struct VideoConfig {
     pub codec: String,
     #[serde(default = "default_encoder")]
     pub encoder: Option<String>,
+}
+
+impl Default for VideoConfig {
+    fn default() -> Self {
+        Self {
+            bit_rate: default_bitrate(),
+            max_fps: default_max_fps(),
+            max_size: default_max_size(),
+            codec: default_codec(),
+            encoder: default_encoder(),
+        }
+    }
 }
 
 fn default_bitrate() -> String { "8M".to_string() }
@@ -45,7 +57,7 @@ pub struct AudioConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: default_audio_enabled(),
             codec: default_audio_codec(),
             source: default_audio_source(),
         }
@@ -56,12 +68,21 @@ fn default_audio_enabled() -> bool { true }
 fn default_audio_codec() -> String { "opus".to_string() }
 fn default_audio_source() -> String { "playback".to_string() }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptionsConfig {
     #[serde(default = "default_true")]
     pub turn_screen_off: bool,
     #[serde(default = "default_true")]
     pub stay_awake: bool,
+}
+
+impl Default for OptionsConfig {
+    fn default() -> Self {
+        Self {
+            turn_screen_off: default_true(),
+            stay_awake: default_true(),
+        }
+    }
 }
 
 fn default_true() -> bool { true }

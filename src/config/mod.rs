@@ -84,18 +84,14 @@ impl Display for GpuBackend {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GPUConfig {
-    #[serde(default = "default_vsync")]
+    #[serde(default)]
     pub vsync: bool,
 
-    #[serde(default = "default_gpu_backend")]
+    #[serde(default)]
     pub backend: GpuBackend,
 }
 
-fn default_vsync() -> bool { true }
-
-fn default_gpu_backend() -> GpuBackend { GpuBackend::Vulkan }
-
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GeneralConfig {
     #[serde(default = "default_true")]
     pub keyboard_enabled: bool,
@@ -117,6 +113,19 @@ pub struct GeneralConfig {
     /// otherwise falls back to the filename in the current directory
     #[serde(default = "default_scrcpy_server_path")]
     pub scrcpy_server: String,
+}
+
+impl Default for GeneralConfig {
+    fn default() -> Self {
+        Self {
+            keyboard_enabled: default_true(),
+            mouse_enabled: default_true(),
+            init_timeout: default_init_timeout(),
+            indicator: default_true(),
+            indicator_position: IndicatorPosition::default(),
+            scrcpy_server: default_scrcpy_server_path(),
+        }
+    }
 }
 
 fn default_true() -> bool { true }

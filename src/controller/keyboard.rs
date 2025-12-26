@@ -5,7 +5,7 @@
 use {
     crate::{
         app::coords::{MappingCoordSys, ScrcpyCoordSys},
-        config::mapping::{MappingAction, Mappings, Modifiers, Profile, ScrcpyAction},
+        config::mapping::{KeyMapping, MappingAction, Mappings, Modifiers, Profile, ScrcpyAction},
         controller::control_sender::ControlSender,
         error::Result,
     },
@@ -119,7 +119,7 @@ pub struct KeyboardMapper {
     active_profile: ArcSwap<Option<Arc<Profile>>>,
 
     /// Active mappings for runtime use, converted to scrcpy video coordinates
-    active_mappings: RwLock<HashMap<Key, ScrcpyAction>>,
+    scrcpy_mappings: RwLock<HashMap<Key, ScrcpyAction>>,
 
     /// Scrcpy capture orientation state
     capture_orientation: Option<u32>,
@@ -137,7 +137,7 @@ impl KeyboardMapper {
             sender,
             avail_profiles: RwLock::new(Vec::new()),
             active_profile: ArcSwap::from_pointee(None),
-            active_mappings: RwLock::new(HashMap::new()),
+            scrcpy_mappings: RwLock::new(HashMap::new()),
             capture_orientation,
         }
     }
@@ -158,7 +158,7 @@ impl KeyboardMapper {
             info!("Disable custom key mappings for this device/rotation.");
 
             self.active_profile.store(Arc::new(None));
-            self.active_mappings.write().clear();
+            self.scrcpy_mappings.write().clear();
         } else {
             info!(
                 "Found {} matching profiles for device serial '{}' with rotation {}.",
@@ -254,7 +254,7 @@ impl KeyboardMapper {
     /// Handle custom key mapping event, returns true if handled
     pub fn handle_custom_keymapping_event(&self, key: &Key) -> Result<bool> {
         // Use pixel-converted mappings for control
-        if let Some(action) = self.active_mappings.read().get(key) {
+        if let Some(action) = self.scrcpy_mappings.read().get(key) {
             trace!(
                 "Handling custom key mapping event: {:?} -> {:?}",
                 key, action
@@ -347,6 +347,15 @@ impl KeyboardMapper {
         self.get_active_profile().map(|p| p.name.clone())
     }
 
+    /// Get active profile mappings (percentage coordinates)
+    pub fn get_active_mappings(&self) -> Option<Arc<KeyMapping>> {
+        self.active_profile
+            .load()
+            .as_ref()
+            .clone()
+            .map(|p| Arc::clone(&p.mappings))
+    }
+
     /// Apply active profile by converting percentage mappings to pixel coordinates
     pub fn apply_active_profile(&self) {
         let active_profile = match self.get_active_profile() {
@@ -387,10 +396,21 @@ impl KeyboardMapper {
             );
         }
 
-        *self.active_mappings.write() = active_mappings;
+        *self.scrcpy_mappings.write() = active_mappings;
     }
 
-    pub fn add_profile_mapping(&self, key: Key, action: MappingAction) {
+    /// Get mapping action for a given key from the active profile
+    pub fn get_mapping(&self, key: &Key) -> Option<MappingAction> {
+        if let Some(active_profile) = self.get_active_profile()
+            && let Some(action) = active_profile.mappings.read().get(key)
+        {
+            return Some(action.clone());
+        }
+        None
+    }
+
+    /// Add a new mapping to the active profile
+    pub fn add_mapping(&self, key: Key, action: MappingAction) {
         if let Some(active_profile) = self.get_active_profile() {
             active_profile.mappings.write().insert(key, action.clone());
 
@@ -402,30 +422,24 @@ impl KeyboardMapper {
                 ScrcpyCoordSys::new(video_width, video_height, self.capture_orientation);
             let scrcpy_action =
                 ScrcpyAction::from_mapping_action(&action, &scrcpy_sys, &mapping_sys);
-            self.add_mapping(key, scrcpy_action);
+            self.add_scrcpy_mapping(key, scrcpy_action);
         }
     }
 
-    pub fn delete_profile_mapping(&self, key: &Key) {
+    /// Delete a mapping from the active profile
+    pub fn delete_mapping(&self, key: &Key) {
         if let Some(active_profile) = self.get_active_profile() {
             active_profile.mappings.write().remove(key);
 
-            self.delete_mapping(key);
+            self.delete_scrcpy_mapping(key);
         }
     }
 
-    fn add_mapping(&self, key: Key, action: ScrcpyAction) {
-        self.active_mappings.write().insert(key, action);
+    /// Add a new scrcpy mapping (pixel coordinates)
+    fn add_scrcpy_mapping(&self, key: Key, action: ScrcpyAction) {
+        self.scrcpy_mappings.write().insert(key, action);
     }
 
-    fn delete_mapping(&self, key: &Key) { self.active_mappings.write().remove(key); }
-
-    pub fn get_profile_mapping(&self, key: &Key) -> Option<MappingAction> {
-        if let Some(active_profile) = self.get_active_profile()
-            && let Some(action) = active_profile.mappings.read().get(key)
-        {
-            return Some(action.clone());
-        }
-        None
-    }
+    /// Delete a scrcpy mapping (pixel coordinates)
+    fn delete_scrcpy_mapping(&self, key: &Key) { self.scrcpy_mappings.write().remove(key); }
 }
