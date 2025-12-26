@@ -13,6 +13,7 @@ use {
     saide::{
         ScrcpyConnection,
         ServerParams,
+        avsync::AVSync,
         decoder::{
             AudioDecoder,
             AudioPlayer,
@@ -23,7 +24,6 @@ use {
             VideoDecoder,
             new_nv12_render_callback,
         },
-        sync::AVSync,
     },
     std::{io::Read, sync::Arc, thread},
     tracing::{debug, error, info},

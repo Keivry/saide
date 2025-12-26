@@ -5,6 +5,7 @@
 use {
     super::VideoStats,
     crate::{
+        avsync::AVSync,
         decoder::{
             AudioDecoder,
             AudioPlayer,
@@ -18,7 +19,6 @@ use {
         },
         error::{Result, SAideError},
         scrcpy::protocol::video::VideoPacket,
-        sync::AVSync,
     },
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},

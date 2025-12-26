@@ -1,14 +1,15 @@
 pub mod app;
+pub mod avsync;
 pub mod config;
 pub mod constant;
 pub mod controller;
 pub mod decoder;
 pub mod error;
+pub mod platform;
 pub mod scrcpy;
-pub mod sync;
-pub mod sys;
 
 pub use {
+    avsync::AVSync,
     decoder::{
         AudioDecoder,
         AudioPlayer,
@@ -21,11 +22,10 @@ pub use {
         VideoDecoder,
         new_nv12_render_callback,
     },
+    platform::{GpuType, detect_gpu},
     scrcpy::{
         connection::ScrcpyConnection,
         protocol::{audio::AudioPacket, control::ControlMessage, video::VideoPacket},
         server::ServerParams,
     },
-    sync::AVSync,
-    sys::{GpuType, detect_gpu},
 };
