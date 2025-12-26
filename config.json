@@ -1,0 +1,68 @@
+{
+  "general": {
+    "keyboard_enabled": true,
+    "mouse_enabled": true,
+    "init_timeout": 15,
+    "indicator": true,
+    "indicator_position": "bottom-left"
+  },
+  "scrcpy": {
+    "video": {
+      "bit_rate": "24M",
+      "max_fps": 120,
+      "max_size": 1600,
+      "codec": "h264"
+    },
+    "audio": {
+      "enabled": true,
+      "codec": "opus",
+      "source": "playback"
+    },
+    "options": {
+      "turn_screen_off": true,
+      "stay_awake": true
+    }
+  },
+  "gpu": {
+    "vsync": false,
+    "backend": "VULKAN"
+  },
+  "mappings": {
+    "toggle": "F10",
+    "initial_state": true,
+    "show_notification": true,
+    "profiles": [
+      {
+        "name": "AskTao",
+        "device_serial": "10AF971ZLN004SU",
+        "rotation": 1,
+        "mappings": [
+          { "key": "S", "action": "Tap", "x": 0.9275, "y": 0.654 },
+          { "key": "W", "action": "Tap", "x": 0.7804, "y": 0.0246 },
+          { "key": "Backtick", "action": "Tap", "x": 0.0632, "y": 0.0651 },
+          { "key": "Num6", "action": "Tap", "x": 0.8571, "y": 0.3587 },
+          { "key": "Z", "action": "Tap", "x": 0.8864, "y": 0.2984 },
+          { "key": "G", "action": "Tap", "x": 0.7971, "y": 0.6984 },
+          { "key": "V", "action": "Tap", "x": 0.8875, "y": 0.4183 },
+          { "key": "F1", "action": "Tap", "x": 0.2964, "y": 0.0635 },
+          { "key": "Num3", "action": "Tap", "x": 0.9154, "y": 0.3619 },
+          { "key": "Q", "action": "Tap", "x": 0.9261, "y": 0.4873 },
+          { "key": "C", "action": "Tap", "x": 0.7518, "y": 0.846 },
+          { "key": "Num5", "action": "Tap", "x": 0.8018, "y": 0.3643 },
+          { "key": "B", "action": "Tap", "x": 0.9393, "y": 0.8032 },
+          { "key": "A", "action": "Tap", "x": 0.9271, "y": 0.9167 },
+          { "key": "T", "action": "Tap", "x": 0.8121, "y": 0.0587 },
+          { "key": "F2", "action": "Tap", "x": 0.2521, "y": 0.0611 },
+          { "key": "F", "action": "Tap", "x": 0.0614, "y": 0.6635 },
+          { "key": "Tab", "action": "Tap", "x": 0.12, "y": 0.1071 },
+          { "key": "D", "action": "Tap", "x": 0.1082, "y": 0.6667 },
+          { "key": "Num2", "action": "Tap", "x": 0.8554, "y": 0.4913 },
+          { "key": "X", "action": "Tap", "x": 0.2529, "y": 0.846 }
+        ]
+      }
+    ]
+  },
+  "logging": {
+    "level": "info"
+  }
+}

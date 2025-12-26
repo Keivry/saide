@@ -2,13 +2,6 @@
 
 ## 进行中 🔄
 
-- [ ] UI 层错误展示
-  - [ ] ConnectionLost → "Connection Lost" overlay
-  - [ ] 其他错误 → 错误对话框
-- [ ] 测试和验证
-  - [ ] USB 断开场景测试
-  - [ ] Ctrl+C 优雅关闭测试
-
 ## 问题
 
 - [x] 增加删除映射后，没有更新 active_mappings
@@ -321,7 +314,7 @@ cargo run --example render_device
 
 **Bug 修复 (2025-12-15)**：
 
-- ✅ 修复 max_size 未遵循 config.toml 设定（硬编码 1920）
+- ✅ 修复 max_size 未遵循 config.json 设定（硬编码 1920）
   - 方案：将 ScrcpyConfig 传递给 StreamPlayer::start()
   - 同时修复 bit_rate、max_fps、codec、audio 配置未生效
 - ✅ 修复启动后视频画面不显示
@@ -471,7 +464,7 @@ cargo run --example render_avsync [device_serial]
 **架构设计**：
 
 ```
-配置文件 (config.toml)
+配置文件 (config.json)
   ↓ 反序列化
 Profile (百分比 0.0-1.0)  ←── 映射配置窗口直接读取
   ↓ refresh_profiles

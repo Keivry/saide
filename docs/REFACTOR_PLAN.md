@@ -164,7 +164,7 @@ pub mod v4l2;
 **文件**：
 - `README.md` - 更新安装说明（移除 V4L2 要求）
 - `docs/ARCHITECTURE.md` - 更新架构图
-- `config.toml` - 更新示例配置
+- `config.json` - 更新示例配置
 
 **新文档**：
 - `docs/MIGRATION.md` - 从旧版本迁移指南

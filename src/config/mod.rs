@@ -26,17 +26,17 @@ use {
 
 lazy_static! {
     /// Default configuration file path
-    /// If the standard config directory cannot be determined, falls back to "config.toml" in the current directory.
-    /// E.g., on Linux, this would typically be "~/.config/saide/config.toml"
-    /// on Windows, it would be "C:\Users\<User>\AppData\Roaming\saide\config.toml"
+    /// If the standard config directory cannot be determined, falls back to "config.json" in the current directory.
+    /// E.g., on Linux, this would typically be "~/.config/saide/config.json"
+    /// on Windows, it would be "C:\Users\<User>\AppData\Roaming\saide\config.json"
     static ref DEFAULT_CONFIG_PATH: String = match ProjectDirs::from("io", "keivry", "saide") {
         Some(proj_dirs) => proj_dirs
             .config_dir()
-            .join("config.toml")
+            .join("config.json")
             .to_str()
             .unwrap()
             .to_string(),
-        None => "config.toml".to_string(),
+        None => "config.json".to_string(),
     };
 }
 
@@ -147,13 +147,13 @@ impl SAideConfig {
     /// Load configuration from file
     pub fn load(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
-        let config: SAideConfig = toml::from_str(&content)?;
+        let config: SAideConfig = serde_json::from_str(&content)?;
         Ok(config)
     }
 
     /// Save configuration to file
     pub fn save(&self, path: &str) -> Result<()> {
-        let content = toml::to_string_pretty(self)?;
+        let content = serde_json::to_string_pretty(self)?;
         fs::write(path, content)?;
         Ok(())
     }
@@ -171,15 +171,15 @@ impl ConfigManager {
     pub fn new() -> Result<Self> {
         // Determine which config file to load
         // 1. Check if the default config path exists
-        // 2. If not, check if "config.toml" exists in the current directory
+        // 2. If not, check if "config.json" exists in the current directory
         // 3. If neither exists, use default config values
         let (path, config) = if Path::new(DEFAULT_CONFIG_PATH.as_str()).is_file() {
             (
                 DEFAULT_CONFIG_PATH.clone(),
                 SAideConfig::load(&DEFAULT_CONFIG_PATH)?,
             )
-        } else if Path::new("config.toml").is_file() {
-            ("config.toml".to_string(), SAideConfig::load("config.toml")?)
+        } else if Path::new("config.json").is_file() {
+            ("config.json".to_string(), SAideConfig::load("config.json")?)
         } else {
             (DEFAULT_CONFIG_PATH.clone(), SAideConfig::default())
         };

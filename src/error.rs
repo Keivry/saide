@@ -13,7 +13,6 @@ use {
     serde_json::Error as SerdeError,
     std::{env::VarError, fmt, io},
     thiserror::Error,
-    toml::{de::Error as TomlDeError, ser::Error as TomlError},
 };
 
 #[derive(Clone, Debug)]
@@ -150,14 +149,6 @@ impl From<SerdeError> for SAideError {
 
 impl From<VarError> for SAideError {
     fn from(err: VarError) -> Self { SAideError::SystemError(err.to_string()) }
-}
-
-impl From<TomlError> for SAideError {
-    fn from(err: TomlError) -> Self { SAideError::ConfigError(err.to_string()) }
-}
-
-impl From<TomlDeError> for SAideError {
-    fn from(err: TomlDeError) -> Self { SAideError::ConfigError(err.to_string()) }
 }
 
 #[cfg(test)]

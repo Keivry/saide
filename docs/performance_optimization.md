@@ -17,7 +17,7 @@
 - ✅ VAAPI/NVDEC 硬件加速
 
 ### 4. 渲染优化
-- ✅ VSync 可配置关闭 (config.toml: `vsync = false`) - 减少 8-26ms
+- ✅ VSync 可配置关闭 (config.json: `vsync = false`) - 减少 8-26ms
 - ✅ NV12 零拷贝纹理上传
 - ✅ 最小化 CPU-GPU 数据传输
 - ✅ 帧缓冲优化 (FRAME_BUFFER_SIZE = 1) - 减少 16-32ms
@@ -33,7 +33,7 @@
 
 ## 配置建议
 
-### 低延迟配置 (config.toml)
+### 低延迟配置 (config.json)
 ```toml
 [scrcpy.video]
 bit_rate = "24M"          # 高码率保证画质

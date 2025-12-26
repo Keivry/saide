@@ -382,10 +382,10 @@ if params.send_codec_meta && let Some(ref mut stream) = audio_stream {
 
 ## 配置管理（新增）
 
-### 6. config.toml 配置未生效（硬编码参数）(2025-12-15)
+### 6. config.json 配置未生效（硬编码参数）(2025-12-15)
 
 **问题现象**：
-- 修改 `config.toml` 中的 `max_size = 720`
+- 修改 `config.json` 中的 `max_size = 720`
 - 但 scrcpy 实际传参仍是 `max_size=1920`
 - 所有 scrcpy 参数（bit_rate, codec 等）都未生效
 

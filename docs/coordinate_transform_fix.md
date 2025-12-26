@@ -110,7 +110,7 @@ if let Some(sender) = &self.control_sender {
 
 2. **修改 saide.rs 事件处理**
    - 鼠标事件：使用 `screen_to_video_coords()`
-   - 键盘自定义映射：继续使用 `screen_to_device_coords()`（因为 config.toml 存的是设备坐标）
+   - 键盘自定义映射：继续使用 `screen_to_device_coords()`（因为 config.json 存的是设备坐标）
 
 3. **动态更新 ControlSender 的 screen_size**
    - 在每次鼠标/键盘事件前检查视频尺寸是否变化
@@ -135,7 +135,7 @@ if let Some(sender) = &self.control_sender {
 
 ### 兼容性
 
-**自定义映射**：config.toml 中的坐标是设备坐标，需要转换
+**自定义映射**：config.json 中的坐标是设备坐标，需要转换
 
 ```rust
 // 自定义映射：config 坐标 → scrcpy 坐标
