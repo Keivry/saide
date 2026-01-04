@@ -133,7 +133,7 @@ impl ProfileDatabase {
         let content = fs::read_to_string(&path).map_err(|e| {
             SAideError::IoError(IoError::new(e).with_message("Failed to read profile database"))
         })?;
-        let config = serde_json::from_str(&content)?;
+        let config = toml::from_str(&content)?;
         Ok(config)
     }
 
@@ -144,7 +144,7 @@ impl ProfileDatabase {
             fs::create_dir_all(parent)?;
         }
 
-        let content = serde_json::to_string_pretty(&self)?;
+        let content = toml::to_string_pretty(&self)?;
         fs::write(&path, content)?;
 
         info!("Saved device profiles to {:?}", path);
@@ -157,7 +157,7 @@ impl ProfileDatabase {
         Ok(PathBuf::from(home)
             .join(".config")
             .join("saide")
-            .join("device_profiles.json"))
+            .join("device_profiles.toml"))
     }
 
     /// Get profile for device

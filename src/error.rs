@@ -10,7 +10,6 @@
 
 use {
     super::decoder::{VideoError, audio::AudioError},
-    serde_json::Error as SerdeError,
     std::{env::VarError, fmt, io},
     thiserror::Error,
 };
@@ -143,8 +142,12 @@ impl From<crossbeam_channel::RecvError> for SAideError {
     fn from(err: crossbeam_channel::RecvError) -> Self { SAideError::ChannelError(err.to_string()) }
 }
 
-impl From<SerdeError> for SAideError {
-    fn from(err: SerdeError) -> Self { SAideError::ConfigError(err.to_string()) }
+impl From<toml::de::Error> for SAideError {
+    fn from(err: toml::de::Error) -> Self { SAideError::ConfigError(err.to_string()) }
+}
+
+impl From<toml::ser::Error> for SAideError {
+    fn from(err: toml::ser::Error) -> Self { SAideError::ConfigError(err.to_string()) }
 }
 
 impl From<VarError> for SAideError {

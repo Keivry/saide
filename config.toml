@@ -1,0 +1,164 @@
+[general]
+keyboard_enabled = true
+mouse_enabled = true
+init_timeout = 15
+indicator = true
+indicator_position = "bottom-left"
+
+[scrcpy.video]
+bit_rate = "24M"
+max_fps = 120
+max_size = 1600
+codec = "h264"
+
+[scrcpy.audio]
+enabled = true
+codec = "opus"
+source = "playback"
+
+[scrcpy.options]
+turn_screen_off = true
+stay_awake = true
+
+[gpu]
+vsync = false
+backend = "VULKAN"
+
+[mappings]
+toggle = "F10"
+initial_state = true
+show_notification = true
+
+[[mappings.profiles]]
+name = "AskTao"
+device_serial = "10AF971ZLN004SU"
+rotation = 1
+
+[[mappings.profiles.mappings]]
+key = "S"
+action = "Tap"
+x = 0.9275
+y = 0.654
+
+[[mappings.profiles.mappings]]
+key = "W"
+action = "Tap"
+x = 0.7804
+y = 0.0246
+
+[[mappings.profiles.mappings]]
+key = "Backtick"
+action = "Tap"
+x = 0.0632
+y = 0.0651
+
+[[mappings.profiles.mappings]]
+key = "Num6"
+action = "Tap"
+x = 0.8571
+y = 0.3587
+
+[[mappings.profiles.mappings]]
+key = "Z"
+action = "Tap"
+x = 0.8864
+y = 0.2984
+
+[[mappings.profiles.mappings]]
+key = "G"
+action = "Tap"
+x = 0.7971
+y = 0.6984
+
+[[mappings.profiles.mappings]]
+key = "V"
+action = "Tap"
+x = 0.8875
+y = 0.4183
+
+[[mappings.profiles.mappings]]
+key = "F1"
+action = "Tap"
+x = 0.2964
+y = 0.0635
+
+[[mappings.profiles.mappings]]
+key = "Num3"
+action = "Tap"
+x = 0.9154
+y = 0.3619
+
+[[mappings.profiles.mappings]]
+key = "Q"
+action = "Tap"
+x = 0.9261
+y = 0.4873
+
+[[mappings.profiles.mappings]]
+key = "C"
+action = "Tap"
+x = 0.7518
+y = 0.846
+
+[[mappings.profiles.mappings]]
+key = "Num5"
+action = "Tap"
+x = 0.8018
+y = 0.3643
+
+[[mappings.profiles.mappings]]
+key = "B"
+action = "Tap"
+x = 0.9393
+y = 0.8032
+
+[[mappings.profiles.mappings]]
+key = "A"
+action = "Tap"
+x = 0.9271
+y = 0.9167
+
+[[mappings.profiles.mappings]]
+key = "T"
+action = "Tap"
+x = 0.8121
+y = 0.0587
+
+[[mappings.profiles.mappings]]
+key = "F2"
+action = "Tap"
+x = 0.2521
+y = 0.0611
+
+[[mappings.profiles.mappings]]
+key = "F"
+action = "Tap"
+x = 0.0614
+y = 0.6635
+
+[[mappings.profiles.mappings]]
+key = "Tab"
+action = "Tap"
+x = 0.12
+y = 0.1071
+
+[[mappings.profiles.mappings]]
+key = "D"
+action = "Tap"
+x = 0.1082
+y = 0.6667
+
+[[mappings.profiles.mappings]]
+key = "Num2"
+action = "Tap"
+x = 0.8554
+y = 0.4913
+
+[[mappings.profiles.mappings]]
+key = "X"
+action = "Tap"
+x = 0.2529
+y = 0.846
+
+[logging]
+level = "info"

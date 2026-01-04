@@ -46,7 +46,7 @@ fn main() -> Result<()> {
             std::path::PathBuf::from(home)
                 .join(".config")
                 .join("saide")
-                .join("device_profiles.json")
+                .join("device_profiles.toml")
         })
         .ok();
 
