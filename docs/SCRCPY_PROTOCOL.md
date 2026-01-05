@@ -1,32 +1,32 @@
-# Scrcpy 协议完整技术规范文档
+# Scrcpy Protocol Complete Technical Specification
 
-## 文档信息
+## Document Information
 
-- **协议版本**: 3.3.3 (基于 scrcpy 源码分析)
-- **分析日期**: 2025-12-17
-- **源码位置**: `3rd-party/scrcpy/`
-- **参考实现**: `src/scrcpy/protocol/`
-
----
-
-## 目录
-
-1. [协议架构概述](#1-协议架构概述)
-2. [控制消息协议](#2-控制消息协议)
-3. [设备消息协议](#3-设备消息协议)
-4. [视频流协议](#4-视频流协议)
-5. [音频流协议](#5-音频流协议)
-6. [连接与握手协议](#6-连接与握手协议)
-7. [设备元数据协议](#7-设备元数据协议)
-8. [当前实现符合性分析](#8-当前实现符合性分析)
+- **Protocol Version**: 3.3.3 (based on scrcpy source code analysis)
+- **Analysis Date**: 2025-12-17
+- **Source Location**: `3rd-party/scrcpy/`
+- **Reference Implementation**: `src/scrcpy/protocol/`
 
 ---
 
-## 1. 协议架构概述
+## Table of Contents
 
-### 1.1 通信架构
+1. [Protocol Architecture Overview](#1-protocol-architecture-overview)
+2. [Control Message Protocol](#2-control-message-protocol)
+3. [Device Message Protocol](#3-device-message-protocol)
+4. [Video Stream Protocol](#4-video-stream-protocol)
+5. [Audio Stream Protocol](#5-audio-stream-protocol)
+6. [Connection and Handshake Protocol](#6-connection-and-handshake-protocol)
+7. [Device Metadata Protocol](#7-device-metadata-protocol)
+8. [Current Implementation Compliance Analysis](#8-current-implementation-compliance-analysis)
 
-Scrcpy 使用三路独立 TCP 连接进行通信：
+---
+
+## 1. Protocol Architecture Overview
+
+### 1.1 Communication Architecture
+
+Scrcpy uses three independent TCP connections for communication:
 
 ```
 ┌─────────────────┐                    ┌──────────────────┐
@@ -52,25 +52,25 @@ Scrcpy 使用三路独立 TCP 连接进行通信：
         └─────────── ADB Reverse ──────────────┘
 ```
 
-### 1.2 Socket 命名规范
+### 1.2 Socket Naming Convention
 
-- **Socket 名称**: `scrcpy_XXXXXXXX` (SCID 为 8 位十六进制)
-- **默认名称**: `scrcpy` (当 SCID = -1 时)
-- **本地抽象域**: Android Linux Abstract Namespace
-- **SCID 范围**: `0x00000000` - `0xFFFFFFFF`
+- **Socket Name**: `scrcpy_XXXXXXXX` (SCID is 8-digit hexadecimal)
+- **Default Name**: `scrcpy` (when SCID = -1)
+- **Local Abstract Domain**: Android Linux Abstract Namespace
+- **SCID Range**: `0x00000000` - `0xFFFFFFFF`
 
 ---
 
-## 2. 控制消息协议
+## 2. Control Message Protocol
 
-### 2.1 协议基础
+### 2.1 Protocol Basics
 
-- **方向**: PC → Android 设备
-- **编码**: 大端序 (Big Endian)
-- **最大消息长度**: 256KB (2^18 bytes)
-- **参考**: `app/src/control_msg.h`, `server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java`
+- **Direction**: PC → Android Device
+- **Encoding**: Big Endian
+- **Maximum Message Length**: 256KB (2^18 bytes)
+- **Reference**: `app/src/control_msg.h`, `server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java`
 
-### 2.2 消息类型枚举
+### 2.2 Message Type Enumeration
 
 ```c
 enum sc_control_msg_type {
@@ -95,23 +95,23 @@ enum sc_control_msg_type {
 };
 ```
 
-### 2.3 详细消息格式
+### 2.3 Detailed Message Formats
 
-#### 2.3.1 注入键盘事件 (TYPE_INJECT_KEYCODE)
+#### 2.3.1 Inject Keycode (TYPE_INJECT_KEYCODE)
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 0
-1     1     u8      action            动作 (0=DOWN, 1=UP)
-2     4     u32 BE  keycode           Android KeyEvent keycode
-6     4     u32 BE  repeat            重复次数
-10    4     u32 BE  metastate         修饰键状态
-─────────────────────────────────────────────
-总长度: 14 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 0
+1       1     u8      action            Action (0=DOWN, 1=UP)
+2       4     u32 BE  keycode           Android KeyEvent keycode
+6       4     u32 BE  repeat            Repeat count
+10      4     u32 BE  metastate         Modifier key state
+────────────────────────────────────────────
+Total length: 14 bytes
 ```
 
-**示例代码**:
+**Example Code:**
 ```rust
 buf.write_u8(0)?;                        // type = INJECT_KEYCODE
 buf.write_u8(action as u8)?;              // action
@@ -120,158 +120,158 @@ buf.write_u32::<BigEndian>(repeat)?;      // repeat
 buf.write_u32::<BigEndian>(metastate)?;   // metastate
 ```
 
-#### 2.3.2 注入文本 (TYPE_INJECT_TEXT)
+#### 2.3.2 Inject Text (TYPE_INJECT_TEXT)
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 1
-1     4     u32 BE  length            文本长度 (UTF-8)
-5     N     u8[]    text              文本内容 (最多 300 字节)
-─────────────────────────────────────────────
-总长度: 5 + N 字节 (N ≤ 300)
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 1
+1       4     u32 BE  length            Text length (UTF-8)
+5       N     u8[]    text              Text content (max 300 bytes)
+────────────────────────────────────────────
+Total length: 5 + N bytes (N ≤ 300)
 ```
 
-**关键实现点**:
-- 文本必须是有效的 UTF-8 编码
-- 超过 300 字节的部分会被截断
-- 使用 `sc_str_utf8_truncation_index` 确保不截断多字节字符
+**Key Implementation Points:**
+- Text must be valid UTF-8 encoding
+- Content exceeding 300 bytes will be truncated
+- Use `sc_str_utf8_truncation_index` to ensure multi-byte characters not truncated
 
-#### 2.3.3 注入触摸事件 (TYPE_INJECT_TOUCH_EVENT)
+#### 2.3.3 Inject Touch Event (TYPE_INJECT_TOUCH_EVENT)
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 2
-1     1     u8      action            动作 (0=DOWN, 1=UP, 2=MOVE)
-2     8     u64 BE  pointer_id        指针 ID
-10    4     u32 BE  x                 X 坐标
-14    4     u32 BE  y                 Y 坐标
-18    2     u16 BE  screen_width      屏幕宽度
-20    2     u16 BE  screen_height     屏幕高度
-22    2     u16 BE  pressure          压力值 (0x0000-0xFFFF)
-24    4     u32 BE  action_button     操作按钮
-28    4     u32 BE  buttons           按下的按钮
-─────────────────────────────────────────────
-总长度: 32 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 2
+1       1     u8      action            Action (0=DOWN, 1=UP, 2=MOVE)
+2       8     u64 BE  pointer_id        Pointer ID
+10      4     u32 BE  x                 X coordinate
+14      4     u32 BE  y                 Y coordinate
+18      2     u16 BE  screen_width      Screen width
+20      2     u16 BE  screen_height     Screen height
+22      2     u16 BE  pressure          Pressure value (0x0000-0xFFFF)
+24      4     u32 BE  action_button     Action button
+28      4     u32 BE  buttons           Pressed buttons
+────────────────────────────────────────────
+Total length: 32 bytes
 ```
 
-**特殊指针 ID**:
+**Special Pointer IDs:**
 ```c
-#define SC_POINTER_ID_MOUSE UINT64_C(-1)          // -1 = 鼠标
-#define SC_POINTER_ID_GENERIC_FINGER UINT64_C(-2) // -2 = 通用手指
-#define SC_POINTER_ID_VIRTUAL_FINGER UINT64_C(-3) // -3 = 虚拟手指 (缩放手势)
+#define SC_POINTER_ID_MOUSE UINT64_C(-1)          // -1 = Mouse
+#define SC_POINTER_ID_GENERIC_FINGER UINT64_C(-2) // -2 = Generic finger
+#define SC_POINTER_ID_VIRTUAL_FINGER UINT64_C(-3) // -3 = Virtual finger (pinch gesture)
 ```
 
-**压力值转换**:
+**Pressure Value Conversion:**
 ```rust
-// f32 (0.0-1.0) → u16 定点数
+// f32 (0.0-1.0) → u16 fixed-point
 let pressure_fp = (pressure.clamp(0.0, 1.0) * 65535.0) as u16;
 ```
 
-#### 2.3.4 注入滚动事件 (TYPE_INJECT_SCROLL_EVENT)
+#### 2.3.4 Inject Scroll Event (TYPE_INJECT_SCROLL_EVENT)
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 3
-1     4     u32 BE  x                 X 坐标
-5     4     u32 BE  y                 Y 坐标
-9     2     u16 BE  screen_width      屏幕宽度
-11    2     u16 BE  screen_height     屏幕高度
-13    2     i16 BE  hscroll           水平滚动 (定点数)
-15    2     i16 BE  vscroll           垂直滚动 (定点数)
-17    4     u32 BE  buttons           按下的按钮
-─────────────────────────────────────────────
-总长度: 21 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 3
+1       4     u32 BE  x                 X coordinate
+5       4     u32 BE  y                 Y coordinate
+9       2     u16 BE  screen_width      Screen width
+11      2     u16 BE  screen_height     Screen height
+13      2     i16 BE  hscroll           Horizontal scroll (fixed-point)
+15      2     i16 BE  vscroll           Vertical scroll (fixed-point)
+17      4     u32 BE  buttons           Pressed buttons
+────────────────────────────────────────────
+Total length: 21 bytes
 ```
 
-**滚动值处理**:
+**Scroll Value Handling:**
 ```rust
-// 接受范围 [-16, 16]，归一化到 [-1, 1]，再转换为 i16 定点
+// Accept range [-16, 16], normalize to [-1, 1], then convert to i16 fixed-point
 let hscroll_norm = (hscroll / 16.0).clamp(-1.0, 1.0);
 let vscroll_norm = (vscroll / 16.0).clamp(-1.0, 1.0);
 let hscroll_fp = (hscroll_norm * 32767.0) as i16;
 let vscroll_fp = (vscroll_norm * 32767.0) as i16;
 ```
 
-#### 2.3.5 返回键/亮屏 (TYPE_BACK_OR_SCREEN_ON)
+#### 2.3.5 Back/Screen On (TYPE_BACK_OR_SCREEN_ON)
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 4
-1     1     u8      action            动作 (0=DOWN, 1=UP)
-─────────────────────────────────────────────
-总长度: 2 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 4
+1       1     u8      action            Action (0=DOWN, 1=UP)
+────────────────────────────────────────────
+Total length: 2 bytes
 ```
 
-#### 2.3.6 剪贴板操作
+#### 2.3.6 Clipboard Operations
 
-**获取剪贴板 (TYPE_GET_CLIPBOARD)**:
+**Get Clipboard (TYPE_GET_CLIPBOARD):**
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 8
-1     1     u8      copy_key          复制键 (0=NONE, 1=COPY, 2=CUT)
-─────────────────────────────────────────────
-总长度: 2 字节
-```
-
-**设置剪贴板 (TYPE_SET_CLIPBOARD)**:
-```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 9
-1     8     u64 BE  sequence          序列号 (用于 ACK)
-9     1     u8      paste             是否粘贴 (0/1)
-10    4     u32 BE  length            文本长度
-14    N     u8[]    text              文本内容
-─────────────────────────────────────────────
-总长度: 14 + N 字节 (N ≤ 256KB-14)
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 8
+1       1     u8      copy_key          Copy key (0=NONE, 1=COPY, 2=CUT)
+────────────────────────────────────────────
+Total length: 2 bytes
 ```
 
-#### 2.3.7 UHID 设备操作
-
-**创建 UHID 设备 (TYPE_UHID_CREATE)**:
+**Set Clipboard (TYPE_SET_CLIPBOARD):**
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 12
-1     2     u16 BE  id                UHID 设备 ID
-3     2     u16 BE  vendor_id         厂商 ID
-5     2     u16 BE  product_id        产品 ID
-7     1     u8      name_length       名称长度
-8     N     u8[]    name              设备名称 (ASCII, ≤127)
-8+N   2     u16 BE  report_desc_size  报告描述符大小
-10+N  M     u8[]    report_desc       报告描述符数据
-─────────────────────────────────────────────
-总长度: 10 + N + M 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 9
+1       8     u64 BE  sequence          Sequence number (for ACK)
+9       1     u8      paste             Whether to paste (0/1)
+10      4     u32 BE  length            Text length
+14      N     u8[]    text              Text content
+────────────────────────────────────────────
+Total length: 14 + N bytes (N ≤ 256KB-14)
 ```
 
-#### 2.3.8 简单命令消息
+#### 2.3.7 UHID Device Operations
 
-以下消息只有 1 字节 (仅类型字段):
+**Create UHID Device (TYPE_UHID_CREATE):**
+```
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 12
+1       2     u16 BE  id                UHID device ID
+3       2     u16 BE  vendor_id         Vendor ID
+5       2     u16 BE  product_id        Product ID
+7       1     u8      name_length       Name length
+8       N     u8[]    name              Device name (ASCII, ≤127)
+8+N     2     u16 BE  report_desc_size  Report descriptor size
+10+N    M     u8[]    report_desc       Report descriptor data
+────────────────────────────────────────────
+Total length: 10 + N + M bytes
+```
 
-- `TYPE_EXPAND_NOTIFICATION_PANEL = 5` - 展开通知面板
-- `TYPE_EXPAND_SETTINGS_PANEL = 6` - 展开设置面板
-- `TYPE_COLLAPSE_PANELS = 7` - 折叠所有面板
-- `TYPE_ROTATE_DEVICE = 11` - 旋转设备
-- `TYPE_OPEN_HARD_KEYBOARD_SETTINGS = 15` - 打开硬键盘设置
-- `TYPE_RESET_VIDEO = 17` - 重置视频流
+#### 2.3.8 Simple Command Messages
+
+These messages are only 1 byte (type field only):
+
+- `TYPE_EXPAND_NOTIFICATION_PANEL = 5` - Expand notification panel
+- `TYPE_EXPAND_SETTINGS_PANEL = 6` - Expand settings panel
+- `TYPE_COLLAPSE_PANELS = 7` - Collapse all panels
+- `TYPE_ROTATE_DEVICE = 11` - Rotate device
+- `TYPE_OPEN_HARD_KEYBOARD_SETTINGS = 15` - Open hard keyboard settings
+- `TYPE_RESET_VIDEO = 17` - Reset video stream
 
 ---
 
-## 3. 设备消息协议
+## 3. Device Message Protocol
 
-### 3.1 协议基础
+### 3.1 Protocol Basics
 
-- **方向**: Android 设备 → PC
-- **编码**: 大端序 (Big Endian)
-- **最大消息长度**: 256KB (2^18 bytes)
-- **参考**: `app/src/device_msg.h`, `server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java`
+- **Direction**: Android Device → PC
+- **Encoding**: Big Endian
+- **Maximum Message Length**: 256KB (2^18 bytes)
+- **Reference**: `app/src/device_msg.h`, `server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java`
 
-### 3.2 消息类型枚举
+### 3.2 Message Type Enumeration
 
 ```java
 public static final int TYPE_CLIPBOARD = 0;
@@ -279,45 +279,45 @@ public static final int TYPE_ACK_CLIPBOARD = 1;
 public static final int TYPE_UHID_OUTPUT = 2;
 ```
 
-### 3.3 详细消息格式
+### 3.3 Detailed Message Formats
 
-#### 3.3.1 剪贴板内容 (TYPE_CLIPBOARD)
-
-```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 0
-1     4     u32 BE  length            文本长度
-5     N     u8[]    text              文本内容 (UTF-8)
-─────────────────────────────────────────────
-总长度: 5 + N 字节
-```
-
-#### 3.3.2 剪贴板确认 (TYPE_ACK_CLIPBOARD)
+#### 3.3.1 Clipboard Content (TYPE_CLIPBOARD)
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 1
-1     8     u64 BE  sequence          序列号
-─────────────────────────────────────────────
-总长度: 9 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 0
+1       4     u32 BE  length            Text length
+5       N     u8[]    text              Text content (UTF-8)
+────────────────────────────────────────────
+Total length: 5 + N bytes
 ```
 
-#### 3.3.3 UHID 输出 (TYPE_UHID_OUTPUT)
+#### 3.3.2 Clipboard Acknowledgment (TYPE_ACK_CLIPBOARD)
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     1     u8      type              消息类型 = 2
-1     2     u16 BE  id                UHID 设备 ID
-3     2     u16 BE  size              数据大小
-5     N     u8[]    data              输出数据
-─────────────────────────────────────────────
-总长度: 5 + N 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 1
+1       8     u64 BE  sequence          Sequence number
+────────────────────────────────────────────
+Total length: 9 bytes
 ```
 
-### 3.4 反序列化参考实现
+#### 3.3.3 UHID Output (TYPE_UHID_OUTPUT)
+
+```
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       1     u8      type              Message type = 2
+1       2     u16 BE  id                UHID device ID
+3       2     u16 BE  size              Data size
+5       N     u8[]    data              Output data
+────────────────────────────────────────────
+Total length: 5 + N bytes
+```
+
+### 3.4 Deserialization Reference Implementation
 
 ```rust
 impl DeviceMessage {
@@ -365,37 +365,37 @@ impl DeviceMessage {
 
 ---
 
-## 4. 视频流协议
+## 4. Video Stream Protocol
 
-### 4.1 协议基础
+### 4.1 Protocol Basics
 
-- **方向**: Android 设备 → PC
-- **编码**: 大端序 (Big Endian)
-- **封装格式**: H.264/H.265/AV1 NAL 单元
-- **参考**: `server/src/main/java/com/genymobile/scrcpy/device/Streamer.java`
+- **Direction**: Android Device → PC
+- **Encoding**: Big Endian
+- **Encapsulation Format**: H.264/H.265/AV1 NAL Units
+- **Reference**: `server/src/main/java/com/genymobile/scrcpy/device/Streamer.java`
 
-### 4.2 视频包格式
+### 4.2 Video Packet Format
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     8     u64 BE  pts_and_flags     PTS 和标志位
-8     4     u32 BE  packet_size       数据包大小
-12    N     u8[]    payload           编码数据 (NAL units)
-─────────────────────────────────────────────
-总长度: 12 + N 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       8     u64 BE  pts_and_flags     PTS and flags
+8       4     u32 BE  packet_size       Data packet size
+12      N     u8[]    payload           Encoded data (NAL units)
+────────────────────────────────────────────
+Total length: 12 + N bytes
 ```
 
-### 4.3 PTS 和标志位编码
+### 4.3 PTS and Flags Encoding
 
 ```
 bits:
-[63]    CONFIG_FLAG  - 1=配置包(SPS/PPS/VPS), 0=媒体数据
-[62]    KEY_FRAME    - 1=关键帧(IDR), 0=P/B 帧
-[61-0]  PTS_VALUE    - 演示时间戳 (微秒, 62 位有效值)
+[63]    CONFIG_FLAG  - 1=config packet (SPS/PPS/VPS), 0=media data
+[62]    KEY_FRAME    - 1=key frame (IDR), 0=P/B frame
+[61-0]  PTS_VALUE    - Presentation timestamp (microseconds, 62-bit valid)
 ```
 
-**解析示例**:
+**Parsing Example:**
 ```rust
 let is_config = (pts_and_flags >> 63) & 1 == 1;
 let is_keyframe = (pts_and_flags >> 62) & 1 == 1;
@@ -403,94 +403,94 @@ let pts_mask = !(PACKET_FLAG_CONFIG | PACKET_FLAG_KEY_FRAME);
 let pts_us = pts_and_flags & pts_mask;
 ```
 
-### 4.4 视频编解码器元数据
+### 4.4 Video Codec Metadata
 
-在视频流开始前，会发送 12 字节的编解码器元数据:
+Before video stream starts, 12-byte codec metadata is sent:
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     4     u32 BE  codec_id          编解码器 ID
-4     4     u32 BE  width             视频宽度
-8     4     u32 BE  height            视频高度
-─────────────────────────────────────────────
-总长度: 12 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       4     u32 BE  codec_id          Codec ID
+4       4     u32 BE  width             Video width
+8       4     u32 BE  height            Video height
+────────────────────────────────────────────
+Total length: 12 bytes
 ```
 
-**常见 codec_id 值**:
+**Common codec_id Values:**
 - `0x31637668` = "hvc1" (H.265)
 - `0x31626461` = "av01" (AV1)
-- `0x34363268` = "h264" (H.264, 小端序 "264h")
+- `0x34363268` = "h264" (H.264, little-endian "264h")
 
 ---
 
-## 5. 音频流协议
+## 5. Audio Stream Protocol
 
-### 5.1 协议基础
+### 5.1 Protocol Basics
 
-- **方向**: Android 设备 → PC
-- **编码**: 大端序 (Big Endian)
-- **编解码器**: Opus (默认), AAC, FLAC, RAW PCM
-- **参考**: `doc/audio.md`, `server/src/main/java/com/genymobile/scrcpy/audio/`
+- **Direction**: Android Device → PC
+- **Encoding**: Big Endian
+- **Codec**: Opus (default), AAC, FLAC, RAW PCM
+- **Reference**: `doc/audio.md`, `server/src/main/java/com/genymobile/scrcpy/audio/`
 
-### 5.2 音频包格式
-
-```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     8     u64 BE  pts_and_flags     PTS 和标志位
-8     4     u32 BE  packet_size       数据包大小
-12    N     u8[]    payload           编码音频数据
-─────────────────────────────────────────────
-总长度: 12 + N 字节
-```
-
-### 5.3 音频编解码器元数据
-
-在音频流开始前，会发送 4 字节的编解码器 ID:
+### 5.2 Audio Packet Format
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     4     u32 BE  codec_id          编解码器 ID
-─────────────────────────────────────────────
-总长度: 4 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       8     u64 BE  pts_and_flags     PTS and flags
+8       4     u32 BE  packet_size       Data packet size
+12      N     u8[]    payload           Encoded audio data
+────────────────────────────────────────────
+Total length: 12 + N bytes
 ```
 
-**常见 codec_id 值**:
+### 5.3 Audio Codec Metadata
+
+Before audio stream starts, 4-byte codec ID is sent:
+
+```
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       4     u32 BE  codec_id          Codec ID
+────────────────────────────────────────────
+Total length: 4 bytes
+```
+
+**Common codec_id Values:**
 - `0x6f707573` = "opus" (ASCII: 'o','p','u','s')
 - `0x61616320` = "aac " (ASCII: 'a','a','c',' ')
 - `0x666c6163` = "flac" (ASCII: 'f','l','a','c')
-- `0` = 音频流被设备显式禁用
-- `1` = 音频流配置错误
+- `0` = Audio stream explicitly disabled by device
+- `1` = Audio stream configuration error
 
-### 5.4 音频源类型
+### 5.4 Audio Source Types
 
-Android 设备支持多种音频源:
+Android devices support multiple audio sources:
 
-| 源类型 | 描述 | Android API |
-|--------|------|-------------|
-| `output` | 设备音频输出 (默认) | `REMOTE_SUBMIX` |
-| `playback` | 应用音频播放 | `PLAYBACK` |
-| `mic` | 麦克风 | `MIC` |
-| `mic-unprocessed` | 原始麦克风 | `UNPROCESSED` |
-| `mic-camcorder` | 摄像录制麦克风 | `CAMCORDER` |
-| `mic-voice-recognition` | 语音识别麦克风 | `VOICE_RECOGNITION` |
-| `mic-voice-communication` | 语音通话麦克风 | `VOICE_COMMUNICATION` |
-| `voice-call` | 语音通话 | `VOICE_CALL` |
-| `voice-call-uplink` | 语音通话上行 | `VOICE_UPLINK` |
-| `voice-call-downlink` | 语音通话下行 | `VOICE_DOWNLINK` |
-| `voice-performance` | 现场表演 | `VOICE_PERFORMANCE` |
+| Source Type | Description | Android API |
+|-------------|-------------|-------------|
+| `output` | Device audio output (default) | `REMOTE_SUBMIX` |
+| `playback` | App audio playback | `PLAYBACK` |
+| `mic` | Microphone | `MIC` |
+| `mic-unprocessed` | Raw microphone | `UNPROCESSED` |
+| `mic-camcorder` | Camcorder recording microphone | `CAMCORDER` |
+| `mic-voice-recognition` | Voice recognition microphone | `VOICE_RECOGNITION` |
+| `mic-voice-communication` | Voice call microphone | `VOICE_COMMUNICATION` |
+| `voice-call` | Voice call | `VOICE_CALL` |
+| `voice-call-uplink` | Voice call uplink | `VOICE_UPLINK` |
+| `voice-call-downlink` | Voice call downlink | `VOICE_DOWNLINK` |
+| `voice-performance` | Live performance | `VOICE_PERFORMANCE` |
 
-### 5.5 特殊编解码器处理
+### 5.5 Special Codec Handling
 
-#### Opus 配置包修复
+#### Opus Config Packet Fix
 
-Opus 配置包需要特殊处理，提取 `OpusHead` 和 `OpusTags`:
+Opus config packets require special handling to extract `OpusHead` and `OpusTags`:
 
 ```java
 private static void fixOpusConfigPacket(ByteBuffer buffer) throws IOException {
-    // OPUS 头部标识符
+    // OPUS header identifier
     final byte[] opusHeaderId = {'A', 'O', 'P', 'U', 'S', 'H', 'D', 'R'};
     byte[] idBuffer = new byte[8];
     buffer.get(idBuffer);
@@ -502,75 +502,75 @@ private static void fixOpusConfigPacket(ByteBuffer buffer) throws IOException {
     long sizeLong = buffer.getLong();
     int size = (int) sizeLong;
 
-    // 提取 OpusHead 部分
+    // Extract OpusHead portion
     buffer.position(buffer.position() + size);
-    // ... 处理 OpusTags
+    // ... Handle OpusTags
 }
 ```
 
 ---
 
-## 6. 连接与握手协议
+## 6. Connection and Handshake Protocol
 
-### 6.1 连接建立流程
+### 6.1 Connection Establishment Flow
 
 ```
 Client                          ADB Server                    Device
-────────────────────────────────────────────────────────────────────────
-1. 绑定本地端口
+───────────────────────────────────────────────────────────────────────
+1. Bind local port
    ├─ TcpListener.bind(:27183)
    └─ <local_port>
 
-2. 设置 ADB reverse
+2. Set ADB reverse
    ├─ adb reverse localabstract:scrcpy_XXXX tcp:<local_port>
    └─ <OK>
 
-3. 启动 server
+3. Start server
    ├─ adb shell CLASSPATH=/data/local/tmp/scrcpy-server.jar \
    │           app_process / com.genymobile.scrcpy.Server \
    │           3.3.3 scid=<XXXX> ...
-   └─ <server启动>
+   └─ <server start>
 
-4. Server 连接
+4. Server connect
    └─ connect("localabstract:scrcpy_XXXX")
 
-5. 接受视频连接
+5. Accept video connection
    ├─ accept()
    └─ <video_socket>
 
-6. 接受音频连接 (可选)
+6. Accept audio connection (optional)
    ├─ accept()
    └─ <audio_socket>
 
-7. 接受控制连接
+7. Accept control connection
    ├─ accept()
    └─ <control_socket>
 
-8. 发送设备元数据 (可选)
-   ├─ 64 字节设备名称 (UTF-8, 不足补 \0)
+8. Send device metadata (optional)
+   ├─ 64-byte device name (UTF-8, pad with \0)
    └─ <device_name>
 
-9. 发送视频编解码器元数据 (可选)
-   ├─ 4 字节 codec_id + 4 字节 width + 4 字节 height
+9. Send video codec metadata (optional)
+   ├─ 4-byte codec_id + 4-byte width + 4-byte height
    └─ <video_codec_meta>
 
-10. 发送音频编解码器元数据 (可选)
-    ├─ 4 字节 codec_id
+10. Send audio codec metadata (optional)
+    ├─ 4-byte codec_id
     └─ <audio_codec_meta>
 ```
 
-### 6.2 Server 启动参数
+### 6.2 Server Startup Parameters
 
 ```bash
 CLASSPATH=/data/local/tmp/scrcpy-server.jar \
 app_process / com.genymobile.scrcpy.Server 3.3.3 \
-    scid=<8位十六进制> \
+    scid=<8-digit hex> \
     log_level=<INFO|WARN|ERROR> \
     video=<true|false> \
     video_codec=<h264|h265|av1> \
     video_bit_rate=<bps> \
-    max_size=<像素> \
-    max_fps=<帧率> \
+    max_size=<pixels> \
+    max_fps=<frame_rate> \
     audio=<true|false> \
     audio_source=<output|mic|...> \
     audio_codec=<opus|aac|flac|raw> \
@@ -583,37 +583,37 @@ app_process / com.genymobile.scrcpy.Server 3.3.3 \
     send_dummy_byte=<true|false>
 ```
 
-### 6.3 Socket 选项优化
+### 6.3 Socket Option Optimization
 
-**TCP_NODELAY (低延迟)**:
+**TCP_NODELAY (Low Latency):**
 ```rust
-stream.set_nodelay(true)?;  // 禁用 Nagle 算法，减少 5-10ms 延迟
+stream.set_nodelay(true)?;  // Disable Nagle algorithm, reduce 5-10ms latency
 ```
 
-**读取超时 (断开检测)**:
+**Read Timeout (Disconnect Detection):**
 ```rust
-// 控制通道: 2 秒 (快速检测)
+// Control channel: 2 seconds (fast detection)
 stream.set_read_timeout(Some(Duration::from_secs(2)))?;
 
-// 视频/音频通道: 5 秒 (容忍更多延迟)
+// Video/audio channel: 5 seconds (tolerate more latency)
 stream.set_read_timeout(Some(Duration::from_secs(5)))?;
 ```
 
-### 6.4 虚拟连接模式 (Tunnel Forward)
+### 6.4 Virtual Connection Mode (Tunnel Forward)
 
-默认使用 `tunnel_forward=false` (ADB reverse 模式)，但也支持服务器监听模式:
+Default uses `tunnel_forward=false` (ADB reverse mode), but also supports server listening mode:
 
 ```java
 public static DesktopConnection open(int scid, boolean tunnelForward, ...) throws IOException {
     if (tunnelForward) {
-        // 服务器作为 LocalServerSocket，等待客户端连接
+        // Server acts as LocalServerSocket, wait for client connection
         try (LocalServerSocket localServerSocket = new LocalServerSocket(socketName)) {
             videoSocket = localServerSocket.accept();
             audioSocket = localServerSocket.accept();
             controlSocket = localServerSocket.accept();
         }
     } else {
-        // 客户端作为服务器，服务器连接客户端
+        // Client acts as server, server connects to client
         videoSocket = connect(socketName);
         audioSocket = connect(socketName);
         controlSocket = connect(socketName);
@@ -623,168 +623,168 @@ public static DesktopConnection open(int scid, boolean tunnelForward, ...) throw
 
 ---
 
-## 7. 设备元数据协议
+## 7. Device Metadata Protocol
 
-### 7.1 设备名称格式
+### 7.1 Device Name Format
 
-在连接建立后，会发送 64 字节的设备名称:
+After connection established, 64-byte device name is sent:
 
 ```
-偏移  大小  类型    字段              描述
-─────────────────────────────────────────────
-0     64    u8[]    device_name       设备名称 (UTF-8, 不足补 \0)
-─────────────────────────────────────────────
-总长度: 64 字节
+Offset  Size  Type    Field              Description
+────────────────────────────────────────────
+0       64    u8[]    device_name       Device name (UTF-8, pad with \0)
+────────────────────────────────────────────
+Total length: 64 bytes
 ```
 
-**示例**:
+**Example:**
 ```java
 byte[] buffer = new byte[DEVICE_NAME_FIELD_LENGTH];
 byte[] deviceNameBytes = deviceName.getBytes(StandardCharsets.UTF_8);
 int len = StringUtils.getUtf8TruncationIndex(deviceNameBytes, DEVICE_NAME_FIELD_LENGTH - 1);
 System.arraycopy(deviceNameBytes, 0, buffer, 0, len);
-// buffer[64] 自动补 \0
+// buffer[64] automatically padded with \0
 IO.writeFully(fd, buffer, 0, buffer.length);
 ```
 
-### 7.2 获取设备信息
+### 7.2 Get Device Information
 
-**Android 版本检测** (用于音频支持):
+**Android Version Detection** (for audio support):
 ```bash
 adb -s <serial> shell getprop ro.build.version.sdk
-# 返回: 30 (Android 11)
+# Returns: 30 (Android 11)
 ```
 
-**设备名称获取**:
+**Device Name Acquisition:**
 ```bash
 adb -s <serial> shell getprop ro.product.model
-# 返回: "Pixel 7 Pro"
+# Returns: "Pixel 7 Pro"
 ```
 
 ---
 
-## 8. 当前实现符合性分析
+## 8. Current Implementation Compliance Analysis
 
-### 8.1 总体评估
+### 8.1 Overall Assessment
 
-**当前实现状态**: ✅ 良好 (85% 符合)
+**Current Implementation Status**: ✅ Good (85% compliant)
 
-**符合性总结**:
-- ✅ 控制消息协议: 100% 符合
-- ✅ 视频流协议: 100% 符合
-- ✅ 音频流协议: 90% 符合 (缺少编解码器特殊处理)
-- ⚠️ 设备消息协议: 0% 符合 (未实现)
-- ✅ 连接协议: 95% 符合
+**Compliance Summary:**
+- ✅ Control Message Protocol: 100% compliant
+- ✅ Video Stream Protocol: 100% compliant
+- ✅ Audio Stream Protocol: 90% compliant (missing codec special handling)
+- ⚠️ Device Message Protocol: 0% compliant (not implemented)
+- ✅ Connection Protocol: 95% compliant
 
-### 8.2 详细符合性分析
+### 8.2 Detailed Compliance Analysis
 
-#### 8.2.1 控制消息协议 ✅
+#### 8.2.1 Control Message Protocol ✅
 
-**文件**: `src/scrcpy/protocol/control.rs`
+**File**: `src/scrcpy/protocol/control.rs`
 
-**符合项**:
-- ✅ 所有消息类型完整实现 (0-17)
-- ✅ 字节序正确 (Big Endian)
-- ✅ 消息大小准确
-- ✅ 特殊指针 ID 正确 (`POINTER_ID_MOUSE = u64::MAX`)
-- ✅ 滚动值归一化正确 (÷16, clamp 到 [-1,1])
-- ✅ 压力值转换正确 (f32 → u16 定点)
-- ✅ 单元测试覆盖全面
+**Compliant Items:**
+- ✅ All message types fully implemented (0-17)
+- ✅ Byte order correct (Big Endian)
+- ✅ Message size accurate
+- ✅ Special pointer IDs correct (`POINTER_ID_MOUSE = u64::MAX`)
+- ✅ Scroll value normalization correct (÷16, clamp to [-1,1])
+- ✅ Pressure value conversion correct (f32 → u16 fixed-point)
+- ✅ Unit test coverage comprehensive
 
-**示例验证**:
+**Example Verification:**
 ```rust
 #[test]
 fn test_touch_down_serialization() {
     let msg = ControlMessage::touch_down(100, 200, 1080, 2340);
     let mut buf = Vec::new();
     let size = msg.serialize(&mut buf).unwrap();
-    assert_eq!(size, 32);              // ✅ 正确大小
-    assert_eq!(buf[0], 2);             // ✅ 类型 = INJECT_TOUCH_EVENT
-    assert_eq!(buf[1], 0);             // ✅ 动作 = DOWN
-    assert_eq!(buf[22..24], [0xFF, 0xFF]); // ✅ 压力 = 1.0
+    assert_eq!(size, 32);              // ✅ Correct size
+    assert_eq!(buf[0], 2);             // ✅ Type = INJECT_TOUCH_EVENT
+    assert_eq!(buf[1], 0);             // ✅ Action = DOWN
+    assert_eq!(buf[22..24], [0xFF, 0xFF]); // ✅ Pressure = 1.0
 }
 ```
 
-**缺失项**:
-- ❌ 未实现 UHID 相关消息 (类型 12-14)
-- ❌ 未实现 StartApp 消息 (类型 16)
+**Missing Items:**
+- ❌ UHID related messages not implemented (types 12-14)
+- ❌ StartApp message not implemented (type 16)
 
-**建议**: 这些功能对当前项目不是必需的，但建议添加占位符实现以保持协议完整性。
+**Recommendation**: These features are not required for current project, but recommend adding placeholder implementations to maintain protocol integrity.
 
-#### 8.2.2 视频流协议 ✅
+#### 8.2.2 Video Stream Protocol ✅
 
-**文件**: `src/scrcpy/protocol/video.rs`
+**File**: `src/scrcpy/protocol/video.rs`
 
-**符合项**:
-- ✅ 12 字节头格式正确 (pts_and_flags + packet_size)
-- ✅ 标志位解析正确 (CONFIG_BIT, KEY_FRAME_BIT)
-- ✅ PTS 提取正确 (62 位掩码)
-- ✅ 大端序解析正确
-- ✅ 单元测试全面 (配置包、关键帧、P帧、空包、大包)
+**Compliant Items:**
+- ✅ 12-byte header format correct (pts_and_flags + packet_size)
+- ✅ Flags parsing correct (CONFIG_BIT, KEY_FRAME_BIT)
+- ✅ PTS extraction correct (62-bit mask)
+- ✅ Big Endian parsing correct
+- ✅ Unit tests comprehensive (config packets, key frames, P-frames, empty packets, large packets)
 
-**示例验证**:
+**Example Verification:**
 ```rust
 #[test]
 fn test_pts_and_flags_masking() {
     let max_pts = (1u64 << 62) - 1;
     let packet_bytes = create_test_packet(max_pts, true, true, &[0xFF]);
     let packet = VideoPacket::read_from(&mut cursor).unwrap();
-    assert_eq!(packet.pts_us, max_pts);      // ✅ PTS 正确
-    assert!(packet.is_config);               // ✅ CONFIG 标志
-    assert!(packet.is_keyframe);             // ✅ KEY_FRAME 标志
+    assert_eq!(packet.pts_us, max_pts);      // ✅ PTS correct
+    assert!(packet.is_config);               // ✅ CONFIG flag
+    assert!(packet.is_keyframe);             // ✅ KEY_FRAME flag
 }
 ```
 
-#### 8.2.3 音频流协议 ⚠️
+#### 8.2.3 Audio Stream Protocol ⚠️
 
-**文件**: `src/scrcpy/protocol/audio.rs`
+**File**: `src/scrcpy/protocol/audio.rs`
 
-**符合项**:
-- ✅ 12 字节头格式正确
-- ✅ PTS 提取正确 (63 位掩码)
-- ✅ 字节序正确
+**Compliant Items:**
+- ✅ 12-byte header format correct
+- ✅ PTS extraction correct (63-bit mask)
+- ✅ Byte order correct
 
-**缺失/问题项**:
-- ❌ **未处理编解码器特殊格式** (Opus/FLAC 配置包)
-- ❌ **硬编码 codec_id** (总是 0x6f707573)
-- ⚠️ 缺少编解码器元数据解析
+**Missing/Problem Items:**
+- ❌ **Codec special format not handled** (Opus/FLAC config packets)
+- ❌ **Hardcoded codec_id** (always 0x6f707573)
+- ⚠️ Missing codec metadata parsing
 
-**对比原版**:
+**Comparison with Original:**
 ```java
-// Streamer.java: Opus 配置包需要修复
+// Streamer.java: Opus config packet needs fix
 if (config) {
     if (codec == AudioCodec.OPUS) {
-        fixOpusConfigPacket(buffer);  // 🔴 当前未实现
+        fixOpusConfigPacket(buffer);  // 🔴 Not currently implemented
     } else if (codec == AudioCodec.FLAC) {
-        fixFlacConfigPacket(buffer);  // 🔴 当前未实现
+        fixFlacConfigPacket(buffer);  // 🔴 Not currently implemented
     }
 }
 ```
 
-**影响评估**:
-- 音频流仍可工作，但可能在某些设备上出现兼容性问题
-- Opus 头部可能无法正确解析
+**Impact Assessment:**
+- Audio stream still works, but may have compatibility issues on some devices
+- Opus header may not parse correctly
 
-**建议**: 添加编解码器特殊处理逻辑。
+**Recommendation**: Add codec special handling logic.
 
-#### 8.2.4 设备消息协议 ❌
+#### 8.2.4 Device Message Protocol ❌
 
-**状态**: **未实现**
+**Status**: **Not implemented**
 
-**问题**:
-- ❌ 完全没有设备消息反序列化
-- ❌ 无法接收剪贴板内容
-- ❌ 无法接收 UHID 输出
-- ❌ 无法接收剪贴板 ACK
+**Problems:**
+- ❌ No device message deserialization at all
+- ❌ Cannot receive clipboard content
+- ❌ Cannot receive UHID output
+- ❌ Cannot receive clipboard ACK
 
-**影响评估**:
-- 无法使用剪贴板同步功能
-- 无法使用 UHID 输入设备 (游戏手柄等)
-- 与官方 scrcpy 客户端功能对等性降低
+**Impact Assessment:**
+- Cannot use clipboard sync feature
+- Cannot use UHID input devices (game controllers, etc.)
+- Reduced feature parity with official scrcpy client
 
-**建议优先级**: **高** (需要实现基本的消息解析器)
+**Recommendation Priority**: **High** (need to implement basic message parser)
 
-**最小实现**:
+**Minimal Implementation:**
 ```rust
 #[derive(Debug, Clone)]
 pub enum DeviceMessage {
@@ -795,29 +795,29 @@ pub enum DeviceMessage {
 
 impl DeviceMessage {
     pub fn deserialize(buf: &[u8]) -> Result<Self> {
-        // 实现见第 3.3.4 节
+        // Implementation see Section 3.3.4
     }
 }
 ```
 
-#### 8.2.5 连接协议 ✅
+#### 8.2.5 Connection Protocol ✅
 
-**文件**: `src/scrcpy/connection.rs`
+**File**: `src/scrcpy/connection.rs`
 
-**符合项**:
-- ✅ ADB reverse 正确实现
-- ✅ 端口自动分配 (27183-27199)
-- ✅ 三路 Socket 握手顺序正确
-- ✅ TCP_NODELAY 优化
-- ✅ 读取超时设置合理
-- ✅ Server 进程管理
-- ✅ 优雅关闭流程
-- ✅ 设备元数据读取
-- ✅ 视频编解码器元数据读取
+**Compliant Items:**
+- ✅ ADB reverse correctly implemented
+- ✅ Port auto-allocation (27183-27199)
+- ✅ Three-way Socket handshake order correct
+- ✅ TCP_NODELAY optimization
+- ✅ Read timeout setting reasonable
+- ✅ Server process management
+- ✅ Graceful shutdown flow
+- ✅ Device metadata reading
+- ✅ Video codec metadata reading
 
-**亮点**:
+**Highlights:**
 ```rust
-// ✅ 智能音频禁用
+// ✅ Smart audio disable
 if params.audio && android_version < 30 {
     audio_disabled_reason = Some(format!(
         "Audio capture requires Android 11+ (API 30+). Device is Android {}.",
@@ -826,99 +826,99 @@ if params.audio && android_version < 30 {
     params.audio = false;
 }
 
-// ✅ 低延迟优化
+// ✅ Low latency optimization
 stream.set_nodelay(true).context("Failed to set TCP_NODELAY")?;
 
-// ✅ 超时检测
+// ✅ Timeout detection
 let timeout = match channel {
-    "control" => Duration::from_secs(2), // 快速检测
-    _ => Duration::from_secs(5),         // 视频/音频容忍更多延迟
+    "control" => Duration::from_secs(2), // Fast detection
+    _ => Duration::from_secs(5),         // Video/audio tolerate more latency
 };
 ```
 
-### 8.3 总体建议
+### 8.3 Overall Recommendations
 
-#### 8.3.1 立即修复项 (P0)
+#### 8.3.1 Immediate Fixes (P0)
 
-1. **实现设备消息反序列化** (`src/scrcpy/protocol/device_msg.rs`)
-   - 剪贴板消息解析
-   - ACK 消息解析
-   - UHID 输出解析
+1. **Implement Device Message Deserialization** (`src/scrcpy/protocol/device_msg.rs`)
+   - Clipboard message parsing
+   - ACK message parsing
+   - UHID output parsing
 
-#### 8.3.2 功能增强项 (P1)
+#### 8.3.2 Feature Enhancements (P1)
 
-2. **音频编解码器特殊处理**
-   - Opus 配置包修复
-   - FLAC 配置包修复
-   - 动态编解码器检测
+2. **Audio Codec Special Handling**
+   - Opus config packet fix
+   - FLAC config packet fix
+   - Dynamic codec detection
 
-3. **完善控制消息**
-   - UHID 设备创建/输入/销毁
-   - StartApp 消息
+3. **Complete Control Messages**
+   - UHID device create/input/destroy
+   - StartApp message
 
-#### 8.3.3 优化项 (P2)
+#### 8.3.3 Optimizations (P2)
 
-4. **性能优化**
-   - 控制消息批量发送 (减少系统调用)
-   - 视频/音频缓冲优化
-   - 零拷贝路径探索
+4. **Performance Optimization**
+   - Batch control message sending (reduce system calls)
+   - Video/audio buffer optimization
+   - Explore zero-copy path
 
-### 8.4 兼容性矩阵
+### 8.4 Compatibility Matrix
 
-| 功能 | 原版 scrcpy | 当前实现 | 兼容性 |
-|------|-------------|----------|--------|
-| 触摸控制 | ✅ | ✅ | 100% |
-| 键盘输入 | ✅ | ✅ | 100% |
-| 滚动事件 | ✅ | ✅ | 100% |
-| 视频流 | ✅ | ✅ | 100% |
-| 音频流 | ✅ | ⚠️ | 90% |
-| 剪贴板同步 | ✅ | ❌ | 0% |
-| UHID 输入 | ✅ | ❌ | 0% |
-| 多设备 | ✅ | ✅ | 100% |
-
----
-
-## 9. 参考源码位置
-
-### 9.1 客户端 (PC)
-
-| 功能 | 源码文件 |
-|------|----------|
-| 控制消息序列化 | `app/src/control_msg.c`, `app/src/control_msg.h` |
-| 设备消息反序列化 | `app/src/device_msg.c`, `app/src/device_msg.h` |
-| 视频解码 | `app/src/decoder.c`, `app/src/demuxer.c` |
-| 音频播放 | `app/src/audio_player.c` |
-| 连接管理 | `app/src/server.c`, `app/src/adb/adb_tunnel.c` |
-
-### 9.2 服务端 (Android)
-
-| 功能 | 源码文件 |
-|------|----------|
-| 控制消息解析 | `server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java` |
-| 设备消息发送 | `server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java` |
-| 视频流封装 | `server/src/main/java/com/genymobile/scrcpy/device/Streamer.java` |
-| 音频捕获 | `server/src/main/java/com/genymobile/scrcpy/audio/AudioCapture.java` |
-| Socket 连接 | `server/src/main/java/com/genymobile/scrcpy/device/DesktopConnection.java` |
-
-### 9.3 当前实现
-
-| 功能 | 源码文件 |
-|------|----------|
-| 控制消息 | `src/scrcpy/protocol/control.rs` |
-| 视频协议 | `src/scrcpy/protocol/video.rs` |
-| 音频协议 | `src/scrcpy/protocol/audio.rs` |
-| 连接管理 | `src/scrcpy/connection.rs` |
+| Feature | Original scrcpy | Current Implementation | Compatibility |
+|---------|-----------------|------------------------|---------------|
+| Touch Control | ✅ | ✅ | 100% |
+| Keyboard Input | ✅ | ✅ | 100% |
+| Scroll Events | ✅ | ✅ | 100% |
+| Video Stream | ✅ | ✅ | 100% |
+| Audio Stream | ✅ | ⚠️ | 90% |
+| Clipboard Sync | ✅ | ❌ | 0% |
+| UHID Input | ✅ | ❌ | 0% |
+| Multi-Device | ✅ | ✅ | 100% |
 
 ---
 
-## 10. 总结
+## 9. Reference Source Locations
 
-本分析基于 scrcpy 3.3.3 版本的完整源码，对协议进行了深度解析。**当前 saide 项目的协议实现质量良好**，核心功能 (视频、控制) 已完全符合原版协议。主要缺陷是**设备消息协议未实现**和**音频编解码器特殊处理缺失**。
+### 9.1 Client (PC)
 
-建议优先实现设备消息反序列化，以提供完整的剪贴板同步功能。这将使 saide 与官方 scrcpy 在功能层面达到 100% 对等。
+| Feature | Source File |
+|---------|-------------|
+| Control Message Serialization | `app/src/control_msg.c`, `app/src/control_msg.h` |
+| Device Message Deserialization | `app/src/device_msg.c`, `app/src/device_msg.h` |
+| Video Decoding | `app/src/decoder.c`, `app/src/demuxer.c` |
+| Audio Playback | `app/src/audio_player.c` |
+| Connection Management | `app/src/server.c`, `app/src/adb/adb_tunnel.c` |
+
+### 9.2 Server (Android)
+
+| Feature | Source File |
+|---------|-------------|
+| Control Message Parsing | `server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java` |
+| Device Message Sending | `server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java` |
+| Video Stream Packaging | `server/src/main/java/com/genymobile/scrcpy/device/Streamer.java` |
+| Audio Capture | `server/src/main/java/com/genymobile/scrcpy/audio/AudioCapture.java` |
+| Socket Connection | `server/src/main/java/com/genymobile/scrcpy/device/DesktopConnection.java` |
+
+### 9.3 Current Implementation
+
+| Feature | Source File |
+|---------|-------------|
+| Control Messages | `src/scrcpy/protocol/control.rs` |
+| Video Protocol | `src/scrcpy/protocol/video.rs` |
+| Audio Protocol | `src/scrcpy/protocol/audio.rs` |
+| Connection Management | `src/scrcpy/connection.rs` |
 
 ---
 
-**文档版本**: 1.0
-**最后更新**: 2025-12-17
-**分析深度**: 完整协议栈
+## 10. Summary
+
+This analysis is based on complete source code of scrcpy version 3.3.3, with deep protocol parsing. **The current saide project protocol implementation quality is good**, core features (video, control) fully comply with original protocol. Main defects are **device message protocol not implemented** and **audio codec special handling missing**.
+
+Recommendation to prioritize implementing device message deserialization for complete clipboard sync functionality. This will bring saide to 100% feature parity with official scrcpy client.
+
+---
+
+**Document Version**: 1.0
+**Last Updated**: 2025-12-17
+**Analysis Depth**: Complete Protocol Stack

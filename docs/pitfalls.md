@@ -1,7 +1,27 @@
+# Development Pitfalls & Lessons Learned
 
-### 5. 程序退出时 CUDA 清理错误（2025-12-16）✅ 已解决
+This document records technical issues encountered during development and their solutions.
 
-**现象**：
+## Table of Contents
+
+1. [Threading & Shutdown Issues](#1-threading--shutdown-issues)
+2. [Audio/Video Synchronization](#2-audiovideo-synchronization)
+3. [Protocol Implementation](#3-protocol-implementation)
+4. [Configuration Management](#4-configuration-management)
+5. [UI Rendering](#5-ui-rendering)
+6. [State Management](#6-state-management)
+7. [Rust Type System](#7-rust-type-system)
+8. [Platform-Specific Issues](#8-platform-specific-issues)
+9. [Hardware Decoding](#9-hardware-decoding)
+10. [Input Mapping](#10-input-mapping)
+
+---
+
+## 1. Threading & Shutdown Issues
+
+### 1.1 CUDA Cleanup Error on Exit (2025-12-16) ✅ Resolved
+
+**Symptoms:**
 ```
 DEBUG saide::scrcpy::connection: Force killing server process (timeout)
 WARN saide::app::ui::stream_player: Audio/Video read error - skipping
@@ -11,25 +31,25 @@ ERROR Connection error: Failed to read pts_and_flags
 Error: nu::shell::terminated_by_signal
 ```
 
-**根因**：
-**线程退出顺序不当 + 解码器资源未及时释放**
+**Root Cause:**
+**Thread exit order improper + decoder resource not released in time**
 
-1. **StreamPlayer.stop()**：使用 `thread.is_finished()` 方法（需要 nightly Rust），导致运行时 panic
-2. **ScrcpyConnection.shutdown()**：服务器进程等待超时（1s）后强制 `kill()`
-3. **NVDEC Drop**：CUDA context 未 flush，直接 `av_buffer_unref()` 导致 CUDA 错误
+1. **StreamPlayer.stop()**: Used `thread.is_finished()` method (requires nightly Rust), causing runtime panic
+2. **ScrcpyConnection.shutdown()**: Server process wait timeout (1s) then forced `kill()`
+3. **NVDEC Drop**: CUDA context not flushed, `av_buffer_unref()` directly causes CUDA error
 
-**Rust 线程优雅退出的最佳实践**：
+**Rust Thread Graceful Shutdown Best Practices:**
 
-ChatGPT 推荐的方案（本次采用）：
-1. ✅ **使用 `Arc<AtomicBool>` 作为退出信号**
-2. ✅ **Channel 关闭触发线程退出**
-3. ✅ **显式 `Drop` 顺序控制**（解码器 → socket → 服务器进程）
-4. ✅ **超时 join 机制**（轮询 + `std::mem::forget` 替代 `thread.is_finished()`）
+The solution adopted:
+1. ✅ **Use `Arc<AtomicBool>` as exit signal**
+2. ✅ **Channel close triggers thread exit**
+3. ✅ **Explicit `Drop` order control** (decoder → socket → server process)
+4. ✅ **Timeout join mechanism** (polling + `std::mem::forget` instead of `thread.is_finished()`)
 
-**修复方案**：
+**Fix:**
 
 ```rust
-// 1. StreamPlayer: 安全的超时 join（不依赖 nightly）
+// 1. StreamPlayer: Safe timeout join (no nightly dependency)
 pub fn stop(&mut self) {
     // 1. Drop channels first (signal threads to exit)
     self.frame_rx = None;
@@ -55,7 +75,7 @@ pub fn stop(&mut self) {
     }
 }
 
-// 2. ScrcpyConnection: 延长等待时间 + 正确的退出顺序
+// 2. ScrcpyConnection: Extended wait time + correct exit order
 pub fn shutdown(&mut self) -> Result<()> {
     // Step 1: Close sockets FIRST (triggers server exit via broken pipe)
     self.video_stream.take();
@@ -85,7 +105,7 @@ pub fn shutdown(&mut self) -> Result<()> {
     Ok(())
 }
 
-// 3. NVDEC Drop: 显式 flush + 延迟释放
+// 3. NVDEC Drop: Explicit flush + delayed release
 impl Drop for NvdecDecoder {
     fn drop(&mut self) {
         unsafe {
@@ -103,7 +123,7 @@ impl Drop for NvdecDecoder {
     }
 }
 
-// 4. 显式 Drop 顺序（在 decode loop 中）
+// 4. Explicit Drop order (in decode loop)
 let decode_result = (|| -> Result<()> {
     loop {
         // ... decode logic ...
@@ -120,403 +140,470 @@ drop(video_decoder);
 debug!("Decoder dropped");
 ```
 
-**关键改进点**：
-1. ✅ **Arc<AtomicBool> 作为退出信号**：UI 销毁时 `stop_signal.store(true)` → 解码线程每次 read 前检查 → 立即退出
-2. ✅ **解码器先于 socket 释放**：确保 CUDA 清理完成后再关闭网络连接
-3. ✅ **服务器进程等待时间延长**：从 1s 增加到 3s，减少强制 kill 概率
-4. ✅ **AudioPlayer Drop 延迟**：给音频回调 50ms 时间完成当前操作
-5. ✅ **Loop 开头检查退出信号**：避免阻塞在 socket read（timeout 5s）无法响应
+**Key Improvements:**
+1. ✅ **Arc<AtomicBool> as exit signal**: UI destroy `stop_signal.store(true)` → decode thread check before each read → immediate exit
+2. ✅ **Decoder released before socket**: Ensure CUDA cleanup complete before closing network
+3. ✅ **Server process wait time extended**: From 1s to 3s, reduce forced kill probability
+4. ✅ **AudioPlayer Drop delay**: Give audio callback 50ms to complete current operation
+5. ✅ **Loop start check exit signal**: Avoid blocking on socket read (timeout 5s) unresponsive
 
-**后续补充修复（2025-12-16 实测）**：
+**Additional Fix (2025-12-16):**
 
-**问题**：初版修复后仍然出现超时 kill：
+**Problem:** Initial fix still showed timeout kill:
 ```
 INFO Stopping stream
 WARN Stream thread did not finish within 2000ms, abandoning join
-...（2秒后解码线程仍在工作）
+... (2s later decode thread still working)
 DEBUG Server process timeout (3000ms), force terminating
 ```
 
-**根因**：解码线程阻塞在 `VideoPacket::read_from()`（blocking read，timeout 5s），在此期间无法检测退出信号。
+**Root Cause:** Decode thread blocked at `VideoPacket::read_from()` (blocking read, timeout 5s), cannot detect exit signal during this time.
 
-**最终方案**：
+**Final Solution:**
 ```rust
-// StreamPlayer 结构体添加退出信号
+// StreamPlayer struct adds exit signal
 struct StreamPlayer {
     stop_signal: Option<Arc<AtomicBool>>,
     // ...
 }
 
-// stop() 时设置信号
+// stop() sets signal
 pub fn stop(&mut self) {
     if let Some(ref signal) = self.stop_signal {
         signal.store(true, Ordering::Relaxed);
     }
-    self.frame_rx = None; // 释放 channel
+    self.frame_rx = None; // Release channel
     // ... join with timeout ...
 }
 
-// Worker 线程在 loop 开头检查
+// Worker thread checks at loop start
 loop {
-    // ✅ 关键：在 blocking read 之前检查
+    // ✅ Key: Check before blocking read
     if stop_signal.load(Ordering::Relaxed) {
         debug!("Stop signal received, stopping decode loop");
         return Ok(());
     }
 
-    // 这里可能阻塞 5s（read timeout）
+    // This may block 5s (read timeout)
     let packet = VideoPacket::read_from(&mut video_stream)?;
     // ...
 }
 ```
 
-**为什么不能用 Channel**：
-- `crossbeam_channel::Sender` 没有 `is_disconnected()` 方法
-- 只能通过 `try_send()` 失败来判断，但需要实际发送数据才能检测
-- `AtomicBool` 更轻量、响应更快
+**Why Not Channel:**
+- `crossbeam_channel::Sender` has no `is_disconnected()` method
+- Can only detect via `try_send()` failure, but needs actual data to detect
+- `AtomicBool` is lighter weight, faster response
 
-**参考 ChatGPT 回答的其他方案（未采用）**：
-- `tokio::sync::Notify`：需要 async runtime，我们是同步代码
-- `Condvar`：适合长时间阻塞的场景，我们已经有 read timeout
-- `Worker` struct with `Drop`：已经在 `StreamPlayer` 中实现
+**Other Solutions Considered (Not Adopted):**
+- `tokio::sync::Notify`: Requires async runtime, we have sync code
+- `Condvar`: Suitable for long-blocking scenarios, we already have read timeout
+- `Worker` struct with `Drop`: Already implemented in `StreamPlayer`
 
-**第三版优化（2025-12-16）- UI 响应速度**：
+**Version 3.0 - UI Responsiveness (2025-12-16):**
 
-**问题**：UI 退出速度慢（3-5 秒）
-- StreamPlayer.stop() 阻塞 2s 等待 join
-- ScrcpyConnection.shutdown() 阻塞 3s 等待服务器退出
+**Problem:** UI exit slow (3-5 seconds)
+- StreamPlayer.stop() blocks 2s waiting join
+- ScrcpyConnection.shutdown() blocks 3s waiting server exit
 
-**用户体验目标**：点击关闭按钮 → UI 立即消失（<500ms）
+**User Experience Goal:** Click close button → UI disappears immediately (<500ms)
 
-**方案 3.0**：纯 Detached cleanup（失败）
+**Scheme 3.0 (Failed):** Pure Detached cleanup
 ```rust
 pub fn stop(&mut self) {
     signal.store(true);
     self.frame_rx = None;
     
     std::thread::spawn(move || {
-        let _ = thread.join(); // 完全后台
+        let _ = thread.join(); // Complete background
     });
-    // 立即返回 ⚡
+    // Return immediately ⚡
 }
 ```
-❌ **问题**：主线程退出 → CUDA driver cleanup → 后台线程 drop 解码器 → CUDA context 已失效
+❌ **Problem:** Main thread exit → CUDA driver cleanup → background thread drop decoder → CUDA context invalidated
 ```
 [AVHWDeviceContext @ ...] cu->cuCtxPushCurrent() failed
 ```
 
-**最终方案 3.1**：Hybrid - 短暂阻塞 + Detached
+**Final Scheme 3.1:** Hybrid - Short block + Detached
 ```rust
-// StreamPlayer: 立即返回，后台 join
+// StreamPlayer: Return immediately, background join
 pub fn stop(&mut self) {
     signal.store(true);
     self.frame_rx = None;
     
     if let Some(thread) = self.stream_thread.take() {
         std::thread::spawn(move || {
-            // 后台等待 2s 或 join
+            // Background wait 2s or join
             let _ = thread.join();
         });
     }
-    // 立即返回，UI 不阻塞 ⚡
+    // Return immediately, UI non-blocking ⚡
 }
 
-// ScrcpyConnection: 快速检查 + 后台清理
+// ScrcpyConnection: Fast check + background cleanup
 pub fn shutdown(&mut self) -> Result<()> {
-    self.video_stream.take(); // 关闭 socket
+    self.video_stream.take(); // Close socket
     
     if let Some(mut process) = self.server_process.take() {
-        // Fast path: 50ms 快速检查
+        // Fast path: 50ms quick check
         for _ in 0..5 {
             if process.try_wait().is_ok() {
-                return Ok(()); // 快速退出 ⚡
+                return Ok(()); // Quick exit ⚡
             }
             sleep(10ms);
         }
         
-        // Slow path: 后台清理（不阻塞 UI）
+        // Slow path: Background cleanup (UI non-blocking)
         std::thread::spawn(move || {
-            // 最多等 3s 或 kill
+            // Max wait 3s or kill
         });
     }
-    Ok(()) // 立即返回 ⚡
+    Ok(()) // Return immediately ⚡
 }
 ```
 
 ```rust
-// Hybrid cleanup: 确保 CUDA 资源正确释放 + UI 快速响应
+// Hybrid cleanup: Ensure CUDA resources correctly released + UI fast response
 pub fn stop(&mut self) {
     signal.store(true);
     self.frame_rx = None;
     
     if let Some(thread) = self.stream_thread.take() {
-        // Phase 1: 短暂阻塞等待解码器 drop (300ms)
+        // Phase 1: Short block wait decoder drop (300ms)
         const DECODER_CLEANUP_MS: u64 = 300;
         for _ in 0..30 {
             if thread.is_finished() {
-                let _ = thread.join(); // ✅ 解码器已 drop
-                return; // 快速退出
+                let _ = thread.join(); // ✅ Decoder dropped
+                return; // Quick exit
             }
             sleep(10ms);
         }
         
-        // Phase 2: 超时后 detach 剩余清理（网络/进程）
+        // Phase 2: Timeout detach remaining cleanup (network/process)
         std::thread::spawn(move || {
-            let _ = thread.join(); // 后台完成
+            let _ = thread.join(); // Complete in background
         });
     }
-    // 300ms 内返回（90% 情况）或立即返回 ⚡
+    // Return within 300ms (90% case) or immediately ⚡
 }
 ```
 
-**性能对比**：
-| 操作 | 修复前 | 方案 3.0（失败）| 方案 3.1（最终）|
-|------|-------|--------------|--------------|
-| **stop() 调用** | 阻塞 2s | 立即返回 <1ms | **等待 300ms（快速路径）** |
-| **shutdown() 调用** | 阻塞 3s | 快速检查 50ms | 快速检查 50ms |
-| **UI 关闭延迟** | **5s** | <100ms ❌ CUDA 错误 | **<400ms** ✅ 无错误 |
-| **解码器 Drop** | 正确 | ❌ 主线程退出后 | ✅ 主线程退出前 |
-| **清理完成** | 5s | 后台 2-3s | 后台 2-3s |
+**Performance Comparison:**
+| Operation | Before Fix | Scheme 3.0 (Failed) | Scheme 3.1 (Final) |
+|-----------|------------|--------------------|--------------------|
+| **stop() call** | Block 2s | Immediate <1ms | **Wait 300ms (fast path)** |
+| **shutdown() call** | Block 3s | Fast check 50ms | Fast check 50ms |
+| **UI close delay** | **5s** | <100ms ❌ CUDA error | **<400ms** ✅ No error |
+| **Decoder Drop** | Correct | ❌ After main thread exit | ✅ Before main thread exit |
+| **Cleanup complete** | 5s | Background 2-3s | Background 2-3s |
 
-**关键设计决策**：
-| 需求 | 方案 | 权衡 |
-|------|-----|------|
-| **CUDA 资源正确释放** | 短暂阻塞等待解码器 drop (300ms) | 牺牲 300ms 响应时间 |
-| **UI 快速响应** | 超时后 detach 剩余清理 | 网络/进程清理异步 |
-| **用户体验** | 90% 情况 <400ms 关闭窗口 | 可接受延迟 |
+**Key Design Decisions:**
+| Requirement | Solution | Trade-off |
+|-------------|----------|-----------|
+| **CUDA resource correct release** | Short block wait decoder drop (300ms) | Sacrifice 300ms response time |
+| **UI fast response** | Timeout detach remaining cleanup | Network/process cleanup async |
+| **User experience** | 90% case <400ms window close | Acceptable delay |
 
-**经验总结**：
-1. **永不使用 `thread.is_finished()` in stable Rust**：它是 nightly-only API
-2. **超时 join 用 `std::mem::forget`**：比 detached spawn 更安全
-3. **CUDA 资源必须在主线程存在时释放**：driver 退出后 context 失效
-4. **退出顺序必须：解码器 → channel → socket → 进程**
-5. **Hybrid cleanup 最优**：关键资源阻塞释放 + 次要资源 detach
-6. **UI 响应优先，但硬件资源不可妥协**（CUDA > 用户体验极致化）
+**Lessons Learned:**
+1. **Never use `thread.is_finished()` in stable Rust**: It's nightly-only API
+2. **Timeout join use `std::mem::forget`**: Safer than detached spawn
+3. **CUDA resources must be released while main thread exists**: After driver exit context invalid
+4. **Exit order must be: decoder → channel → socket → process**
+5. **Hybrid cleanup is optimal**: Critical resource block release + secondary resource detach
+6. **UI response priority, but hardware resources non-negotiable** (CUDA > user experience extreme)
 
 ---
 
-### 4. 音视频同步时音频流阻塞问题（2025-12-12）✅ 已解决
+## 2. Audio/Video Synchronization
 
-**现象**：
-- 画面正常持续更新
-- 音频线程启动后只读取 2 个包就永久阻塞
-- 通知声音可以转发，但音乐播放器/媒体音无输出
-- test_audio（纯音频模式）工作正常
+### 2.1 Audio Stream Blocking Issue (2025-12-12) ✅ Resolved
 
-**根因**：
-**未读取音频流的 codec_id 导致协议错位**
+**Symptoms:**
+- Video updates normally
+- Audio thread reads only 2 packets then permanently blocks
+- Notification sounds can be forwarded, but music player/media audio has no output
+- test_audio (audio-only mode) works normally
 
-scrcpy 协议规定每个流的第一个数据必须是 4 字节 codec_id：
-- 视频流：`codec_id(4 bytes) + width(4) + height(4) + packets...`
-- 音频流：`codec_id(4 bytes) + packets...`
+**Root Cause:**
+**Not reading audio stream codec_id causes protocol mismatch**
 
-我们的代码只读取了视频流的 codec metadata，完全跳过了音频流的 codec_id 读取。
-导致音频线程尝试读取 12 字节包头（PTS 8 bytes + size 4 bytes）时，实际读到的是：
+Scrcpy protocol requires first data of each stream to be 4-byte codec_id:
+- Video stream: `codec_id(4 bytes) + width(4) + height(4) + packets...`
+- Audio stream: `codec_id(4 bytes) + packets...`
+
+Our code only read video stream codec metadata, completely skipped audio stream codec_id reading.
+When audio thread tried to read 12-byte packet header (PTS 8 bytes + size 4 bytes), actually read:
 ```
-[codec_id: 4 bytes][packet_header 前 8 bytes]
+[codec_id: 4 bytes][packet_header first 8 bytes]
 ```
-协议完全错位，后续所有读取都失败。
+Protocol completely misaligned, subsequent reads all fail.
 
-**错误代码示例**：
+**Wrong Code Example:**
 ```rust
-// ❌ 错误：只读取视频流 codec metadata
+// ❌ Wrong: Only read video stream codec metadata
 let video_resolution = if params.send_codec_meta {
-    stream.read_exact(&mut codec_meta[12])?; // 读取 codec_id + width + height
+    stream.read_exact(&mut codec_meta[12])?; // Read codec_id + width + height
     ...
 };
 
-// ❌ 音频流直接跳过，没有读取 codec_id
+// ❌ Audio stream skipped directly, no codec_id read
 let audio_stream = conn.audio_stream.take()?;
-// 直接开始读取包头 → 错误！第一个 4 字节是 codec_id，不是包头
+// Directly start reading packet header → Wrong! First 4 bytes is codec_id, not header
 
-// 音频线程阻塞在这里
-audio_stream.read_exact(&mut header[12])?; // 实际读到 codec_id + 部分包头
+// Audio thread blocked here
+audio_stream.read_exact(&mut header[12])?; // Actually read codec_id + partial header
 ```
 
-**正确修复**：
+**Correct Fix:**
 ```rust
-// ✅ 正确：音频流也必须先读取 codec_id
+// ✅ Correct: Audio stream must also read codec_id first
 if params.send_codec_meta && let Some(ref mut stream) = audio_stream {
     let mut codec_id_bytes = [0u8; 4];
     stream.read_exact(&mut codec_id_bytes)?;
     let codec_id = u32::from_be_bytes(codec_id_bytes);
     debug!("Audio codec meta: id=0x{:08x}", codec_id); // 0x6f707573 = "opus"
     
-    // 检查特殊值（参考 demuxer.c）
-    if codec_id == 0 { /* 流被设备禁用 */ }
-    if codec_id == 1 { /* 流配置错误 */ }
+    // Check special values (参考 demuxer.c)
+    if codec_id == 0 { /* Stream disabled by device */ }
+    if codec_id == 1 { /* Stream configuration error */ }
 }
-// 现在可以正常读取包头了
+// Now can read packet header normally
 ```
 
-**诊断过程**：
-1. ✅ 排除连接问题：video → audio → control 三个 socket 都正确建立
-2. ✅ 排除 FD 传递：reverse 模式下不需要通过 control 传递 FD
-3. ✅ 排除音频源配置：`output` 和 `playback` 模式都有相同问题
-4. ✅ 对比 scrcpy 官方客户端：音视频正常工作
-5. 🔍 **深度源码分析**：发现 `demuxer.c` 中 `run_demuxer()` 第一步就是读取 codec_id
-6. 🎯 **定位根因**：我们的 `connection.rs` 只处理了视频流 codec metadata
+**Diagnostic Process:**
+1. ✅ Exclude connection issues: video → audio → control three sockets all established correctly
+2. ✅ Exclude FD passing: reverse mode doesn't need FD passing via control
+3. ✅ Exclude audio source config: `output` and `playback` modes have same issue
+4. ✅ Compare scrcpy official client: audio/video both work
+5. 🔍 **Deep source analysis**: Found `run_demuxer()` first step is reading codec_id in `demuxer.c`
+6. 🎯 **Root cause location**: Our `connection.rs` only handled video stream codec metadata
 
-**测试结果**（修复后）：
+**Test Results (After Fix):**
 ```
-✅ 音频 codec 初始化：id=0x6f707573 (opus)
-✅ 音频包统计：734 packets/15s 持续解码
-✅ 音频处理进度：100 → 200 → ... → 700 packets
-✅ 视频帧数：600+ 帧，0 丢帧
-✅ 音视频同步流畅，无延迟
+✅ Audio codec init: id=0x6f707573 (opus)
+✅ Audio packet stats: 734 packets/15s continuous decode
+✅ Audio processing progress: 100 → 200 → ... → 700 packets
+✅ Video frames: 600+ frames, 0 dropped
+✅ Audio/video sync smooth, no latency
 ```
 
-**关键教训**：
-1. **协议必须完整实现**：即使某些字段看起来"可选"，也必须按协议顺序读取
-2. **对比官方实现**：遇到问题时直接对比官方客户端行为，快速定位差异
-3. **深度读源码**：关键协议细节往往隐藏在源码注释和边界条件处理中
-4. **多流处理的对称性**：如果视频流需要读 codec_id，音频流也一定需要
+**Key Lessons:**
+1. **Protocol must be fully implemented**: Even "optional" fields must be read in protocol order
+2. **Compare official implementation**: When issues arise, directly compare official client behavior
+3. **Deep read source code**: Key protocol details often hidden in source comments and edge case handling
+4. **Multi-stream symmetry**: If video stream needs codec_id read, audio stream definitely needs it too
 
-**相关代码位置**：
-- 修复：`src/scrcpy/connection.rs` line 185-203
-- 参考：`3rd-party/scrcpy/app/src/demuxer.c` line 145-158 (`run_demuxer`)
-- 协议定义：`demuxer.c` line 81-100（包头格式注释）
+**Related Code Locations:**
+- Fix: `src/scrcpy/connection.rs` line 185-203
+- Reference: `3rd-party/scrcpy/app/src/demuxer.c` line 145-158 (`run_demuxer`)
+- Protocol definition: `demuxer.c` line 81-100 (packet header format comments)
 
+### 2.2 AV Sync Mutex Contention Issue
+
+**Symptoms:**
+- Using `Arc<Mutex<AVSync>>` to share sync state between audio and video threads
+- Both audio and video threads need lock to access AVSync
+- Video decode stutter (GPU/driver/IO) blocks audio thread in reverse
+- Audio is real-time path, blocking destroys sync precision
+
+**Root Cause:**
+- **Architecture error**: Audio and video are equal read/write relationship
+- **Sync inversion**: Audio = master clock, should not wait for video
+- **Mutex nature**: Fair lock, either side holding blocks the other
+
+**Solution:** Lock-Free Snapshot Architecture
+
+```rust
+// Audio thread = only writer (&mut AVSync)
+av_sync.update_audio_pts(pts);  // Atomic Release
+
+// Video thread = read-only snapshot (Arc<AVSyncSnapshot>)
+av_snapshot.should_drop_video(pts);  // Atomic Acquire
+```
+
+**Implementation Details:**
+1. **AVSyncSnapshot**: Atomic snapshot structure
+   - `audio_pts: AtomicI64`
+   - `avg_drift_us: AtomicI64`
+   - `clock_ready: AtomicBool`
+2. **AVSync**: Audio thread exclusive
+   - `update_audio_pts(&mut self)` - only write point
+   - `snapshot() -> Arc<AVSyncSnapshot>` - get snapshot
+3. **Memory ordering**:
+   - Audio write uses `Ordering::Release`
+   - Video read uses `Ordering::Acquire`
+   - Forms happens-before relationship
+
+**Performance Improvement:**
+- Audio write latency: ~100ns (Mutex) → ~10ns (Atomic)
+- Video read latency: ~100ns + contention → ~10ns (Atomic)
+- ✅ Audio never blocked by video decode
+- ✅ Video never blocked by audio update
+
+**Key Lessons:**
+1. **Player-level architecture principle**: Audio = master clock, Video = follower
+2. **Avoid reverse dependency**: Real-time path should not wait non-real-time path
+3. **Lock-Free priority**: Atomic 10x faster than Mutex, no contention
+4. **Memory ordering important**: Release/Acquire guarantees cross-thread visibility
+5. **Reference classic implementations**: scrcpy/mpv/VLC all use similar lock-free sync
+
+**Reference Documentation:**
+- `docs/avsync_lockfree.md` - Complete design document
+- `src/sync/clock.rs` - AVSync / AVSyncSnapshot implementation
+- `src/app/ui/player.rs` - Audio/Video thread usage example
 
 ---
 
-## 配置管理（新增）
+## 3. Protocol Implementation
 
-### 6. config.toml 配置未生效（硬编码参数）(2025-12-15)
+### 3.1 Missing Audio Stream Codec ID Reading
 
-**问题现象**：
-- 修改 `config.toml` 中的 `max_size = 720`
-- 但 scrcpy 实际传参仍是 `max_size=1920`
-- 所有 scrcpy 参数（bit_rate, codec 等）都未生效
+**Problem:** Audio thread blocked permanently after reading only 2 packets.
 
-**根本原因**：
-- `StreamPlayer::start()` 内部调用 `stream_worker()` 创建连接参数
-- `stream_worker()` 中硬编码了所有参数
-- 配置根本没有传递到实际连接逻辑
+**Root Cause:** Skipped codec_id reading for audio stream (see Section 2.1).
 
-**解决方案**：
-1. 修改 `StreamPlayer::start()` 签名，接受 `ScrcpyConfig`
-2. 在 `stream_worker()` 中解析配置（支持 "24M" 格式）
-3. 为 `ScrcpyConfig` 及其子结构添加 `Clone` trait
+**Solution:** Read 4-byte codec_id before reading audio packets.
 
-**教训**：
-- 配置驱动的系统必须端到端验证配置传递
-- 警惕硬编码，特别是在多层函数调用中
+**Related Code:**
+- `src/scrcpy/connection.rs` line 185-203
 
 ---
 
-## UI 渲染（新增）
+## 4. Configuration Management
 
-### 7. 初始化时视频不显示，需鼠标移动触发 (2025-12-15)
+### 4.1 config.toml Not Applied (Hardcoded Parameters) (2025-12-15)
 
-**问题现象**：程序启动后画面黑屏，鼠标移动后突然显示
+**Problem:**
+- Modify `config.toml` `max_size = 720`
+- But scrcpy still passes `max_size=1920`
+- All scrcpy parameters (bit_rate, codec, etc.) not applied
 
-**根本原因**：
-- `InitState::InProgress` 未调用 `ctx.request_repaint()`
-- egui 默认只在交互事件时重绘
+**Root Cause:**
+- `StreamPlayer::start()` internally calls `stream_worker()` creating connection parameters
+- `stream_worker()` hardcoded all parameters
+- Config not passed to actual connection logic
 
-**解决方案**：
+**Solution:**
+1. Modify `StreamPlayer::start()` signature to accept `ScrcpyConfig`
+2. Parse config in `stream_worker()` (support "24M" format)
+3. Add `Clone` trait to `ScrcpyConfig` and substructures
+
+**Lesson:**
+- Config-driven systems must verify config pass-through end-to-end
+- Be wary of hardcoding, especially in multi-layer function calls
+
+---
+
+## 5. UI Rendering
+
+### 5.1 Video Not Displayed on Init, Requires Mouse Move (2025-12-15)
+
+**Problem:** Black screen after startup, video appears after mouse move
+
+**Root Cause:**
+- `InitState::InProgress` didn't call `ctx.request_repaint()`
+- egui only repaints on interaction events by default
+
+**Solution:**
 ```rust
 InitState::InProgress => {
     self.player.update();
     self.check_init_stage(ctx);
-    ctx.request_repaint();  // 主动请求重绘
+    ctx.request_repaint();  // Actively request repaint
 }
 ```
 
-**教训**：异步初始化场景必须主动请求重绘
+**Lesson:** Async init scenarios must actively request repaint
 
 ---
 
-## 状态管理（新增）
+## 6. State Management
 
-### 8. 旋转按钮点击无反应（no-op 方法）(2025-12-15)
+### 6.1 Rotation Button Click No-op (2025-12-15)
 
-**问题现象**：点击旋转按钮，状态更新但视频不旋转
+**Problem:** Click rotation button, state updates but video doesn't rotate
 
-**根本原因**：`StreamPlayer::set_rotation()` 为空操作（遗留代码）
+**Root Cause:** `StreamPlayer::set_rotation()` empty method (legacy code)
 
-**解决方案**：
-1. 添加 `video_rotation: u32` 字段
-2. 实现真正的 setter：`self.video_rotation = rotation % 4;`
-3. 后续需在渲染时应用旋转变换
+**Solution:**
+1. Add `video_rotation: u32` field
+2. Implement real setter: `self.video_rotation = rotation % 4;`
+3. Later need to apply rotation transform during rendering
 
-**教训**：警惕 no-op 方法和"兼容性"代码
-
----
-
-## Rust 类型系统（新增）
-
-### 9. 类型嵌套层数错误（Arc<Arc<T>>）(2025-12-15)
-
-**问题**：`Arc::new(config.scrcpy.clone())` 导致双层 Arc
-
-**解决**：直接 clone：`(*config.scrcpy).clone()`
-
-**教训**：理解返回值类型，避免无意义的包裹
+**Lesson:** Be wary of no-op methods and "compatibility" code
 
 ---
 
-### 10. 缺少 Clone trait (2025-12-15)
+## 7. Rust Type System
 
-**问题**：配置结构未派生 `Clone`，无法跨线程传递
+### 7.1 Nested Type Error (Arc<Arc<T>>) (2025-12-15)
 
-**解决**：为所有配置结构添加 `#[derive(Clone)]`
+**Problem:** `Arc::new(config.scrcpy.clone())` causes double Arc
 
-**教训**：配置数据结构通常需要 Clone
+**Solution:** Direct clone: `(*config.scrcpy).clone()`
+
+**Lesson:** Understand return type, avoid meaningless wrapping
+
+### 7.2 Missing Clone Trait (2025-12-15)
+
+**Problem:** Config structures not derived `Clone`, cannot pass across threads
+
+**Solution:** Add `#[derive(Clone)]` to all config structures
+
+**Lesson:** Config data structures usually need Clone
 
 ---
 
-## 平台特定问题
+## 8. Platform-Specific Issues
 
-### 11. Wayland ResizeIncrements 警告 (2025-12-15)
+### 8.1 Wayland ResizeIncrements Warning (2025-12-15)
 
-**现象**：在 Wayland 环境运行时出现警告
+**Symptoms:** Warning when running on Wayland
 ```
-WARN winit::platform_impl::linux::wayland::window: 
+WARN winit::platform_impl::linux::wayland::window:
   `set_resize_increments` is not implemented for Wayland
 ```
 
-**原因**：
-- `ResizeIncrements` 是 X11 特有功能，用于锁定窗口大小调整步进
-- Wayland 协议不支持这个功能（设计哲学不同）
-- winit 库在 Wayland 上调用时返回未实现警告
+**Cause:**
+- `ResizeIncrements` is X11-specific feature for locking window resize steps
+- Wayland protocol doesn't support this feature (different design philosophy)
+- winit library returns unimplemented warning on Wayland
 
-**影响**：
-- ✅ 不影响窗口初始化和旋转功能
-- ✅ 窗口仍可手动调整大小
-- ❌ 无法在拖拽时强制锁定宽高比
+**Impact:**
+- ✅ Window init and rotation not affected
+- ✅ Window can still be manually resized
+- ❌ Cannot force lock aspect ratio during drag
 
-**解决**：
-无需修复，这是平台限制。用户在 Wayland 环境下手动调整窗口时可能破坏宽高比，但旋转和自动调整仍然正常工作。
+**Solution:** No fix needed, this is platform limitation. Users may break aspect ratio when manually resizing on Wayland, but rotation and auto-adjust still work.
 
-**如需屏蔽警告**：
+**To Suppress Warning:**
 ```bash
-RUST_LOG=error cargo run  # 只显示 error 级别日志
+RUST_LOG=error cargo run  # Show only error level logs
 ```
 
 ---
 
-## 硬件解码（新增）
+## 9. Hardware Decoding
 
-### 12. NVDEC 旋转崩溃 — 不支持 prepend-sps-pps 的设备 (2025-12-15)
+### 9.1 NVDEC Rotation Crash - Unsupported prepend-sps-pps Devices (2025-12-15)
 
-**问题现象**：
-- VAAPI 和软件解码：旋转正常 ✅
-- NVDEC + `prepend-sps-pps-to-idr-frames=1`：通过 SPS 检测分辨率，重建解码器正常 ✅
-- NVDEC + 不支持该选项的 Android 设备：旋转后视频画面崩溃 ❌
+**Problem:**
+- VAAPI and software decode: rotation normal ✅
+- NVDEC + `prepend-sps-pps-to-idr-frames=1`: SPS detection for resolution, decoder rebuild normal ✅
+- NVDEC + unsupported Android device: video crashes after rotation ❌
 
-**根本原因**：
-1. 部分 Android 设备不支持 `prepend-sps-pps-to-idr-frames=1` 选项（如 HiSilicon Kirin 980）
-2. 旋转导致视频分辨率变化（如 592x1280 → 1280x592）
-3. NVDEC 硬件解码器内部上下文（AVHWFramesContext）与新分辨率不兼容
-4. FFmpeg 错误：`AVHWFramesContext is already initialized with incompatible parameters`
-5. 后续所有帧解码失败：`CUDA_ERROR_INVALID_HANDLE: invalid resource handle`
-6. 无 SPS 数据，无法提前检测分辨率变化
+**Root Cause:**
+1. Some Android devices don't support `prepend-sps-pps-to-idr-frames=1` (e.g., HiSilicon Kirin 980)
+2. Rotation causes video resolution change (e.g., 592x1280 → 1280x592)
+3. NVDEC hardware decoder internal context (AVHWFramesContext) incompatible with new resolution
+4. FFmpeg error: `AVHWFramesContext is already initialized with incompatible parameters`
+5. Subsequent all frame decode fail: `CUDA_ERROR_INVALID_HANDLE: invalid resource handle`
+6. No SPS data, cannot detect resolution change in advance
 
-**解决方案（三层防御）**：
+**Solution (Three-Layer Defense):**
 
-**第一层：容忍 FFmpeg 错误**
+**Layer 1: Tolerate FFmpeg Errors**
 ```rust
 // src/decoder/nvdec.rs
 fn send_packet(&mut self, data: &[u8], pts: i64) -> Result<()> {
@@ -537,9 +624,9 @@ fn receive_frames(&mut self) -> Result<Vec<DecodedFrame>> {
 }
 ```
 
-**第二层：空帧计数器**
+**Layer 2: Empty Frame Counter**
 ```rust
-// 连续 3 帧空帧触发错误
+// 3 consecutive empty frames trigger error
 if frames.is_empty() {
     self.consecutive_empty_frames += 1;
     if self.consecutive_empty_frames >= 3 {
@@ -548,40 +635,40 @@ if frames.is_empty() {
 }
 ```
 
-**第三层：双策略恢复**
+**Layer 3: Dual-Strategy Recovery**
 ```rust
 // stream_player.rs: try_recover_decoder()
 // Strategy 1: Try to extract SPS from failed packet
 if let Some((w, h)) = extract_resolution_from_stream(packet_data) {
-    if w > 32 && h > 32 {  // Filter invalid init values
-        AutoDecoder::new(w, h)  // ✅ 重建解码器
+    if w > 32 && h > 32 invalid init values
+        AutoDecoder:: {  // Filternew(w, h)  // ✅ Rebuild decoder
     }
 }
 
 // Strategy 2: No SPS? Assume screen rotation (swap dimensions)
 let swapped = (last_height, last_width);  // 592x1280 -> 1280x592
-AutoDecoder::new(swapped.0, swapped.1)    // ✅ 重建解码器
+AutoDecoder::new(swapped.0, swapped.1)    // ✅ Rebuild decoder
 ```
 
-**实现细节**：
-1. **错误容忍**：NVDEC 在遇到 CUDA 错误时不立即失败，返回空帧
-2. **空帧检测**：连续 3 帧空帧触发 "consecutive empty frames" 错误
-3. **策略 1**：尝试从失败的数据包中提取 SPS（即使不是 Key 帧）
-4. **策略 2**：如无 SPS，交换宽高（Android 旋转最常见场景：90°/270°）
-5. **尺寸过滤**：忽略 32x32 等明显无效的分辨率（编码器初始化伪值）
+**Implementation Details:**
+1. **Error tolerance**: NVDEC doesn't immediately fail on CUDA error, returns empty frames
+2. **Empty frame detection**: 3 consecutive empty frames trigger "consecutive empty frames" error
+3. **Strategy 1**: Try to extract SPS from failed packet (even if not Key frame)
+4. **Strategy 2**: No SPS? Swap dimensions (Android rotation most common: 90°/270°)
+5. **Dimension filtering**: Ignore obviously invalid resolutions like 32x32 (encoder init values)
 
-**调试日志示例**：
+**Debug Log Example:**
 ```
-旋转前：
+Before rotation:
 2025-12-15T06:06:33.263194Z  INFO Video resolution: 592x1280
 2025-12-15T06:06:33.410326Z DEBUG NVDEC H.264 decoder initialized
 
-旋转时（FFmpeg错误）：
+During rotation (FFmpeg error):
 [h264_cuvid @ ...] AVHWFramesContext is already initialized with incompatible parameters
 [h264_cuvid @ ...] CUDA_ERROR_INVALID_HANDLE: invalid resource handle
-（重复多次）
+(Repeated many times)
 
-旋转后（预期日志）：
+After rotation (expected log):
 2025-12-15T06:06:43.253884Z DEBUG Rotation changed: Some(0) -> 1
 2025-12-15T06:06:43.262214Z DEBUG Device rotated to orientation: 90
 2025-12-15T06:06:44.XXX  WARN ⚠️ NVDEC detected resolution change via decode failure
@@ -589,39 +676,39 @@ AutoDecoder::new(swapped.0, swapped.1)    // ✅ 重建解码器
 2025-12-15T06:06:44.XXX  INFO ✅ Decoder recreated with swapped dimensions: NVDEC
 ```
 
-**教训**：
-- **FFmpeg 硬件解码脆弱性**：分辨率变化时 AVHWFramesContext 不能热更新
-- **错误传播链**：CUDA 错误 → FFmpeg 错误 → 需要 Rust 层容忍
-- **Android 碎片化**：同一 MediaCodec 参数在不同设备支持度差异大（HiSilicon vs MTK）
-- **多层防御**：容忍 + 检测 + 恢复，缺一不可
-- **延迟 vs 兼容性**：`prepend-sps-pps=1` 可优化但非必须，代码需容忍缺失
+**Lessons:**
+- **FFmpeg hardware decode fragility**: AVHWFramesContext cannot hot-update on resolution change
+- **Error propagation chain**: CUDA error → FFmpeg error → needs Rust layer tolerance
+- **Android fragmentation**: Same MediaCodec parameters have different support across devices (HiSilicon vs MTK)
+- **Multi-layer defense**: Tolerance + detection + recovery, all necessary
+- **Delay vs compatibility**: `prepend-sps-pps=1` can optimize but not required, code needs tolerate absence
 
-**相关代码**：
+**Related Code:**
 - `src/app/ui/stream_player.rs` line 46-110 (`try_recover_decoder`)
 - `src/decoder/nvdec.rs` line 112-130 (error tolerance)
 - `src/decoder/nvdec.rs` line 216-228 (empty frame detection)
 
-**测试建议**：
+**Test Suggestion:**
 ```bash
-# 使用不支持 prepend-sps-pps 的设备测试（如 HiSilicon Kirin 980）
+# Test on device without prepend-sps-pps support (e.g., HiSilicon Kirin 980)
 cargo run
-# 1. 等待视频正常显示
-# 2. 旋转设备屏幕（90°或270°）
-# 3. 观察日志：
-#    - [h264_cuvid] CUDA_ERROR_INVALID_HANDLE (FFmpeg错误)
+# 1. Wait video normal display
+# 2. Rotate device screen (90° or 270°)
+# 3. Observe logs:
+#    - [h264_cuvid] CUDA_ERROR_INVALID_HANDLE (FFmpeg error)
 #    - ⚠️ NVDEC detected resolution change via decode failure
 #    - 🔄 No SPS found, trying dimension swap: 592x1280 -> 1280x592
 #    - ✅ Decoder recreated with swapped dimensions: NVDEC
-# 4. 确认视频在 ~1 秒内恢复正常
+# 4. Confirm video recovers within ~1 second
 ```
 
-**防护机制 - 防止重建循环**：
+**Protection Mechanism - Prevent Rebuild Loop:**
 ```rust
-// 使用 Option 跟踪重建时间（首次重建允许，后续需冷却期）
+// Use Option to track rebuild time (first rebuild allowed, later need cooldown)
 let mut last_decoder_rebuild: Option<Instant> = None;
 
 if let Some(last_rebuild_time) = last_decoder_rebuild {
-    // 冷却期：2 秒或 10 帧
+    // Cooldown: 2 seconds or 10 frames
     const MIN_REBUILD_INTERVAL: Duration = Duration::from_secs(2);
     const MIN_FRAMES_BEFORE_REBUILD: u32 = 10;
     
@@ -629,139 +716,131 @@ if let Some(last_rebuild_time) = last_decoder_rebuild {
         || frames >= MIN_FRAMES_BEFORE_REBUILD;
     
     if !can_rebuild {
-        continue;  // 跳过重建
+        continue;  // Skip rebuild
     }
 }
 
-// 重建后更新时间
+// After rebuild, update time
 last_decoder_rebuild = Some(Instant::now());
 ```
 
-**关键设计**：
-- **首次重建无限制**：`None` 状态允许立即重建
-- **后续重建需冷却**：`Some(time)` 状态强制 2 秒或 10 帧间隔
-- **原因**: 新解码器需要时间接收正确分辨率的帧，否则立即又会触发"连续 3 帧空帧"
+**Key Design:**
+- **First rebuild no restriction**: `None` state allows immediate rebuild
+- **Subsequent rebuild need cooldown**: `Some(time)` state enforces 2s or 10 frame interval
+- **Reason**: New decoder needs time to receive correct resolution frames, otherwise immediately triggers "3 consecutive empty frames" again
 
-**最终解决方案（2025-12-15）**：
+### 9.2 Ultimate Solution: capture_orientation (2025-12-15)
 
-## 完美方案：capture_orientation
+**Strategy:** Always lock `capture_orientation` when using NVDEC
 
-**策略**：使用 NVDEC 时**总是锁定 capture_orientation**
-
-### 实现
-
+**Implementation:**
 ```rust
-// 检测到 NVIDIA GPU → 自动锁定方向
+// Detect NVIDIA GPU → auto lock orientation
 if has_nvidia_gpu() {
     params.capture_orientation = Some("@0".to_string());
 }
 ```
 
-### 原理
+**Principle:**
+- scrcpy-server captures screen at fixed orientation
+- Video resolution never changes (592x1280 or 1280x592)
+- NVDEC decoder no rebuild needed
+- System auto-rotates display content
 
-- scrcpy-server 以固定方向抓取屏幕
-- 视频分辨率永不变化（592x1280 或 1280x592）
-- NVDEC 解码器无需重建
-- 系统自动旋转显示内容
+**Advantages:**
+1. ✅ **Fundamental solution**: Prevent resolution change instead of handling change
+2. ✅ **Zero performance loss**: No decoder rebuild (~200ms overhead)
+3. ✅ **No black screen**: Decode continues
+4. ✅ **No SPS needed**: Don't need `prepend-sps-pps-to-idr-frames=1`
+5. ✅ **Universal**: All NVDEC devices benefit
+6. ✅ **Good compatibility**: scrcpy native support
 
-### 优势
+**Why Not prepend-sps-pps?**
 
-1. ✅ **根本性解决**：阻止分辨率变化，而不是处理变化
-2. ✅ **零性能损失**：无解码器重建（~200ms 开销）
-3. ✅ **无黑屏**：解码持续进行
-4. ✅ **不需要 SPS**：无需 `prepend-sps-pps-to-idr-frames=1`
-5. ✅ **通用性强**：所有 NVDEC 设备都受益
-6. ✅ **兼容性好**：scrcpy 原生支持
+| Solution | Advantage | Disadvantage |
+|----------|-----------|--------------|
+| prepend-sps + rebuild | Support rotation | Poor compatibility, rebuild overhead, possible black screen |
+| **capture_orientation** | **Universal, stable, zero overhead** | **Fixed orientation (acceptable)** |
 
-### 为什么不用 prepend-sps-pps？
+**Affected Devices:**
+- **All devices using NVDEC** (auto-detect NVIDIA GPU)
+- Video orientation fixed, but always works normally
+- Users can disable this behavior via config
 
-| 方案 | 优势 | 劣势 |
-|------|------|------|
-| prepend-sps + 重建 | 支持旋转 | 兼容性差、有重建开销、可能黑屏 |
-| **capture_orientation** | **通用、稳定、零开销** | **方向固定（可接受）** |
+**Fallback:**
+If user needs video to rotate with device:
+1. Use VAAPI decoder (Intel GPU)
+2. Use software decoder
+3. Manually disable `capture_orientation` lock
 
-### 受影响设备
-
-- **所有使用 NVDEC 的设备**（自动检测 NVIDIA GPU）
-- 视频方向固定，但始终正常工作
-- 用户可通过配置禁用此行为
-
-### 回退方案
-
-如果用户需要视频随设备旋转：
-1. 使用 VAAPI 解码器（Intel GPU）
-2. 使用软件解码器
-3. 手动禁用 `capture_orientation` 锁定
-
-### 代码位置
-
+**Code Locations:**
 - `src/scrcpy/server.rs`: `should_lock_orientation_for_nvdec()`
-- `src/app/init.rs`: 自动应用逻辑
+- `src/app/init.rs`: Auto-apply logic
 
 ---
 
-## 输入映射（新增）
+## 10. Input Mapping
 
-### 13. 键盘映射坐标系与 capture-orientation 锁定问题 (2025-12-16) ✅ 已解决
+### 10.1 Keyboard Mapping Coordinate System with capture-orientation Lock (2025-12-16) ✅ Resolved
 
-**问题现象**：
-- 使用 NVDEC 时，`capture-orientation=@0` 锁定视频方向为设备自然方向（0°竖屏）
-- 用户将设备旋转到横屏（rotation=1, 90° CCW），触发 Profile 切换到 `rotation=1` 的配置
-- 但键盘映射按键位置完全错误，点击目标不在预期位置
+**Problem:**
+- Using NVDEC, `capture-orientation=@0` locks video orientation to device natural orientation (0° portrait)
+- User rotates device to landscape (rotation=1, 90° CCW), triggers Profile switch to `rotation=1` config
+- But keyboard mapping button positions completely wrong, click target not at expected position
 
-**根本原因**：
-**Profile 坐标系与视频坐标系不一致**
+**Root Cause:**
+**Profile coordinate system inconsistent with video coordinate system**
 
-1. **Profile.rotation**：记录配置对应的设备旋转角度（CCW，逆时针）
-   - `rotation=0`: 0° 竖屏
-   - `rotation=1`: 90° CCW 横屏（设备向左转）
+1. **Profile.rotation**: Records device rotation angle corresponding to config (CCW)
+   - `rotation=0`: 0° portrait
+   - `rotation=1`: 90° CCW landscape (device rotated left)
    - `rotation=2`: 180°
-   - `rotation=3`: 270° CCW 横屏（设备向右转）
+   - `rotation=3`: 270° CCW landscape (device rotated right)
 
-2. **Profile 坐标系**：百分比坐标（0.0-1.0）基于 `profile.rotation` 对应的设备方向
-   - 例如 `rotation=1` 的配置，坐标是基于"横屏设备"的坐标系
+2. **Profile coordinate system**: Percentage coordinates (0.0-1.0) based on `profile.rotation` corresponding device orientation
+   - Example `rotation=1` config, coordinates based on "landscape device" coordinate system
 
-3. **视频坐标系（未锁定 capture-orientation）**：
-   - 视频方向跟随设备旋转
-   - `profile.rotation == device_orientation` 时 Profile 才匹配
-   - 此时坐标系一致，直接缩放百分比即可
+3. **Video coordinate system (capture-orientation not locked)**:
+   - Video orientation follows device rotation
+   - `profile.rotation == device_orientation` Profile matches
+   - Coordinate system consistent, just scale percentage
 
-4. **视频坐标系（锁定 capture-orientation=@0）**：
-   - **视频方向始终为 0°（设备自然方向/竖屏）**
-   - 设备旋转到 `rotation=1` 时，Profile 被激活
-   - 但视频坐标系仍是 0°，而 Profile 坐标是 90° CCW 坐标系
-   - **坐标系不匹配 → 映射位置错误**
+4. **Video coordinate system (capture-orientation=@0 locked)**:
+   - **Video orientation always 0° (device natural orientation/portrait)**
+   - Device rotates to `rotation=1`, Profile activates
+   - But video coordinate system still 0°, while Profile coordinates 90° CCW coordinate system
+   - **Coordinate system mismatch → mapping position error**
 
-**错误代码**：
+**Wrong Code:**
 ```rust
-// ❌ 直接缩放，未考虑旋转差异
+// ❌ Direct scaling, didn't consider rotation difference
 let (px, py) = (x_percent * video_width as f32, y_percent * video_height as f32);
 ```
 
-**正确解决方案**：
+**Correct Solution:**
 ```rust
-/// 转换坐标时考虑 profile.rotation 与视频坐标系（0°）的差异
+/// Convert coordinates considering profile.rotation vs video coordinate system (0°)
 let transform_coord = |x_percent: f32, y_percent: f32| -> (f32, f32) {
     if !capture_orientation_locked {
-        // 未锁定：视频坐标系跟随设备，直接缩放
+        // Not locked: video coordinate system follows device, direct scaling
         (x_percent * video_width as f32, y_percent * video_height as f32)
     } else {
-        // 锁定：视频坐标系固定为 0°，需要旋转变换
+        // Locked: video coordinate system fixed at 0°, need rotation transform
         match profile.rotation {
             0 => (x_percent * video_width as f32, y_percent * video_height as f32),
             1 => {
-                // Profile 坐标是 90° CCW 坐标系
-                // 转换到 0°：(x', y') -> (y', 1-x')
+                // Profile coordinates are 90° CCW coordinate system
+                // Transform to 0°: (x', y') -> (y', 1-x')
                 (y_percent * video_width as f32, (1.0 - x_percent) * video_height as f32)
             }
             2 => {
-                // Profile 坐标是 180° 坐标系
-                // 转换到 0°：(x', y') -> (1-x', 1-y')
+                // Profile coordinates are 180° coordinate system
+                // Transform to 0°: (x', y') -> (1-x', 1-y')
                 ((1.0 - x_percent) * video_width as f32, (1.0 - y_percent) * video_height as f32)
             }
             3 => {
-                // Profile 坐标是 270° CCW 坐标系
-                // 转换到 0°：(x', y') -> (1-y', x')
+                // Profile coordinates are 270° CCW coordinate system
+                // Transform to 0°: (x', y') -> (1-y', x')
                 ((1.0 - y_percent) * video_width as f32, x_percent * video_height as f32)
             }
             _ => (x_percent * video_width as f32, y_percent * video_height as f32),
@@ -770,99 +849,38 @@ let transform_coord = |x_percent: f32, y_percent: f32| -> (f32, f32) {
 };
 ```
 
-**关键理解**：
-1. **Android Display Rotation（device_orientation）**：逆时针（CCW）
-   - 参考：`android.view.Surface.ROTATION_*`
-2. **scrcpy capture-orientation**：顺时针（CW）表示，但内部转换为 CCW
-   - 参考：`Orientation.java` line 37: `int cwRotation = (4 - ccwRotation) % 4`
-3. **Profile.rotation 跟随 Android Display Rotation**（CCW）
-4. **capture-orientation=@0 锁定后，视频固定为设备自然方向（0°）**
+**Key Understanding:**
+1. **Android Display Rotation (device_orientation)**: Counter-clockwise (CCW)
+   - Reference: `android.view.Surface.ROTATION_*`
+2. **scrcpy capture-orientation**: Clockwise (CW) representation, internally converted to CCW
+   - Reference: `Orientation.java` line 37: `int cwRotation = (4 - ccwRotation) % 4`
+3. **Profile.rotation follows Android Display Rotation** (CCW)
+4. **After capture-orientation=@0 lock, video fixed at device natural orientation (0°)**
 
-**实现修改**：
-1. 在 `SAideApp` 中添加 `capture_orientation_locked: bool` 字段
-2. 在 `InitEvent::ConnectionReady` 中传递该标志
-3. 在 `KeyboardMapper::refresh_profiles()` 中接收参数
-4. 在 `KeyboardMapper::update_pixel_mappings()` 中应用旋转变换
+**Implementation Changes:**
+1. Add `capture_orientation_locked: bool` field to `SAideApp`
+2. Pass flag in `InitEvent::ConnectionReady`
+3. Receive parameter in `KeyboardMapper::refresh_profiles()`
+4. Apply rotation transform in `KeyboardMapper::update_pixel_mappings()`
 
-**测试验证**：
-- 设备竖屏（rotation=0），Profile rotation=0：✅ 坐标正确
-- 设备横屏（rotation=1），Profile rotation=1，capture locked：✅ 坐标自动转换正确
-- 设备横屏（rotation=1），Profile rotation=1，capture unlocked：✅ 直接缩放正确
-- 其他旋转角度（2, 3）：✅ 变换公式对称
+**Test Verification:**
+- Device portrait (rotation=0), Profile rotation=0: ✅ Coordinates correct
+- Device landscape (rotation=1), Profile rotation=1, capture locked: ✅ Coordinates auto-convert correctly
+- Device landscape (rotation=1), Profile rotation=1, capture unlocked: ✅ Direct scaling correct
+- Other rotation angles (2, 3): ✅ Transform formulas symmetric
 
-**关键教训**：
-1. **理解坐标系变换**：多个坐标系（Profile/视频/设备）需明确基准方向
-2. **注意旋转方向定义**：CCW vs CW，不同系统定义不同
-3. **锁定方向的副作用**：`capture-orientation` 锁定会导致坐标系不跟随设备旋转
-4. **Profile.rotation 语义**：记录的是"配置对应的设备方向"，不是"视频方向"
+**Key Lessons:**
+1. **Understand coordinate system transforms**: Multiple coordinate systems (Profile/video/device) need clear reference orientation
+2. **Note rotation direction definition**: CCW vs CW, different systems define differently
+3. **Locked orientation side effects**: `capture-orientation` lock causes coordinate system not to follow device rotation
+4. **Profile.rotation semantics**: Records "device orientation corresponding to config", not "video orientation"
 
-**代码位置**：
-- `src/controller/keyboard.rs` - 坐标转换逻辑（update_pixel_mappings）
-- `src/app/init.rs` - capture_orientation_locked 标志传递
-- `src/app/ui/saide.rs` - 状态存储和 refresh_profiles 调用
-- `3rd-party/scrcpy/server/.../Orientation.java` - 旋转方向定义参考
-
----
-
-**最后更新**: 2025-12-16
-
+**Code Locations:**
+- `src/controller/keyboard.rs` - Coordinate transform logic (update_pixel_mappings)
+- `src/app/init.rs` - capture_orientation_locked flag passing
+- `src/app/ui/saide.rs` - State storage and refresh_profiles call
+- `3rd-party/scrcpy/server/.../Orientation.java` - Rotation direction definition reference
 
 ---
 
-## #14 音视频同步 Mutex 争用问题
-
-**现象**：
-- 使用 `Arc<Mutex<AVSync>>` 在 audio 和 video 线程间共享同步状态
-- Audio 和 video thread 都需要 lock 才能访问 AVSync
-- Video decode 卡顿（GPU/driver/IO）会反向阻塞 audio thread
-- Audio 是实时路径，被阻塞会破坏同步精度
-
-**根本原因**：
-- **架构错误**：Audio 和 video 是对等的读写关系
-- **同步反转**：Audio = master clock，不应该等待 video
-- **Mutex 本质**：公平锁，任何一方持有都会阻塞另一方
-
-**解决方案**：Lock-Free Snapshot 架构
-
-```rust
-// Audio thread = 唯一写者（&mut AVSync）
-av_sync.update_audio_pts(pts);  // Atomic Release
-
-// Video thread = 只读快照（Arc<AVSyncSnapshot>）
-av_snapshot.should_drop_video(pts);  // Atomic Acquire
-```
-
-**实现细节**：
-1. **AVSyncSnapshot**：原子快照结构
-   - `audio_pts: AtomicI64`
-   - `avg_drift_us: AtomicI64`
-   - `clock_ready: AtomicBool`
-2. **AVSync**：Audio thread 独占
-   - `update_audio_pts(&mut self)` - 唯一写入点
-   - `snapshot() -> Arc<AVSyncSnapshot>` - 获取快照
-3. **内存顺序**：
-   - Audio 写入使用 `Ordering::Release`
-   - Video 读取使用 `Ordering::Acquire`
-   - 形成 happens-before 关系
-
-**性能提升**：
-- Audio 写入延迟：~100ns (Mutex) → ~10ns (Atomic)
-- Video 读取延迟：~100ns + 争用 → ~10ns (Atomic)
-- ✅ Audio 永远不会被 video decode 阻塞
-- ✅ Video 永远不会被 audio update 阻塞
-
-**关键教训**：
-1. **播放器级架构原则**：Audio = master clock，Video = follower
-2. **避免反向依赖**：实时路径不应等待非实时路径
-3. **Lock-Free 优先**：Atomic 比 Mutex 快 10 倍，且无争用
-4. **内存顺序很重要**：Release/Acquire 保证跨线程可见性
-5. **参考经典实现**：scrcpy/mpv/VLC 都用类似的无锁同步
-
-**参考文档**：
-- `docs/avsync_lockfree.md` - 完整设计文档
-- `src/sync/clock.rs` - AVSync / AVSyncSnapshot 实现
-- `src/app/ui/player.rs` - Audio/Video thread 使用示例
-
----
-
-**最后更新**: 2025-12-26
+**Last Updated**: 2025-12-16
