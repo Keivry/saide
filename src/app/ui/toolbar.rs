@@ -4,6 +4,7 @@
 //! such as rotating video, configuring mappings, and toggling screen power.
 
 use {
+    crate::t,
     egui::{Button, Color32, RichText},
     lazy_static::lazy_static,
 };
@@ -24,7 +25,7 @@ pub enum ToolbarEvent {
 
 struct ToolbarButton {
     lable: &'static str,
-    tooltip: &'static str,
+    tooltip_key: &'static str,
     event: ToolbarEvent,
 }
 
@@ -32,12 +33,12 @@ lazy_static! {
     static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 2] = [
         ToolbarButton {
             lable: "⟳",
-            tooltip: "Rotate Video",
+            tooltip_key: "toolbar-rotate",
             event: ToolbarEvent::RotateVideo,
         },
         ToolbarButton {
             lable: "⚙",
-            tooltip: "Configure Mappings",
+            tooltip_key: "toolbar-configure",
             event: ToolbarEvent::ConfigureMappings,
         },
     ];
@@ -83,6 +84,11 @@ impl Toolbar {
             }
 
             // Draw screen off button (wake up with physical power button)
+            let screen_off_tooltip = format!(
+                "{}\n{}",
+                t!("toolbar-screen-off"),
+                t!("toolbar-screen-off-hint")
+            );
             if ui
                 .add_sized(
                     TOOLBAR_BTN_SIZE,
@@ -92,7 +98,7 @@ impl Toolbar {
                             .size(TOOLBAR_FONT_SIZE),
                     ),
                 )
-                .on_hover_text("Turn Off Screen\n(Press physical power button to wake up)")
+                .on_hover_text(screen_off_tooltip)
                 .clicked()
             {
                 result = ToolbarEvent::ToggleScreenPower;
@@ -112,7 +118,7 @@ impl Toolbar {
                     .size(TOOLBAR_FONT_SIZE),
             ),
         )
-        .on_hover_text(btn.tooltip)
+        .on_hover_text(t!(btn.tooltip_key))
         .clicked()
     }
 }

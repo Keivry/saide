@@ -5,6 +5,7 @@ pub mod constant;
 pub mod controller;
 pub mod decoder;
 pub mod error;
+pub mod i18n;
 pub mod platform;
 pub mod scrcpy;
 

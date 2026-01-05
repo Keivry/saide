@@ -99,6 +99,12 @@ thiserror = "2"
 wait-timeout = "0.2.1"
 ctrlc = "3.5.1"
 
+# i18n support
+fluent-bundle = "0.15"
+intl-memoizer = "0.5"
+unic-langid = "0.9"
+sys-locale = "0.3"
+
 [profile.dev]
 opt-level = 0
 

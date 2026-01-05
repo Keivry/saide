@@ -30,6 +30,7 @@ use {
         },
         error::Result,
         scrcpy::connection::ScrcpyConnection,
+        t,
     },
     crossbeam_channel::{Receiver, bounded},
     eframe::egui::{self, Color32},
@@ -1084,7 +1085,7 @@ impl eframe::App for SAideApp {
                                 );
                                 ui.vertical(|ui| {
                                     ui.label(
-                                        egui::RichText::new("Audio Not Available")
+                                        egui::RichText::new(t!("audio-warning-title"))
                                             .color(egui::Color32::YELLOW)
                                             .strong(),
                                     );
@@ -1093,7 +1094,7 @@ impl eframe::App for SAideApp {
                                             .color(egui::Color32::LIGHT_GRAY),
                                     );
                                 });
-                                if ui.button("✖").clicked() {
+                                if ui.button(t!("audio-warning-close")).clicked() {
                                     close_clicked = true;
                                 }
                             });
