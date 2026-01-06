@@ -12,8 +12,8 @@ use {
         dialog::{ModalDialog, ModalDialogResult},
     },
     crate::{
-        app::coords::MappingPos,
         config::mapping::{Key, KeyMapping},
+        saide::coords::MappingPos,
     },
     eframe::egui::{self, Color32, FontId, Pos2, Stroke},
     egui::Modifiers,

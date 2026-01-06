@@ -2,10 +2,10 @@ use {
     crossbeam_channel::Receiver,
     eframe::{egui, egui_wgpu},
     saide::{
-        app::ui::{SAideApp, Toolbar},
         config::ConfigManager,
         controller::AdbShell,
         error::{Result, SAideError},
+        saide::ui::{SAideApp, Toolbar},
         t,
         t_args,
     },

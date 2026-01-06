@@ -5,7 +5,7 @@
 //! profiles, and the overall mappings configuration.
 
 use {
-    crate::app::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, ScrcpyPos},
+    crate::saide::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, ScrcpyPos},
     eframe::egui::{self, PointerButton},
     parking_lot::RwLock,
     serde::{Deserialize, Deserializer, Serialize, Serializer},

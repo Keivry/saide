@@ -4,10 +4,10 @@
 
 use {
     crate::{
-        app::coords::{MappingCoordSys, ScrcpyCoordSys},
         config::mapping::{KeyMapping, MappingAction, Mappings, Modifiers, Profile, ScrcpyAction},
         controller::control_sender::ControlSender,
         error::Result,
+        saide::coords::{MappingCoordSys, ScrcpyCoordSys},
     },
     arc_swap::ArcSwap,
     egui::Key,

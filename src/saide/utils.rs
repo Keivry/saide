@@ -4,8 +4,8 @@
 //! to a given position and to extract positions from mapping actions.
 
 use crate::{
-    app::coords::MappingPos,
     config::mapping::{Key, KeyMapping, MappingAction},
+    saide::coords::MappingPos,
 };
 
 /// Find the nearest mapping to a given source position

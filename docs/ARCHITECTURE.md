@@ -176,7 +176,7 @@ The central component for video and audio rendering.
 - Dynamic resolution switching
 - Frame dropping for AV sync
 
-**Source**: `src/app/ui/stream_player.rs`
+**Source**: `src/saide/ui/stream_player.rs`
 
 ### 2. ScrcpyConnection
 
@@ -222,7 +222,7 @@ Three coordinate systems for input mapping:
 | **ScrcpyCoordSys**  | Scrcpy protocol coordinates | Video resolution, capture orientation          |
 | **VisualCoordSys**  | UI display coordinates      | Video rect, window size, visual rotation       |
 
-**Source**: `src/app/coords.rs`
+**Source**: `src/saide/coords.rs`
 
 ### 5. Lock-Free AV Sync
 

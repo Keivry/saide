@@ -1,4 +1,3 @@
-pub mod app;
 pub mod avsync;
 pub mod config;
 pub mod constant;
@@ -7,6 +6,7 @@ pub mod decoder;
 pub mod error;
 pub mod i18n;
 pub mod platform;
+pub mod saide;
 pub mod scrcpy;
 
 pub use {
