@@ -16,8 +16,8 @@ use {
 };
 
 // Include FTL files
-const EN_US_FTL: &str = include_str!("../../i18n/en-US.ftl");
-const ZH_CN_FTL: &str = include_str!("../../i18n/zh-CN.ftl");
+const EN_US_FTL: &str = include_str!("../../i18n/en-US/main.ftl");
+const ZH_CN_FTL: &str = include_str!("../../i18n/zh-CN/main.ftl");
 
 // Supported locales
 const AVAILABLE_LOCALES: &[&str] = &["en-US", "zh-CN"];
