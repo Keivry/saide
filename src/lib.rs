@@ -4,8 +4,8 @@ pub mod constant;
 pub mod controller;
 pub mod decoder;
 pub mod error;
+pub mod gpu;
 pub mod i18n;
-pub mod platform;
 pub mod saide;
 pub mod scrcpy;
 
@@ -23,7 +23,7 @@ pub use {
         VideoDecoder,
         new_nv12_render_callback,
     },
-    platform::{GpuType, detect_gpu},
+    gpu::{GpuType, detect_gpu},
     scrcpy::{
         connection::ScrcpyConnection,
         protocol::{audio::AudioPacket, control::ControlMessage, video::VideoPacket},
