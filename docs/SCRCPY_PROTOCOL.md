@@ -28,7 +28,7 @@
 
 Scrcpy uses three independent TCP connections for communication:
 
-```
+```text
 ┌─────────────────┐                    ┌──────────────────┐
 │   PC Client     │                    │  Android Device  │
 │                 │                    │                  │
@@ -99,7 +99,7 @@ enum sc_control_msg_type {
 
 #### 2.3.1 Inject Keycode (TYPE_INJECT_KEYCODE)
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 0
@@ -112,6 +112,7 @@ Total length: 14 bytes
 ```
 
 **Example Code:**
+
 ```rust
 buf.write_u8(0)?;                        // type = INJECT_KEYCODE
 buf.write_u8(action as u8)?;              // action
@@ -122,7 +123,7 @@ buf.write_u32::<BigEndian>(metastate)?;   // metastate
 
 #### 2.3.2 Inject Text (TYPE_INJECT_TEXT)
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 1
@@ -133,13 +134,14 @@ Total length: 5 + N bytes (N ≤ 300)
 ```
 
 **Key Implementation Points:**
+
 - Text must be valid UTF-8 encoding
 - Content exceeding 300 bytes will be truncated
 - Use `sc_str_utf8_truncation_index` to ensure multi-byte characters not truncated
 
 #### 2.3.3 Inject Touch Event (TYPE_INJECT_TOUCH_EVENT)
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 2
@@ -157,6 +159,7 @@ Total length: 32 bytes
 ```
 
 **Special Pointer IDs:**
+
 ```c
 #define SC_POINTER_ID_MOUSE UINT64_C(-1)          // -1 = Mouse
 #define SC_POINTER_ID_GENERIC_FINGER UINT64_C(-2) // -2 = Generic finger
@@ -164,6 +167,7 @@ Total length: 32 bytes
 ```
 
 **Pressure Value Conversion:**
+
 ```rust
 // f32 (0.0-1.0) → u16 fixed-point
 let pressure_fp = (pressure.clamp(0.0, 1.0) * 65535.0) as u16;
@@ -171,7 +175,7 @@ let pressure_fp = (pressure.clamp(0.0, 1.0) * 65535.0) as u16;
 
 #### 2.3.4 Inject Scroll Event (TYPE_INJECT_SCROLL_EVENT)
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 3
@@ -187,6 +191,7 @@ Total length: 21 bytes
 ```
 
 **Scroll Value Handling:**
+
 ```rust
 // Accept range [-16, 16], normalize to [-1, 1], then convert to i16 fixed-point
 let hscroll_norm = (hscroll / 16.0).clamp(-1.0, 1.0);
@@ -197,7 +202,7 @@ let vscroll_fp = (vscroll_norm * 32767.0) as i16;
 
 #### 2.3.5 Back/Screen On (TYPE_BACK_OR_SCREEN_ON)
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 4
@@ -209,7 +214,8 @@ Total length: 2 bytes
 #### 2.3.6 Clipboard Operations
 
 **Get Clipboard (TYPE_GET_CLIPBOARD):**
-```
+
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 8
@@ -219,7 +225,8 @@ Total length: 2 bytes
 ```
 
 **Set Clipboard (TYPE_SET_CLIPBOARD):**
-```
+
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 9
@@ -234,7 +241,8 @@ Total length: 14 + N bytes (N ≤ 256KB-14)
 #### 2.3.7 UHID Device Operations
 
 **Create UHID Device (TYPE_UHID_CREATE):**
-```
+
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 12
@@ -283,7 +291,7 @@ public static final int TYPE_UHID_OUTPUT = 2;
 
 #### 3.3.1 Clipboard Content (TYPE_CLIPBOARD)
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 0
@@ -295,7 +303,7 @@ Total length: 5 + N bytes
 
 #### 3.3.2 Clipboard Acknowledgment (TYPE_ACK_CLIPBOARD)
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 1
@@ -306,7 +314,7 @@ Total length: 9 bytes
 
 #### 3.3.3 UHID Output (TYPE_UHID_OUTPUT)
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       1     u8      type              Message type = 2
@@ -376,7 +384,7 @@ impl DeviceMessage {
 
 ### 4.2 Video Packet Format
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       8     u64 BE  pts_and_flags     PTS and flags
@@ -388,7 +396,7 @@ Total length: 12 + N bytes
 
 ### 4.3 PTS and Flags Encoding
 
-```
+```text
 bits:
 [63]    CONFIG_FLAG  - 1=config packet (SPS/PPS/VPS), 0=media data
 [62]    KEY_FRAME    - 1=key frame (IDR), 0=P/B frame
@@ -396,6 +404,7 @@ bits:
 ```
 
 **Parsing Example:**
+
 ```rust
 let is_config = (pts_and_flags >> 63) & 1 == 1;
 let is_keyframe = (pts_and_flags >> 62) & 1 == 1;
@@ -407,7 +416,7 @@ let pts_us = pts_and_flags & pts_mask;
 
 Before video stream starts, 12-byte codec metadata is sent:
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       4     u32 BE  codec_id          Codec ID
@@ -418,6 +427,7 @@ Total length: 12 bytes
 ```
 
 **Common codec_id Values:**
+
 - `0x31637668` = "hvc1" (H.265)
 - `0x31626461` = "av01" (AV1)
 - `0x34363268` = "h264" (H.264, little-endian "264h")
@@ -435,7 +445,7 @@ Total length: 12 bytes
 
 ### 5.2 Audio Packet Format
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       8     u64 BE  pts_and_flags     PTS and flags
@@ -449,7 +459,7 @@ Total length: 12 + N bytes
 
 Before audio stream starts, 4-byte codec ID is sent:
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       4     u32 BE  codec_id          Codec ID
@@ -458,6 +468,7 @@ Total length: 4 bytes
 ```
 
 **Common codec_id Values:**
+
 - `0x6f707573` = "opus" (ASCII: 'o','p','u','s')
 - `0x61616320` = "aac " (ASCII: 'a','a','c',' ')
 - `0x666c6163` = "flac" (ASCII: 'f','l','a','c')
@@ -468,19 +479,19 @@ Total length: 4 bytes
 
 Android devices support multiple audio sources:
 
-| Source Type | Description | Android API |
-|-------------|-------------|-------------|
-| `output` | Device audio output (default) | `REMOTE_SUBMIX` |
-| `playback` | App audio playback | `PLAYBACK` |
-| `mic` | Microphone | `MIC` |
-| `mic-unprocessed` | Raw microphone | `UNPROCESSED` |
-| `mic-camcorder` | Camcorder recording microphone | `CAMCORDER` |
-| `mic-voice-recognition` | Voice recognition microphone | `VOICE_RECOGNITION` |
-| `mic-voice-communication` | Voice call microphone | `VOICE_COMMUNICATION` |
-| `voice-call` | Voice call | `VOICE_CALL` |
-| `voice-call-uplink` | Voice call uplink | `VOICE_UPLINK` |
-| `voice-call-downlink` | Voice call downlink | `VOICE_DOWNLINK` |
-| `voice-performance` | Live performance | `VOICE_PERFORMANCE` |
+| Source Type               | Description                    | Android API           |
+| ------------------------- | ------------------------------ | --------------------- |
+| `output`                  | Device audio output (default)  | `REMOTE_SUBMIX`       |
+| `playback`                | App audio playback             | `PLAYBACK`            |
+| `mic`                     | Microphone                     | `MIC`                 |
+| `mic-unprocessed`         | Raw microphone                 | `UNPROCESSED`         |
+| `mic-camcorder`           | Camcorder recording microphone | `CAMCORDER`           |
+| `mic-voice-recognition`   | Voice recognition microphone   | `VOICE_RECOGNITION`   |
+| `mic-voice-communication` | Voice call microphone          | `VOICE_COMMUNICATION` |
+| `voice-call`              | Voice call                     | `VOICE_CALL`          |
+| `voice-call-uplink`       | Voice call uplink              | `VOICE_UPLINK`        |
+| `voice-call-downlink`     | Voice call downlink            | `VOICE_DOWNLINK`      |
+| `voice-performance`       | Live performance               | `VOICE_PERFORMANCE`   |
 
 ### 5.5 Special Codec Handling
 
@@ -514,7 +525,7 @@ private static void fixOpusConfigPacket(ByteBuffer buffer) throws IOException {
 
 ### 6.1 Connection Establishment Flow
 
-```
+```text
 Client                          ADB Server                    Device
 ───────────────────────────────────────────────────────────────────────
 1. Bind local port
@@ -586,11 +597,13 @@ app_process / com.genymobile.scrcpy.Server 3.3.3 \
 ### 6.3 Socket Option Optimization
 
 **TCP_NODELAY (Low Latency):**
+
 ```rust
 stream.set_nodelay(true)?;  // Disable Nagle algorithm, reduce 5-10ms latency
 ```
 
 **Read Timeout (Disconnect Detection):**
+
 ```rust
 // Control channel: 2 seconds (fast detection)
 stream.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -629,7 +642,7 @@ public static DesktopConnection open(int scid, boolean tunnelForward, ...) throw
 
 After connection established, 64-byte device name is sent:
 
-```
+```text
 Offset  Size  Type    Field              Description
 ────────────────────────────────────────────
 0       64    u8[]    device_name       Device name (UTF-8, pad with \0)
@@ -638,6 +651,7 @@ Total length: 64 bytes
 ```
 
 **Example:**
+
 ```java
 byte[] buffer = new byte[DEVICE_NAME_FIELD_LENGTH];
 byte[] deviceNameBytes = deviceName.getBytes(StandardCharsets.UTF_8);
@@ -650,12 +664,14 @@ IO.writeFully(fd, buffer, 0, buffer.length);
 ### 7.2 Get Device Information
 
 **Android Version Detection** (for audio support):
+
 ```bash
 adb -s <serial> shell getprop ro.build.version.sdk
 # Returns: 30 (Android 11)
 ```
 
 **Device Name Acquisition:**
+
 ```bash
 adb -s <serial> shell getprop ro.product.model
 # Returns: "Pixel 7 Pro"
@@ -670,6 +686,7 @@ adb -s <serial> shell getprop ro.product.model
 **Current Implementation Status**: ✅ Good (85% compliant)
 
 **Compliance Summary:**
+
 - ✅ Control Message Protocol: 100% compliant
 - ✅ Video Stream Protocol: 100% compliant
 - ✅ Audio Stream Protocol: 90% compliant (missing codec special handling)
@@ -683,6 +700,7 @@ adb -s <serial> shell getprop ro.product.model
 **File**: `src/scrcpy/protocol/control.rs`
 
 **Compliant Items:**
+
 - ✅ All message types fully implemented (0-17)
 - ✅ Byte order correct (Big Endian)
 - ✅ Message size accurate
@@ -692,6 +710,7 @@ adb -s <serial> shell getprop ro.product.model
 - ✅ Unit test coverage comprehensive
 
 **Example Verification:**
+
 ```rust
 #[test]
 fn test_touch_down_serialization() {
@@ -706,16 +725,19 @@ fn test_touch_down_serialization() {
 ```
 
 **Missing Items:**
+
 - ❌ UHID related messages not implemented (types 12-14)
 - ❌ StartApp message not implemented (type 16)
 
-**Recommendation**: These features are not required for current project, but recommend adding placeholder implementations to maintain protocol integrity.
+**Recommendation**: These features are not required for current project, but recommend
+adding placeholder implementations to maintain protocol integrity.
 
 #### 8.2.2 Video Stream Protocol ✅
 
 **File**: `src/scrcpy/protocol/video.rs`
 
 **Compliant Items:**
+
 - ✅ 12-byte header format correct (pts_and_flags + packet_size)
 - ✅ Flags parsing correct (CONFIG_BIT, KEY_FRAME_BIT)
 - ✅ PTS extraction correct (62-bit mask)
@@ -723,6 +745,7 @@ fn test_touch_down_serialization() {
 - ✅ Unit tests comprehensive (config packets, key frames, P-frames, empty packets, large packets)
 
 **Example Verification:**
+
 ```rust
 #[test]
 fn test_pts_and_flags_masking() {
@@ -740,16 +763,19 @@ fn test_pts_and_flags_masking() {
 **File**: `src/scrcpy/protocol/audio.rs`
 
 **Compliant Items:**
+
 - ✅ 12-byte header format correct
 - ✅ PTS extraction correct (63-bit mask)
 - ✅ Byte order correct
 
 **Missing/Problem Items:**
+
 - ❌ **Codec special format not handled** (Opus/FLAC config packets)
 - ❌ **Hardcoded codec_id** (always 0x6f707573)
 - ⚠️ Missing codec metadata parsing
 
 **Comparison with Original:**
+
 ```java
 // Streamer.java: Opus config packet needs fix
 if (config) {
@@ -762,6 +788,7 @@ if (config) {
 ```
 
 **Impact Assessment:**
+
 - Audio stream still works, but may have compatibility issues on some devices
 - Opus header may not parse correctly
 
@@ -772,12 +799,14 @@ if (config) {
 **Status**: **Not implemented**
 
 **Problems:**
+
 - ❌ No device message deserialization at all
 - ❌ Cannot receive clipboard content
 - ❌ Cannot receive UHID output
 - ❌ Cannot receive clipboard ACK
 
 **Impact Assessment:**
+
 - Cannot use clipboard sync feature
 - Cannot use UHID input devices (game controllers, etc.)
 - Reduced feature parity with official scrcpy client
@@ -785,6 +814,7 @@ if (config) {
 **Recommendation Priority**: **High** (need to implement basic message parser)
 
 **Minimal Implementation:**
+
 ```rust
 #[derive(Debug, Clone)]
 pub enum DeviceMessage {
@@ -805,6 +835,7 @@ impl DeviceMessage {
 **File**: `src/scrcpy/connection.rs`
 
 **Compliant Items:**
+
 - ✅ ADB reverse correctly implemented
 - ✅ Port auto-allocation (27183-27199)
 - ✅ Three-way Socket handshake order correct
@@ -816,6 +847,7 @@ impl DeviceMessage {
 - ✅ Video codec metadata reading
 
 **Highlights:**
+
 ```rust
 // ✅ Smart audio disable
 if params.audio && android_version < 30 {
@@ -847,34 +879,34 @@ let timeout = match channel {
 
 #### 8.3.2 Feature Enhancements (P1)
 
-2. **Audio Codec Special Handling**
+1. **Audio Codec Special Handling**
    - Opus config packet fix
    - FLAC config packet fix
    - Dynamic codec detection
 
-3. **Complete Control Messages**
+2. **Complete Control Messages**
    - UHID device create/input/destroy
    - StartApp message
 
 #### 8.3.3 Optimizations (P2)
 
-4. **Performance Optimization**
+1. **Performance Optimization**
    - Batch control message sending (reduce system calls)
    - Video/audio buffer optimization
    - Explore zero-copy path
 
 ### 8.4 Compatibility Matrix
 
-| Feature | Original scrcpy | Current Implementation | Compatibility |
-|---------|-----------------|------------------------|---------------|
-| Touch Control | ✅ | ✅ | 100% |
-| Keyboard Input | ✅ | ✅ | 100% |
-| Scroll Events | ✅ | ✅ | 100% |
-| Video Stream | ✅ | ✅ | 100% |
-| Audio Stream | ✅ | ⚠️ | 90% |
-| Clipboard Sync | ✅ | ❌ | 0% |
-| UHID Input | ✅ | ❌ | 0% |
-| Multi-Device | ✅ | ✅ | 100% |
+| Feature        | Original scrcpy | Current Implementation | Compatibility |
+| -------------- | --------------- | ---------------------- | ------------- |
+| Touch Control  | ✅              | ✅                     | 100%          |
+| Keyboard Input | ✅              | ✅                     | 100%          |
+| Scroll Events  | ✅              | ✅                     | 100%          |
+| Video Stream   | ✅              | ✅                     | 100%          |
+| Audio Stream   | ✅              | ⚠️                     | 90%           |
+| Clipboard Sync | ✅              | ❌                     | 0%            |
+| UHID Input     | ✅              | ❌                     | 0%            |
+| Multi-Device   | ✅              | ✅                     | 100%          |
 
 ---
 
@@ -882,40 +914,44 @@ let timeout = match channel {
 
 ### 9.1 Client (PC)
 
-| Feature | Source File |
-|---------|-------------|
-| Control Message Serialization | `app/src/control_msg.c`, `app/src/control_msg.h` |
-| Device Message Deserialization | `app/src/device_msg.c`, `app/src/device_msg.h` |
-| Video Decoding | `app/src/decoder.c`, `app/src/demuxer.c` |
-| Audio Playback | `app/src/audio_player.c` |
-| Connection Management | `app/src/server.c`, `app/src/adb/adb_tunnel.c` |
+| Feature                        | Source File                                      |
+| ------------------------------ | ------------------------------------------------ |
+| Control Message Serialization  | `app/src/control_msg.c`, `app/src/control_msg.h` |
+| Device Message Deserialization | `app/src/device_msg.c`, `app/src/device_msg.h`   |
+| Video Decoding                 | `app/src/decoder.c`, `app/src/demuxer.c`         |
+| Audio Playback                 | `app/src/audio_player.c`                         |
+| Connection Management          | `app/src/server.c`, `app/src/adb/adb_tunnel.c`   |
 
 ### 9.2 Server (Android)
 
-| Feature | Source File |
-|---------|-------------|
+| Feature                 | Source File                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------ |
 | Control Message Parsing | `server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java` |
-| Device Message Sending | `server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java` |
-| Video Stream Packaging | `server/src/main/java/com/genymobile/scrcpy/device/Streamer.java` |
-| Audio Capture | `server/src/main/java/com/genymobile/scrcpy/audio/AudioCapture.java` |
-| Socket Connection | `server/src/main/java/com/genymobile/scrcpy/device/DesktopConnection.java` |
+| Device Message Sending  | `server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java`  |
+| Video Stream Packaging  | `server/src/main/java/com/genymobile/scrcpy/device/Streamer.java`              |
+| Audio Capture           | `server/src/main/java/com/genymobile/scrcpy/audio/AudioCapture.java`           |
+| Socket Connection       | `server/src/main/java/com/genymobile/scrcpy/device/DesktopConnection.java`     |
 
 ### 9.3 Current Implementation
 
-| Feature | Source File |
-|---------|-------------|
-| Control Messages | `src/scrcpy/protocol/control.rs` |
-| Video Protocol | `src/scrcpy/protocol/video.rs` |
-| Audio Protocol | `src/scrcpy/protocol/audio.rs` |
-| Connection Management | `src/scrcpy/connection.rs` |
+| Feature               | Source File                      |
+| --------------------- | -------------------------------- |
+| Control Messages      | `src/scrcpy/protocol/control.rs` |
+| Video Protocol        | `src/scrcpy/protocol/video.rs`   |
+| Audio Protocol        | `src/scrcpy/protocol/audio.rs`   |
+| Connection Management | `src/scrcpy/connection.rs`       |
 
 ---
 
 ## 10. Summary
 
-This analysis is based on complete source code of scrcpy version 3.3.3, with deep protocol parsing. **The current saide project protocol implementation quality is good**, core features (video, control) fully comply with original protocol. Main defects are **device message protocol not implemented** and **audio codec special handling missing**.
+This analysis is based on complete source code of scrcpy version 3.3.3, with deep protocol parsing.
+**The current saide project protocol implementation quality is good**, core features (video, control) fully
+comply with original protocol. Main defects are **device message protocol not implemented**
+and **audio codec special handling missing**.
 
-Recommendation to prioritize implementing device message deserialization for complete clipboard sync functionality. This will bring saide to 100% feature parity with official scrcpy client.
+Recommendation to prioritize implementing device message deserialization for complete clipboard sync functionality.
+This will bring saide to 100% feature parity with official scrcpy client.
 
 ---
 

@@ -2,7 +2,9 @@
 
 ## Project Overview
 
-SAide is a Rust-based Android device remote control application inspired by scrcpy. It provides high-performance video streaming, audio capture, and low-latency input control from Android devices to a desktop UI built with egui.
+SAide is a Rust-based Android device remote control application inspired by scrcpy. It provides
+high-performance video streaming, audio capture, and low-latency input control from Android devices
+to a desktop UI built with egui.
 
 ### Key Features
 
@@ -16,7 +18,7 @@ SAide is a Rust-based Android device remote control application inspired by scrc
 
 ## System Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                            SAide Application                              │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -96,7 +98,7 @@ SAide is a Rust-based Android device remote control application inspired by scrc
 
 ### Core Modules
 
-```
+```text
 src/
 ├── main.rs                 # Application entry point
 ├── lib.rs                 # Library root
@@ -161,12 +163,14 @@ src/
 The central component for video and audio rendering.
 
 **Responsibilities:**
+
 - Manage video/audio decode threads
 - Coordinate frame rendering with egui
 - Handle device rotation and resolution changes
 - Implement lock-free AV synchronization
 
 **Key Features:**
+
 - Hardware acceleration (VAAPI, NVDEC, Software)
 - NV12 and RGBA rendering pipelines
 - Dynamic resolution switching
@@ -179,11 +183,13 @@ The central component for video and audio rendering.
 Manages the three-way TCP connection to the Android device.
 
 **Connections:**
+
 1. **Video Stream**: H.264/H.265/AV1 encoded video
 2. **Audio Stream**: Opus/AAC/FLAC encoded audio (optional)
 3. **Control Channel**: Bidirectional control messages
 
 **Responsibilities:**
+
 - ADB reverse tunnel setup
 - Server process management
 - Socket lifecycle (connect, shutdown)
@@ -196,6 +202,7 @@ Manages the three-way TCP connection to the Android device.
 Type-safe control message sender via scrcpy control channel.
 
 **Supported Messages:**
+
 - Inject keycode (keyboard input)
 - Inject text (clipboard paste)
 - Inject touch event (mouse/touch)
@@ -209,11 +216,11 @@ Type-safe control message sender via scrcpy control channel.
 
 Three coordinate systems for input mapping:
 
-| System | Purpose | Transformations |
-|--------|---------|-----------------|
-| **MappingCoordSys** | User-defined key mappings | Percentage → Pixel based on device orientation |
-| **ScrcpyCoordSys** | Scrcpy protocol coordinates | Video resolution, capture orientation |
-| **VisualCoordSys** | UI display coordinates | Video rect, window size, visual rotation |
+| System              | Purpose                     | Transformations                                |
+| ------------------- | --------------------------- | ---------------------------------------------- |
+| **MappingCoordSys** | User-defined key mappings   | Percentage → Pixel based on device orientation |
+| **ScrcpyCoordSys**  | Scrcpy protocol coordinates | Video resolution, capture orientation          |
+| **VisualCoordSys**  | UI display coordinates      | Video rect, window size, visual rotation       |
 
 **Source**: `src/app/coords.rs`
 
@@ -222,10 +229,12 @@ Three coordinate systems for input mapping:
 Atomic snapshot architecture for audio/video synchronization.
 
 **Architecture:**
+
 - **Audio Thread**: Only writer (`&mut AVSync`) → updates PTS
 - **Video Thread**: Only reader (`Arc<AVSyncSnapshot>`) → reads PTS snapshot
 
 **Performance:**
+
 - Audio write: ~10ns (vs ~100ns with Mutex)
 - Video read: ~10ns (vs ~100ns + contention with Mutex)
 - Zero contention between threads
@@ -238,7 +247,7 @@ Atomic snapshot architecture for audio/video synchronization.
 
 ### Video Streaming Path
 
-```
+```text
 Android Device                    PC (SAide)
      │                                │
      │  H.264 NAL Units               │
@@ -269,7 +278,7 @@ Android Device                    PC (SAide)
 
 ### Input Control Path
 
-```
+```text
 User Input                    SAide                          Android
     │                           │                               │
     │ Mouse/Keyboard Event      │                               │
@@ -346,23 +355,23 @@ Keyboard mappings organized by device orientation:
 
 ### Core Dependencies
 
-| Dependency | Version | Purpose |
-|------------|---------|---------|
-| tokio | 1.x | Async runtime for network I/O |
-| egui | 0.x | UI framework |
-| capnp | 3.x | Message serialization |
-| ffmpeg-next | 5.x | Media decoding |
-| cpal | 0.15 | Audio playback |
-| rustyline | 10.x | CLI interface |
+| Dependency  | Version | Purpose                       |
+| ----------- | ------- | ----------------------------- |
+| tokio       | 1.x     | Async runtime for network I/O |
+| egui        | 0.x     | UI framework                  |
+| capnp       | 3.x     | Message serialization         |
+| ffmpeg-next | 5.x     | Media decoding                |
+| cpal        | 0.15    | Audio playback                |
+| rustyline   | 10.x    | CLI interface                 |
 
 ### Build Dependencies
 
-| Dependency | Purpose |
-|------------|---------|
-| cargo | Build system |
-| clang | C library binding |
-| pkg-config | Library detection |
-| FFmpeg development headers | Media codec support |
+| Dependency                      | Purpose                 |
+| ------------------------------- | ----------------------- |
+| cargo                           | Build system            |
+| clang                           | C library binding       |
+| pkg-config                      | Library detection       |
+| FFmpeg development headers      | Media codec support     |
 | VAAPI/NVDEC development headers | Hardware decode support |
 
 ---
@@ -371,7 +380,7 @@ Keyboard mappings organized by device orientation:
 
 ### Linux (Primary)
 
-- **Video**: VAAPI (Intel), NVDEC (NVIDIA), Software fallback
+- **Video**: VAAPI (Intel/AMD), NVDEC (NVIDIA), Software fallback
 - **Audio**: PulseAudio, ALSA via cpal
 - **Display**: X11 and Wayland support via winit
 - **ADB**: Standard Android SDK tools
@@ -396,22 +405,22 @@ Keyboard mappings organized by device orientation:
 
 ### Latency Breakdown
 
-| Component | Typical Latency | Optimization |
-|-----------|-----------------|--------------|
-| Android Encode | 15-35ms | Hardware encoder, Baseline profile |
-| Network (USB) | 1-3ms | TCP_NODELAY |
-| PC Decode | 5-15ms | Hardware decode (VAAPI/NVDEC) |
-| Render | 5-10ms | NV12 zero-copy |
-| **Total** | **30-60ms** | Near scrcpy performance |
+| Component      | Typical Latency | Optimization                       |
+| -------------- | --------------- | ---------------------------------- |
+| Android Encode | 15-35ms         | Hardware encoder, Baseline profile |
+| Network (USB)  | 1-3ms           | TCP_NODELAY                        |
+| PC Decode      | 5-15ms          | Hardware decode (VAAPI/NVDEC)      |
+| Render         | 5-10ms          | NV12 zero-copy                     |
+| **Total**      | **30-60ms**     | Near scrcpy performance            |
 
 ### Resource Usage
 
-| Resource | Typical Usage | Notes |
-|----------|---------------|-------|
-| CPU | 5-15% (hardware decode) | Higher with software decode |
-| GPU | 5-10% (VAAPI/NVDEC) | Video decode and rendering |
-| Memory | 50-100MB | Frame buffers, codec contexts |
-| Network | 2-10 Mbps | Depends on bit_rate setting |
+| Resource | Typical Usage           | Notes                         |
+| -------- | ----------------------- | ----------------------------- |
+| CPU      | 5-15% (hardware decode) | Higher with software decode   |
+| GPU      | 5-10% (VAAPI/NVDEC)     | Video decode and rendering    |
+| Memory   | 50-100MB                | Frame buffers, codec contexts |
+| Network  | 2-10 Mbps               | Depends on bit_rate setting   |
 
 ---
 
@@ -427,7 +436,7 @@ pub enum SaideError {
     IO(IOError),
     Audio(AudioError),
     Config(ConfigError),
-   Cancelled,      // User cancelled, no error logging
+    Cancelled,      // User cancelled, no error logging
     ConnectionLost, // Connection dropped, expected during shutdown
     Unknown,
 }
@@ -448,7 +457,7 @@ pub enum SaideError {
 
 ### Thread Layout
 
-```
+```text
 Main Thread (egui)
     │
     ├── Stream Worker Thread
@@ -496,6 +505,3 @@ cargo build --no-default-features --features software_decode
 ## Related Documentation
 
 - [Protocol Specification](SCRCPY_PROTOCOL.md) - Scrcpy protocol details
-- [Development Guide](DEVELOPMENT.md) - Setting up development environment
-- [Pitfalls & Lessons](pitfalls.md) - Known issues and solutions
-- [Task Tracker](TODO.md) - Project progress tracking
