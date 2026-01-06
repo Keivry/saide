@@ -18,46 +18,80 @@ const TOOLBAR_BTN_SPACING: f32 = 2.0;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarEvent {
     None,
+    ToggleKeyboardMapping,
     RotateVideo,
     ConfigureMappings,
     ToggleScreenPower,
 }
 
+enum ButtonType {
+    Normal,
+    Selectable(fn(&Toolbar) -> bool),
+}
+
 struct ToolbarButton {
+    btn_type: ButtonType,
     lable: &'static str,
     tooltip_key: &'static str,
     event: ToolbarEvent,
 }
 
 lazy_static! {
-    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 2] = [
+    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 4] = [
         ToolbarButton {
+            btn_type: ButtonType::Selectable(Toolbar::is_keyboard_mapping_enabled),
+            lable: "⌨",
+            tooltip_key: "toolbar-keyboard-mapping",
+            event: ToolbarEvent::ToggleKeyboardMapping,
+        },
+        ToolbarButton {
+            btn_type: ButtonType::Normal,
             lable: "⟳",
             tooltip_key: "toolbar-rotate",
             event: ToolbarEvent::RotateVideo,
         },
         ToolbarButton {
+            btn_type: ButtonType::Normal,
             lable: "⚙",
             tooltip_key: "toolbar-configure",
             event: ToolbarEvent::ConfigureMappings,
         },
+        ToolbarButton {
+            btn_type: ButtonType::Normal,
+            lable: "💤",
+            tooltip_key: "toolbar-screen-off",
+            event: ToolbarEvent::ToggleScreenPower,
+        },
     ];
 }
 
-pub struct Toolbar {}
+pub struct Toolbar {
+    keyboard_mapping_enabled: bool,
+}
 
 impl Default for Toolbar {
     fn default() -> Self { Self::new() }
 }
 
 impl Toolbar {
-    pub fn new() -> Self { Self {} }
+    pub fn new() -> Self {
+        Self {
+            keyboard_mapping_enabled: false,
+        }
+    }
 
     pub fn width() -> f32 { TOOLBAR_WIDTH }
 
+    fn is_keyboard_mapping_enabled(&self) -> bool { self.keyboard_mapping_enabled }
+
+    /// Set keyboard mapping enabled state
+    pub fn set_keyboard_mapping_enabled(&mut self, enabled: bool) {
+        self.keyboard_mapping_enabled = enabled;
+    }
+
     /// Draw the toolbar, return the event if any button is clicked
-    pub fn draw(&self, ui: &mut egui::Ui) -> ToolbarEvent {
-        let count = TOOLBAR_BUTTONS_BASE.len() + 1; // +1 for dynamic screen power button
+    pub fn draw(&mut self, ui: &mut egui::Ui) -> ToolbarEvent {
+        let count = TOOLBAR_BUTTONS_BASE.len();
         if count == 0 {
             return ToolbarEvent::None;
         }
@@ -76,32 +110,11 @@ impl Toolbar {
 
             ui.add_space(TOOLBAR_BTN_SPACING);
 
-            // Draw base buttons
+            // Draw buttons
             for btn in TOOLBAR_BUTTONS_BASE.iter() {
                 if self.draw_button(btn, ui) {
                     result = btn.event;
                 }
-            }
-
-            // Draw screen off button (wake up with physical power button)
-            let screen_off_tooltip = format!(
-                "{}\n{}",
-                t!("toolbar-screen-off"),
-                t!("toolbar-screen-off-hint")
-            );
-            if ui
-                .add_sized(
-                    TOOLBAR_BTN_SIZE,
-                    Button::new(
-                        RichText::new("💤")
-                            .color(TOOLBAR_FG_COLOR)
-                            .size(TOOLBAR_FONT_SIZE),
-                    ),
-                )
-                .on_hover_text(screen_off_tooltip)
-                .clicked()
-            {
-                result = ToolbarEvent::ToggleScreenPower;
             }
         });
 
@@ -110,15 +123,18 @@ impl Toolbar {
 
     /// Draw a single button, return true if clicked
     fn draw_button(&self, btn: &ToolbarButton, ui: &mut egui::Ui) -> bool {
-        ui.add_sized(
-            TOOLBAR_BTN_SIZE,
-            Button::new(
-                RichText::new(btn.lable)
-                    .color(TOOLBAR_FG_COLOR)
-                    .size(TOOLBAR_FONT_SIZE),
-            ),
-        )
-        .on_hover_text(t!(btn.tooltip_key))
-        .clicked()
+        let mut button = Button::new(
+            RichText::new(btn.lable)
+                .color(TOOLBAR_FG_COLOR)
+                .size(TOOLBAR_FONT_SIZE),
+        );
+
+        if let ButtonType::Selectable(is_selected) = btn.btn_type {
+            button = button.selected(is_selected(self));
+        }
+
+        ui.add_sized(TOOLBAR_BTN_SIZE, button)
+            .on_hover_text(t!(btn.tooltip_key))
+            .clicked()
     }
 }

@@ -156,11 +156,14 @@ impl SAideApp {
 
         let cancel_token = CancellationToken::new();
 
+        let mut toolbar = Toolbar::new();
+        toolbar.set_keyboard_mapping_enabled(keyboard_custom_mapping_enabled);
+
         Self {
             shutdown_rx,
             shutdown_requested: false,
 
-            toolbar: Toolbar::new(),
+            toolbar,
             indicator: Indicator::new(indicator_position, max_fps as f32),
             player: StreamPlayer::new(cc, cancel_token.clone()),
 
@@ -925,6 +928,15 @@ impl SAideApp {
                             info!("Screen OFF (press physical power button to wake up)");
                         }
                     }
+                }
+                ToolbarEvent::ToggleKeyboardMapping => {
+                    self.keyboard_custom_mapping_enabled = !self.keyboard_custom_mapping_enabled;
+                    self.toolbar
+                        .set_keyboard_mapping_enabled(self.keyboard_custom_mapping_enabled);
+                    info!(
+                        "Keyboard custom mapping toggled: {}",
+                        self.keyboard_custom_mapping_enabled
+                    );
                 }
                 ToolbarEvent::None => {}
             });
