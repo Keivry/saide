@@ -10,11 +10,10 @@ pub mod scrcpy;
 use {
     crate::{
         config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
-        constant::SCRCPY_SERVER_VERSION_STRING,
+        constant::{CONFIG_PATH, SCRCPY_SERVER_VERSION_STRING},
         error::Result,
     },
     directories::ProjectDirs,
-    lazy_static::lazy_static,
     serde::{Deserialize, Serialize},
     std::{
         fmt::{self, Display},
@@ -23,19 +22,6 @@ use {
         sync::Arc,
     },
 };
-
-lazy_static! {
-    /// Default configuration file path
-    /// If the standard config directory cannot be determined, falls back to "config.toml" in the current directory.
-    /// E.g., on Linux, this would typically be "~/.config/saide/config.toml"
-    /// on Windows, it would be "C:\Users\<User>\AppData\Roaming\saide\config.toml"
-    static ref DEFAULT_CONFIG_PATH: PathBuf = match ProjectDirs::from("io", "keivry", "saide") {
-        Some(proj_dirs) => proj_dirs
-            .config_dir()
-            .join("config.toml"),
-        None => PathBuf::from("config.toml"),
-    };
-}
 
 /// Position of the indicator on the screen
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -185,7 +171,7 @@ impl ConfigManager {
         // 1. Check if the default config path exists
         // 2. If not, check if "config.toml" exists in the current directory
         // 3. If neither exists, use default config values
-        let path = DEFAULT_CONFIG_PATH.clone();
+        let path = CONFIG_PATH.clone();
 
         let config = if path.is_file() {
             SAideConfig::load(&path)?

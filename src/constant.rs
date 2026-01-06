@@ -1,3 +1,28 @@
+//! Constants used throughout the application
+//!
+//! This module defines various constants used in the SAide application,
+//! including default paths, version strings, server configurations, and audio settings.
+
+use {directories::ProjectDirs, lazy_static::lazy_static, std::path::PathBuf};
+
+lazy_static! {
+    /// Project directories for SAide application
+    static ref PROJECT_DIR: ProjectDirs =
+        ProjectDirs::from("io", "keivry", "saide").expect("Failed to determine project directories");
+
+    /// Default configuration file path
+    /// E.g., on Linux, this would typically be "~/.config/saide/config.toml"
+    /// on Windows, it would be "C:\Users\<User>\AppData\Roaming\saide\config.toml"
+    /// on macOS, it would be "~/Library/Application Support/saide/config.toml"
+    pub static ref CONFIG_PATH: PathBuf = PROJECT_DIR.config_dir().join("config.toml");
+
+    /// Data directory path
+    /// E.g., on Linux, this would typically be "~/.local/share/saide/"
+    /// on Windows, it would be "C:\Users\<User>\AppData\Roaming\saide\Data"
+    /// on macOS, it would be "~/Library/Application Support/saide/"
+    pub static ref DATA_PATH: PathBuf = PROJECT_DIR.data_dir().to_owned();
+}
+
 /// Version of the scrcpy server
 pub const SCRCPY_SERVER_VERSION: &str = "3.3.3";
 

@@ -1,4 +1,4 @@
-use saide::{i18n::L10N, t, t_args};
+use saide::{i18n::L10N, t, tf};
 
 fn main() {
     println!("=== Testing i18n ===\n");
@@ -9,8 +9,8 @@ fn main() {
 
     // Test translation with arguments
     println!("\nWith arguments:");
-    println!("{}", t_args!("config-video-backend", "backend" => "Vulkan"));
-    println!("{}", t_args!("config-max-fps", "fps" => "60"));
+    println!("{}", tf!("config-video-backend", "backend" => "Vulkan"));
+    println!("{}", tf!("config-max-fps", "fps" => "60"));
 
     // Check current locale
     let locale = L10N.read().current_locale().to_string();
@@ -24,8 +24,8 @@ fn main() {
 
     println!("App title: {}", t!("app-title"));
     println!("App starting: {}", t!("app-starting"));
-    println!("{}", t_args!("config-video-backend", "backend" => "Vulkan"));
-    println!("{}", t_args!("config-max-fps", "fps" => "60"));
+    println!("{}", tf!("config-video-backend", "backend" => "Vulkan"));
+    println!("{}", tf!("config-max-fps", "fps" => "60"));
 
     // Switch back to English
     println!("\n=== Switching to English ===\n");
@@ -33,8 +33,8 @@ fn main() {
 
     println!("App title: {}", t!("app-title"));
     println!("App starting: {}", t!("app-starting"));
-    println!("{}", t_args!("config-video-backend", "backend" => "Vulkan"));
-    println!("{}", t_args!("config-max-fps", "fps" => "60"));
+    println!("{}", tf!("config-video-backend", "backend" => "Vulkan"));
+    println!("{}", tf!("config-max-fps", "fps" => "60"));
 
     println!("\n=== i18n test completed ===");
 }

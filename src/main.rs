@@ -7,7 +7,7 @@ use {
         error::{Result, SAideError},
         saide::ui::{SAideApp, Toolbar},
         t,
-        t_args,
+        tf,
     },
     tracing::info,
     tracing_subscriber::{EnvFilter, fmt, prelude::*},
@@ -50,19 +50,19 @@ fn main() -> Result<()> {
 
     info!(
         "{}",
-        t_args!("config-video-backend", "backend" => config.gpu.backend.to_string())
+        tf!("config-video-backend", "backend" => config.gpu.backend.to_string())
     );
     info!(
         "{}",
-        t_args!("config-max-video-size", "size" => config.scrcpy.video.max_size.to_string())
+        tf!("config-max-video-size", "size" => config.scrcpy.video.max_size.to_string())
     );
     info!(
         "{}",
-        t_args!("config-max-fps", "fps" => config.scrcpy.video.max_fps.to_string())
+        tf!("config-max-fps", "fps" => config.scrcpy.video.max_fps.to_string())
     );
     info!(
         "{}",
-        t_args!("config-logging-level", "level" => config.logging.level.as_str())
+        tf!("config-logging-level", "level" => config.logging.level.as_str())
     );
 
     let (tx, rx) = crossbeam_channel::bounded(1);
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
         info!("{}", t!("ctrlc-received"));
         let _ = tx_clone.send(());
     })
-    .map_err(|e| SAideError::Other(t_args!("ctrlc-handler-failed", "error" => e.to_string())))?;
+    .map_err(|e| SAideError::Other(tf!("ctrlc-handler-failed", "error" => e.to_string())))?;
 
     let serial = AdbShell::get_device_serial()?;
     start_ui(&serial, config_manager, rx)
