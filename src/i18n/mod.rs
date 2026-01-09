@@ -8,7 +8,9 @@
 //! - Hot reload: watch FTL files and auto-reload bundles (debug only)
 //!
 //! Useage:
-//! ```rust
+//! ```ignore
+//! use saide::{t, tf};
+//!
 //! // Get localized message by key
 //! let msg = t!("message-key");
 //!
@@ -80,9 +82,9 @@ mod tests {
         let mut manager = I18nManager::new();
         manager.set_locale("en-US");
         let mut args = FluentArgs::new();
-        args.set("backend", "Vulkan");
-        let msg = manager.get_with_fluent_args("config-video-backend", Some(&args));
-        assert!(msg.contains("Vulkan"));
+        args.set("fps", "60");
+        let msg = manager.get_with_fluent_args("indicator-fps", Some(&args));
+        assert!(msg.contains("60"));
     }
 
     #[test]
@@ -102,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_macro_tf_with_number() {
-        let msg = tf!("config-max-fps", "fps" => 60);
+        let msg = tf!("indicator-fps", "fps" => 60);
         assert!(msg.contains("60"));
     }
 

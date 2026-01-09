@@ -7,8 +7,6 @@ use {
         controller::AdbShell,
         error::{Result, SAideError},
         saide::ui::{SAideApp, Toolbar},
-        t,
-        tf,
     },
     tracing::info,
     tracing_subscriber::{EnvFilter, fmt, prelude::*},
@@ -47,32 +45,23 @@ fn main() -> Result<()> {
         .with(fmt::layer())
         .init();
 
-    info!("{}", t!("app-starting"));
+    info!("SAide starting...");
 
+    info!("Video backend: {}", config.gpu.backend.to_string());
     info!(
-        "{}",
-        tf!("config-video-backend", "backend" => config.gpu.backend.to_string())
+        "Max video size: {}",
+        config.scrcpy.video.max_size.to_string()
     );
-    info!(
-        "{}",
-        tf!("config-max-video-size", "size" => config.scrcpy.video.max_size.to_string())
-    );
-    info!(
-        "{}",
-        tf!("config-max-fps", "fps" => config.scrcpy.video.max_fps.to_string())
-    );
-    info!(
-        "{}",
-        tf!("config-logging-level", "level" => config.logging.level.as_str())
-    );
+    info!("Max FPS: {}", config.scrcpy.video.max_fps.to_string());
+    info!("Logging level: {}", config.logging.level.as_str());
 
     let (tx, rx) = crossbeam_channel::bounded(1);
     let tx_clone = tx.clone();
     ctrlc::set_handler(move || {
-        info!("{}", t!("ctrlc-received"));
+        info!("Received Ctrl-C, shutting down...");
         let _ = tx_clone.send(());
     })
-    .map_err(|e| SAideError::Other(tf!("ctrlc-handler-failed", "error" => e.to_string())))?;
+    .map_err(|e| SAideError::Other(format!("Failed to set Ctrl-C handler: {}", e)))?;
 
     let serial = AdbShell::get_device_serial()?;
     start_ui(&serial, config_manager, rx)
