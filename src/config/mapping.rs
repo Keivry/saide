@@ -297,7 +297,7 @@ impl Profile {
 pub struct Mappings {
     /// Key to toggle mappings on/off
     #[serde(default = "default_toggle_key")]
-    pub toggle: String,
+    pub toggle: Key,
 
     /// Initial state of mappings (enabled/disabled)
     #[serde(default)]
@@ -348,7 +348,7 @@ impl Default for Mappings {
     }
 }
 
-fn default_toggle_key() -> String { "F10".to_string() }
+fn default_toggle_key() -> Key { Key::F10 }
 fn default_false() -> bool { false }
 fn default_true() -> bool { true }
 

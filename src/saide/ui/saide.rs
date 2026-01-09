@@ -380,6 +380,20 @@ impl SAideApp {
         self.mapping_config_window.toggle();
     }
 
+    /// Toggle keyboard custom mapping
+    fn toggle_keyboard_mapping(&mut self) {
+        self.keyboard_custom_mapping_enabled = !self.keyboard_custom_mapping_enabled;
+
+        // Update toolbar button state
+        self.toolbar
+            .set_keyboard_mapping_enabled(self.keyboard_custom_mapping_enabled);
+
+        info!(
+            "Keyboard custom mapping toggled: {}",
+            self.keyboard_custom_mapping_enabled
+        );
+    }
+
     // Check if position is within video rectangle
     fn is_in_video_rect(&self, pos: &VisualPos) -> bool {
         let video_rect = self.player.video_rect();
@@ -591,8 +605,7 @@ impl SAideApp {
 
     /// Process keyboard event
     fn process_keyboard_event(
-        &self,
-        keyboard_mapper: &KeyboardMapper,
+        &mut self,
         key: &egui::Key,
         pressed: bool,
         modifiers: egui::Modifiers,
@@ -605,6 +618,14 @@ impl SAideApp {
             "Processing keyboard event: key={:?}, modifiers={:?}",
             key, modifiers
         );
+
+        if key == &self.config().mappings.toggle {
+            self.toggle_keyboard_mapping();
+            return Ok(true);
+        }
+
+        // Unwrap is safe here, keyboard_mapper existence is checked before processing events
+        let keyboard_mapper = self.keyboard_mapper.as_ref().unwrap();
 
         // Handle custom keymapping first, if enabled and IME is off
         if self.keyboard_custom_mapping_enabled
@@ -631,7 +652,6 @@ impl SAideApp {
     /// Process mouse button event
     fn process_mouse_button_event(
         &self,
-        mouse_mapper: &MouseMapper,
         button: egui::PointerButton,
         pressed: bool,
         pos: &VisualPos,
@@ -666,9 +686,14 @@ impl SAideApp {
         }
 
         let button = MouseButton::from(button);
-        if let Err(e) =
-            mouse_mapper.handle_button_event(button, pressed, scrcpy_pos.x, scrcpy_pos.y)
-        {
+
+        // Unwrap is safe here, mouse_mapper existence is checked before processing events
+        if let Err(e) = self.mouse_mapper.as_ref().unwrap().handle_button_event(
+            button,
+            pressed,
+            scrcpy_pos.x,
+            scrcpy_pos.y,
+        ) {
             error!("Failed to handle mouse button event: {}", e);
         }
     }
@@ -676,10 +701,12 @@ impl SAideApp {
     /// Process mouse move event
     fn process_mouse_move_event(
         &self,
-        mouse_mapper: &MouseMapper,
         pos: &VisualPos,
         last_pointer_pos: &VisualPos,
     ) -> Option<VisualPos> {
+        // Unwrap is safe here, mouse_mapper existence is checked before processing events
+        let mouse_mapper = self.mouse_mapper.as_ref().unwrap();
+
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
@@ -740,12 +767,7 @@ impl SAideApp {
     }
 
     /// Process mouse wheel event
-    fn process_mouse_wheel_event(
-        &self,
-        mouse_mapper: &MouseMapper,
-        delta: &egui::Vec2,
-        pointer_pos: &VisualPos,
-    ) {
+    fn process_mouse_wheel_event(&self, delta: &egui::Vec2, pointer_pos: &VisualPos) {
         if !self.is_in_video_rect(pointer_pos) {
             return;
         }
@@ -777,7 +799,12 @@ impl SAideApp {
             WheelDirection::Down
         };
 
-        if let Err(e) = mouse_mapper.handle_wheel_event(scrcpy_pos.x, scrcpy_pos.y, &dir) {
+        if let Err(e) = self
+            .mouse_mapper
+            .as_ref()
+            .unwrap() // Safe unwrap, mouse_mapper existence is checked before processing events
+            .handle_wheel_event(scrcpy_pos.x, scrcpy_pos.y, &dir)
+        {
             error!("Failed to handle wheel event: {}", e);
         } else {
             debug!(
@@ -804,8 +831,11 @@ impl SAideApp {
 
         // Update mouse state (check for long press and send drag updates)
         if self.mouse_enabled
-            && let Some(mouse_mapper) = self.mouse_mapper.as_ref()
-            && let Err(e) = mouse_mapper.update()
+            && let Err(e) = self
+                .mouse_mapper
+                .as_ref()
+                .unwrap() // Safe unwrap
+                .update()
         {
             error!("Failed to update mouse mapper: {}", e);
         }
@@ -816,9 +846,7 @@ impl SAideApp {
 
             for event in &input.events {
                 // Process keyboard events
-                if self.keyboard_enabled
-                    && let Some(ref keyboard_mapper) = self.keyboard_mapper
-                {
+                if self.keyboard_enabled {
                     if let egui::Event::Key {
                         key,
                         pressed,
@@ -826,13 +854,9 @@ impl SAideApp {
                         ..
                     } = event
                     {
-                        match self.process_keyboard_event(
-                            keyboard_mapper,
-                            key,
-                            *pressed,
-                            *modifiers,
-                        ) {
+                        match self.process_keyboard_event(key, *pressed, *modifiers) {
                             Ok(handled) => {
+                                // If key event was handled, ignore subsequent text events
                                 if handled {
                                     ignore_text_events = true;
                                 }
@@ -844,7 +868,11 @@ impl SAideApp {
                     } else if !ignore_text_events
                         && let egui::Event::Text(text) = event
                         && !text.is_empty()
-                        && let Err(e) = keyboard_mapper.handle_text_input_event(text)
+                        && let Err(e) = self
+                            .keyboard_mapper
+                            .as_ref()
+                            .unwrap() // Safe unwrap
+                            .handle_text_input_event(text)
                     {
                         info!("Failed to handle text input event: {}", e);
                     };
@@ -854,10 +882,6 @@ impl SAideApp {
                 if !self.mouse_enabled {
                     continue;
                 }
-                let mouse_mapper = match &self.mouse_mapper {
-                    Some(m) => m,
-                    None => continue,
-                };
 
                 match event {
                     egui::Event::PointerButton {
@@ -866,18 +890,18 @@ impl SAideApp {
                         pos,
                         ..
                     } => {
-                        self.process_mouse_button_event(mouse_mapper, *button, *pressed, pos);
+                        self.process_mouse_button_event(*button, *pressed, pos);
                     }
                     egui::Event::PointerMoved(pos) => {
                         if let Some(new_pos) =
-                            self.process_mouse_move_event(mouse_mapper, pos, &self.last_pointer_pos)
+                            self.process_mouse_move_event(pos, &self.last_pointer_pos)
                         {
                             self.last_pointer_pos = new_pos;
                         }
                     }
                     egui::Event::MouseWheel { delta, .. } => {
                         let pointer_pos = input.pointer.hover_pos().unwrap_or_default();
-                        self.process_mouse_wheel_event(mouse_mapper, delta, &pointer_pos);
+                        self.process_mouse_wheel_event(delta, &pointer_pos);
                     }
                     _ => {}
                 }
@@ -930,13 +954,7 @@ impl SAideApp {
                     }
                 }
                 ToolbarEvent::ToggleKeyboardMapping => {
-                    self.keyboard_custom_mapping_enabled = !self.keyboard_custom_mapping_enabled;
-                    self.toolbar
-                        .set_keyboard_mapping_enabled(self.keyboard_custom_mapping_enabled);
-                    info!(
-                        "Keyboard custom mapping toggled: {}",
-                        self.keyboard_custom_mapping_enabled
-                    );
+                    self.toggle_keyboard_mapping();
                 }
                 ToolbarEvent::None => {}
             });

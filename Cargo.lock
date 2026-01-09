@@ -1170,7 +1170,7 @@ dependencies = [
 name = "egui_cjk_font"
 version = "0.1.0"
 dependencies = [
- "eframe",
+ "egui",
  "font-kit",
  "sys-locale",
 ]
