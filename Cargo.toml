@@ -105,6 +105,8 @@ intl-memoizer = "0.5"
 unic-langid = "0.9"
 sys-locale = "0.3"
 
+egui_cjk_font = { path = "crates/egui-cjk-font" }
+
 notify = "8"
 
 [profile.dev]

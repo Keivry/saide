@@ -1,6 +1,7 @@
 use {
     crossbeam_channel::Receiver,
     eframe::{egui, egui_wgpu},
+    egui_cjk_font::load_cjk_font,
     saide::{
         config::ConfigManager,
         controller::AdbShell,
@@ -114,6 +115,7 @@ fn start_ui(serial: &str, config_manager: ConfigManager, shutdown_rx: Receiver<(
         "SAide",
         options,
         Box::new(move |cc| {
+            load_cjk_font(&cc.egui_ctx);
             Ok(Box::new(SAideApp::new(
                 cc,
                 serial,
