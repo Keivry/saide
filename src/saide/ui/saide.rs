@@ -240,8 +240,6 @@ impl SAideApp {
 
     /// Check initialization progress and update state
     fn check_init_stage(&mut self, _ctx: &egui::Context) {
-        let mut capture_orientation = None;
-
         if let Some(rx) = &self.init_rx {
             while let Ok(result) = rx.try_recv() {
                 match result {
@@ -281,8 +279,8 @@ impl SAideApp {
                             &self.device_serial,
                         );
 
-                        // Save capture_orientation for later use (after borrow ends)
-                        capture_orientation = corientation;
+                        // Initialize capture orientation for ScrcpyCoordSys
+                        self.scrcpy_coords.update_capture_orientation(corientation);
                     }
                     InitEvent::KeyboardMapper(keyboard_mapper) => {
                         self.keyboard_mapper = Some(keyboard_mapper);
@@ -301,10 +299,6 @@ impl SAideApp {
                 }
             }
         }
-
-        // Update ScrcpyCoordSys if capture orientation lock changed
-        self.scrcpy_coords
-            .update_capture_orientation(capture_orientation);
 
         if let Some(_rx) = &self.init_rx {
             // Check if all components are initialized AND video stream is ready with valid
