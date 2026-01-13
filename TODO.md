@@ -1,104 +1,160 @@
-# SAide 项目任务清单
+# SAide 任务清单
 
-> **最后更新**: 2026-01-12  
-> **当前状态**: 核心功能已实现，需系统性提高健壮性与可维护性
+> **最后更新**: 2026-01-13  
+> **当前状态**: 核心功能完成，需系统性提升架构质量与健壮性
 
 ---
 
 ## 进行中
 
-_无进行中任务，待审核确认后开始_
+_无进行中任务_
 
 ---
 
-## P0 - 关键问题（可能导致崩溃或核心功能失效）
+## P0 - 崩溃风险（必须立即修复）
 
-### 错误处理 & 边界条件
+### 错误处理 & Panic 风险
 
-- [ ] **[panic-risk]** `src/constant.rs:11`: `ProjectDirs::from(..).expect(..)` 在非标准环境（容器/沙盒）下直接 panic  
-  **解法**: 改为返回 `Result`，在 `main` 中提供降级路径（如临时目录）
-- [ ] **[panic-risk]** `src/config/mod.rs:121`: `path.to_str().unwrap()` 在非 UTF-8 路径下 panic  
+- [ ] **[panic]** `src/constant.rs:11`: `ProjectDirs::from(..).expect(..)` 在非标准环境（Docker/沙盒）会直接 panic  
+  **解法**: 改为返回 `Result<PathBuf>`，在 `main.rs` 提供降级策略（临时目录 `/tmp/saide`）
+  
+- [ ] **[panic]** `src/config/mod.rs:121`: `path.to_str().unwrap()` 在非 UTF-8 路径（Windows 特殊字符）会 panic  
   **解法**: 使用 `to_string_lossy()` 或返回 `ConfigError::InvalidPath`
-- [ ] **[panic-risk]** `src/scrcpy/connection.rs:190-192`: `try_into().unwrap()` 无上下文信息  
-  **解法**: 改用 `expect("Failed to parse codec metadata")`
-- [ ] **[error-loss]** `src/error.rs`: `IoError` 未实现 `std::error::Error::source()`，丢失错误链  
-  **解法**: 添加 `source()` 方法返回原始 `io::Error`（需修改为 `Box<io::Error>`）
+
+- [ ] **[panic]** `src/scrcpy/connection.rs:190-192`: `try_into().unwrap()` 无错误上下文  
+  **解法**: 改用 `expect("Failed to parse video codec metadata: width/height")`
+
+- [ ] **[panic]** `src/saide/ui/saide.rs:454,622,685,702,799,831,868`: 多处 `keyboard_mapper.unwrap()` 和 `mouse_mapper.unwrap()`  
+  **解法**: 使用 `if let Some(mapper) = self.keyboard_mapper.as_mut()` 模式避免 panic
+
+- [ ] **[panic]** `src/saide/coords.rs:152,194,275,326`: `unreachable!()` 在取模运算后（理论上可达，因为整数溢出）  
+  **解法**: 改用 `debug_assert!` + 返回 `Result<MappingPos, CoordError>`
+
+- [ ] **[panic]** `src/decoder/audio/player.rs:95`: cpal 音频回调中包含潜在 panic 点  
+  **解法**: 回调函数中使用 `if let Ok(...) = ...` 模式，记录错误计数而非 panic
+
+### 错误链丢失
+
+- [ ] **[error-source]** `src/error.rs:18-46`: `IoError` 未实现 `std::error::Error::source()`，丢失错误链  
+  **解法**: 将 `source_kind: io::ErrorKind` 改为存储 `source: Box<io::Error>`，实现 `source()` 方法
 
 ### 资源管理
 
-- [ ] **[connection]** `src/scrcpy/connection.rs`: `connect` 签名为 `async` 但内部使用阻塞 I/O（`TcpListener::accept`）  
+- [ ] **[blocking-io]** `src/scrcpy/connection.rs:86`: `connect` 签名为 `async` 但内部使用阻塞 I/O（`TcpListener::accept`）  
   **解法**: 统一为同步 API（移除 `async`）或完全改用 `tokio::net::TcpListener`
-- [ ] **[adb-path]** ADB 命令路径未验证：多处 `Command::new("adb")` 假设 ADB 在 PATH 中  
-  **解法**: 在 `AdbShell::new()` 验证 `adb` 可执行性，缓存路径或提供配置覆盖
+
+- [ ] **[validation]** ADB 命令路径未验证：多处 `Command::new("adb")` 假设 ADB 在 PATH 中  
+  **解法**: 在 `AdbShell::new()` 验证 `adb` 可执行性，缓存路径或提供 `config.adb_path` 覆盖
 
 ---
 
-## P1 - 重要问题（影响稳定性或用户体验）
+## P1 - 严重问题（影响稳定性或用户体验）
+
+### 架构设计
+
+- [ ] **[god-object]** `src/saide/ui/saide.rs:58-138`: `SAideApp` 包含 40+ 字段，违反单一职责原则  
+  **解法**: 拆分为 `AppState`（连接/映射器）、`UIState`（工具栏/指示器/播放器）、`ConfigState`
+
+- [ ] **[coupling]** `src/saide/init.rs`: 混合连接建立、设备监控、输入映射初始化三种职责  
+  **解法**: 分离为 `ConnectionService::new()`, `DeviceMonitor::new()`, `InputManager::new()`
+
+- [ ] **[coupling]** `src/saide/ui/player.rs:453-728`: `stream_worker` 275 行单体函数，混合解码器初始化、音频线程、视频循环  
+  **解法**: 拆分为 `DecoderManager::init()`, `AudioThread::spawn()`, `VideoLoop::run()`
+
+- [ ] **[abstraction]** `src/scrcpy/connection.rs:46-76`: `ScrcpyConnection` 公开原始 `TcpStream`  
+  **解法**: 字段改为私有，仅暴露 `read_video_packet()`, `send_control()` 等方法
+
+- [ ] **[dependency]** `src/error.rs:11-15`: 错误模块依赖 `decoder` 模块（应反向依赖）  
+  **解法**: 将 `VideoError`, `AudioError` 移到独立 `decoder/error.rs`，错误模块仅定义 `SAideError`
 
 ### 配置与状态管理
 
-- [ ] **[config]** `ConfigManager::save()` 缺少原子写机制（当前直接覆盖文件）  
-  **解法**: 写到临时文件再 `rename()`（符合 POSIX 原子性）
-- [ ] **[ux]** `src/main.rs:18-19`: 窗口默认尺寸硬编码 1280×720，忽略 DPI 和屏幕尺寸  
-  **解法**: 从配置读取或基于主屏幕尺寸动态计算（如 80% 高度）
-- [ ] **[ux]** `src/saide/init.rs:122`: `capture_orientation` 硬编码为 `Some(0)`  
-  **解法**: 在 `SAideConfig` 新增 `capture_orientation: Option<u32>`，默认 `None`（自动检测）
+- [ ] **[atomic-write]** `ConfigManager::save()` 缺少原子写机制（当前直接覆盖文件）  
+  **解法**: 写到临时文件 `.config.toml.tmp` 再 `fs::rename()`（符合 POSIX 原子性）
+
+- [ ] **[hardcoded]** `src/main.rs:18-19`: 窗口默认尺寸硬编码 `1280×720`，忽略 DPI 和屏幕尺寸  
+  **解法**: 从配置读取或基于主屏幕尺寸动态计算（如 `80%` 高度）
+
+- [ ] **[hardcoded]** `src/saide/init.rs:122`: `capture_orientation` 硬编码为 `Some(0)`  
+  **解法**: 在 `SAideConfig` 新增 `video.capture_orientation: Option<u32>`，默认 `None`（自动检测）
+
+- [ ] **[hardcoded]** `src/scrcpy/server.rs:103-104`: `max_size: 1600`, `max_fps: 60` 硬编码  
+  **解法**: 使用 `config.video.max_size` 和 `config.video.max_fps`
 
 ### 协议与兼容性
 
 - [ ] **[compat]** `src/controller/adb.rs:89-95`: `get_screen_orientation` 仅识别 `ROTATION_*` 字符串  
-  **解法**: 添加正则解析数字形式（如 `mCurrentRotation=1`）兼容旧 Android 版本
+  **解法**: 添加正则解析数字形式（如 `mCurrentRotation=1`）兼容 Android 6-8
+
 - [ ] **[error-handling]** `src/controller/adb.rs:301`: `remove_reverse_tunnel` 不区分"隧道不存在"和真实错误  
-  **解法**: 检查 stderr 包含 `"not found"` 时返回 `Ok(())`
+  **解法**: 检查 stderr 包含 `"not found"` 或 `"No such reverse"` 时返回 `Ok(())`
+
 - [ ] **[ipv6]** `src/scrcpy/connection.rs:125`: 硬编码 `127.0.0.1`，无 IPv6 支持  
-  **解法**: 改为 `[::1]` 或配置项选择 IPv4/IPv6
+  **解法**: 改为 `[::1]` 或添加配置 `network.bind_address`
 
-### 错误处理
+### 文档缺失
 
-- [ ] **[panic-risk]** `src/saide/coords.rs:152,194,275,326`: `unreachable!()` 在取模运算后（理论上可达）  
-  **解法**: 改用 `debug_assert!` + `saturating_sub` 或返回 `Result`
-- [ ] **[panic-risk]** `src/decoder/audio/player.rs`: cpal 回调中 `unwrap` 可能导致音频线程 panic  
-  **解法**: 使用 `if let Ok(...) = ...` 并记录错误计数
-- [ ] **[validation]** `src/saide/init.rs:83-90`: ADB 启动仅检查 `is_ok()`，忽略退出码和 stderr  
-  **解法**: 检查 `status.code() == Some(0)` 并解析 stderr（如"daemon not running"）
+- [ ] **[api-docs]** 公开 API 缺少文档：`ScrcpyConnection`, `StreamPlayer`, `VideoDecoder` trait  
+  **解法**: 为所有 `pub struct/trait/enum` 添加文档注释（行为、错误条件、线程安全性）
 
 ---
 
-## P2 - 改进项（代码质量与长期可维护性）
+## P2 - 重要改进（代码质量与可维护性）
 
 ### 代码结构
 
 - [ ] **[refactor]** `src/saide/ui/saide.rs`: 1146 行超大文件  
-  **解法**: 拆分为 `state.rs`、`events.rs`、`render.rs`、`lifecycle.rs`
-- [ ] **[dup]** `src/decoder/{h264,nvdec,vaapi}.rs`: FFmpeg 初始化代码重复  
-  **解法**: 抽取 `ffmpeg_utils::init_decoder(codec_id, width, height)` 公共函数
+  **解法**: 拆分为 `state.rs`（状态定义）、`events.rs`（事件处理）、`render.rs`（UI 渲染）、`lifecycle.rs`（初始化/关闭）
+
+- [ ] **[dup]** `src/decoder/{h264,nvdec,vaapi}.rs`: FFmpeg 初始化代码重复（`packet.data_mut().unwrap().copy_from_slice`）  
+  **解法**: 抽取 `ffmpeg_utils::send_packet(decoder, data)` 公共函数
+
+- [ ] **[dup]** `src/scrcpy/protocol/control.rs:343,374,406,412,429`: 多处 `.serialize(&mut buf).unwrap()`  
+  **解法**: 创建宏 `serialize_msg!(msg) -> Result<Vec<u8>>` 统一错误处理
 
 ### 配置化
 
-- [ ] **[config]** `src/controller/mouse.rs:19-25`: 拖拽阈值/长按时间硬编码  
-  **解法**: 在 `SAideConfig` 新增 `input.drag_threshold`、`input.long_press_ms`
+- [ ] **[config]** `src/controller/mouse.rs:22`: 长按时间硬编码 `LONG_PRESS_DURATION_MS = 300`  
+  **解法**: 在 `SAideConfig` 新增 `input.long_press_ms: u64`
+
 - [ ] **[config]** `src/decoder/audio/opus.rs:21`: `SCRCPY_FRAME_SAMPLES = 960` 硬编码  
   **解法**: 根据采样率动态计算 `sample_rate * 0.020`（20ms 帧）
+
 - [ ] **[config]** `src/gpu/mod.rs:41-50`: `nvidia-smi` 失败静默忽略  
-  **解法**: 使用 `debug!("nvidia-smi not found: {e}")` 记录
+  **解法**: 使用 `debug!("nvidia-smi not found: {e}")` 记录日志
+
+- [ ] **[config]** `src/constant.rs:46-51`: 音频缓冲设置硬编码（128 帧，5760 容量）  
+  **解法**: 添加专家配置 `audio.buffer_frames` 和 `audio.ring_capacity`（默认值保持不变）
 
 ### 协议健壮性
 
-- [ ] **[validation]** `src/scrcpy/protocol/control.rs`: 多处 `msg.serialize(&mut buf).unwrap()`  
-  **解法**: 抽取 `serialize_with_size(msg) -> Result<Vec<u8>>` 辅助函数
-- [ ] **[validation]** `src/scrcpy/protocol/control.rs:350-366...`: 反序列化未验证缓冲区长度  
-  **解法**: 在读取前检查 `buf.len() >= expected_size`
+- [ ] **[validation]** `src/scrcpy/protocol/control.rs`: 序列化未检查缓冲区溢出  
+  **解法**: 添加 `fn serialize_with_size_check(msg, buf) -> Result<usize>` 辅助函数
+
+- [ ] **[validation]** `src/scrcpy/protocol/video.rs`, `audio.rs`: 反序列化未验证缓冲区长度  
+  **解法**: 在读取前检查 `buf.len() >= MIN_PACKET_SIZE`
+
 - [ ] **[unsafe]** `src/decoder/nvdec.rs:72`: `get_cuda_format` 回调裸指针循环无边界检查  
-  **解法**: 添加 `assert!(n < MAX_PIXEL_FORMATS)` 或使用 `slice::from_raw_parts`
+  **解法**: 添加 `assert!(n < 8)` 或使用 `slice::from_raw_parts(fmts, n as usize)`
 
 ### 日志与诊断
 
 - [ ] **[i18n]** `src/i18n/fs_source.rs:39-40`: 找不到 i18n 目录时静默降级  
-  **解法**: 返回 `Err(I18nError::BundleNotFound)` 让调用方决定降级策略
+  **解法**: 返回 `Err(I18nError::BundleNotFound { path })` 让调用方决定策略
+
 - [ ] **[i18n]** `src/i18n/fs_source.rs:127-128`: `RecommendedWatcher::new(..).expect(..)`  
-  **解法**: 改为 `warn!("Hot reload disabled: {e}")` 并继续（release 无需 watch）
-- [ ] **[i18n]** `src/i18n/manager.rs:50,156`: 双重 `unwrap_or_else` 嵌套  
-  **解法**: 使用 `?` 操作符简化
+  **解法**: 改为 `warn!("i18n hot reload disabled: {e}")` 并继续（release 无需 watch）
+
+- [ ] **[i18n]** `src/i18n/manager.rs:50,156`: 双重 `unwrap_or_else` 嵌套可读性差  
+  **解法**: 使用 `?` 操作符或提前返回模式简化
+
+### 资源管理
+
+- [ ] **[cleanup]** `src/scrcpy/connection.rs:317-374`: 同时存在 `shutdown()` 和 `Drop` 实现  
+  **解法**: 明确文档说明调用约定：优先显式 `shutdown()`，`Drop` 仅作兜底
+
+- [ ] **[sync]** 混用 `parking_lot::Mutex`, `std::sync`, `RefCell` 无统一策略  
+  **解法**: 制定同步原语使用规范（单线程用 `RefCell`，多线程用 `parking_lot::Mutex`）
 
 ---
 
@@ -107,57 +163,111 @@ _无进行中任务，待审核确认后开始_
 ### UI 完善
 
 - [ ] **[ui]** `src/saide/ui/log.rs`: 实现日志查看器（当前占位）  
-  **需求**: 集成 `tracing-appender`，显示最近 1000 行日志，支持过滤
+  **需求**: 集成 `tracing-appender`，显示最近 1000 行日志，支持级别过滤（ERROR/WARN/INFO/DEBUG）
+
 - [ ] **[ui]** `src/saide/ui/settings.rs`: 实现设置面板（当前占位）  
-  **需求**: 可视化配置 GPU、音视频、映射等（同步到 `config.toml`）
+  **需求**: 可视化配置 GPU 后端、视频编码器、音频、按键映射等（同步到 `config.toml`）
+
 - [ ] **[ui]** `src/saide/ui/overlay.rs`: 实现按键映射叠加层（当前占位）  
-  **需求**: 半透明显示当前激活的按键映射位置
+  **需求**: 半透明显示当前激活的按键映射位置（类似游戏辅助）
+
 - [ ] **[ux]** `src/saide/ui/mapping.rs`: 缺少保存/加载/导出映射配置  
-  **需求**: 支持导入/导出 JSON 格式映射文件
+  **需求**: 支持导入/导出 JSON 格式映射文件，预设常见游戏模板
+
 - [ ] **[ux]** `src/saide/ui/indicator.rs`: 仅显示 FPS  
-  **需求**: 增加分辨率、音频状态（采样率/延迟）、连接状态
+  **需求**: 增加分辨率、音频状态（采样率/延迟）、连接状态（USB/WiFi）、丢帧计数
 
 ### 解码器
 
 - [ ] **[decoder]** `src/decoder/auto.rs`: 解码器选择策略硬编码  
-  **需求**: 配置 `gpu.decoder_priority = ["vaapi", "nvdec", "software"]`
+  **需求**: 配置 `gpu.decoder_priority = ["vaapi", "nvdec", "software"]` 允许用户覆盖
+
 - [ ] **[decoder]** `src/scrcpy/hwcodec.rs:104`: `list_video_encoders` 空实现  
-  **需求**: 通过 scrcpy-server 查询设备编解码器列表
+  **需求**: 通过 scrcpy-server 查询设备编解码器列表（H.264/H.265/AV1）
+
 - [ ] **[latency]** `src/saide/ui/player.rs:374`: `latency_ms` 固定为 0  
-  **需求**: 实现 PTS - 系统时间的端到端延迟估算
+  **需求**: 实现 PTS - 系统时间的端到端延迟估算（显示在 UI）
 
 ### 平台支持
 
-- [ ] **[platform]** `src/gpu/mod.rs`: 仅支持 Linux DRM 设备  
-  **需求**: 增加 macOS（IOKit）、Windows（DXGI）GPU 检测
+- [ ] **[platform]** `src/gpu/mod.rs`: 仅支持 Linux DRM 设备检测  
+  **需求**: 增加 macOS（IOKit）、Windows（DXGI）GPU 检测支持
 
 ---
 
 ## P4 - 测试覆盖（质量保障）
 
-### 集成测试
+### 单元测试缺失
 
-- [ ] 缺少真实设备连接测试（需 mock scrcpy-server 或录制回放）
-- [ ] 缺少 ADB 失败场景测试（设备断开、权限不足、多设备冲突）
-- [ ] 缺少网络断线重连测试
+- [ ] **[test]** `src/decoder/vaapi.rs`: 7 个 unsafe 块，无测试覆盖  
+  **需求**: 模拟 FFmpeg 回调场景，测试格式协商逻辑
 
-### 单元测试
+- [ ] **[test]** `src/decoder/nvdec.rs`: 7 个 unsafe 块，无测试覆盖  
+  **需求**: 模拟 CUDA 格式选择，测试错误路径
 
-- [ ] `controller/adb.rs`: 无异常输出解析测试（如旧版 Android）
-- [ ] `decoder/*`: 无帧损坏/分辨率切换测试
-- [ ] `scrcpy/connection.rs`: 无超时/部分连接测试
-- [ ] `scrcpy/protocol/video.rs:100-101...`: 测试代码重复，需抽取辅助函数
+- [ ] **[test]** `src/decoder/h264.rs`: 无测试  
+  **需求**: 测试软件解码器初始化、帧损坏处理
 
-### Fuzzing & Bench
+- [ ] **[test]** `src/controller/keyboard.rs`: 445 行复杂映射逻辑，无测试  
+  **需求**: 测试 Android keycode 映射、修饰键组合（Shift+A）
 
-- [ ] 引入 `cargo-fuzz` 测试协议解析（防崩溃/内存泄漏）
-- [ ] 添加 `criterion` 基准测试（解码延迟、坐标转换性能）
+- [ ] **[test]** `src/controller/mouse.rs`: 357 行鼠标映射逻辑，无测试  
+  **需求**: 测试拖拽检测、长按触发、坐标转换
+
+- [ ] **[test]** `src/i18n/fs_source.rs`: 无测试  
+  **需求**: 测试文件监听、热重载、语言切换
+
+### 集成测试缺失
+
+- [ ] **[test]** 缺少真实设备连接测试  
+  **需求**: Mock scrcpy-server 或录制回放（保存二进制流到文件）
+
+- [ ] **[test]** 缺少 ADB 失败场景测试  
+  **需求**: 模拟设备断开、权限不足、多设备冲突
+
+- [ ] **[test]** 缺少网络断线重连测试  
+  **需求**: 模拟 TCP 连接中断、ADB 隧道失效
+
+### Fuzzing & 基准测试
+
+- [ ] **[test]** 引入 `cargo-fuzz` 测试协议解析（防崩溃/内存泄漏）  
+  **需求**: Fuzz `VideoPacket::from_bytes()`, `AudioPacket::from_bytes()`
+
+- [ ] **[test]** 添加 `criterion` 基准测试  
+  **需求**: 测试解码延迟（目标 <16ms）、坐标转换性能（目标 <1μs）
+
+---
+
+## P5 - 文档与规范（长期维护）
+
+### 缺失文档
+
+- [ ] **[docs]** 创建 `docs/architecture.md` 描述模块依赖关系  
+  **需求**: 使用 Mermaid 图展示 UI → Controller → Scrcpy → Decoder 层次
+
+- [ ] **[docs]** 创建 `docs/pitfalls.md` 记录开发中遇到的坑  
+  **需求**: 记录 FFmpeg 回调安全性、ADB 隧道时序、egui 渲染陷阱等
+
+- [ ] **[docs]** 创建 `docs/protocol.md` 描述 Scrcpy 协议实现  
+  **需求**: 记录与官方 scrcpy 的差异、扩展字段
+
+- [ ] **[docs]** `README.md` 缺失  
+  **需求**: 提供中英文 README（构建方法、功能特性、截图）
+
+### 代码规范
+
+- [ ] **[lint]** `src/decoder/h264_parser.rs:7-9`: `#[allow(dead_code)]` 标记的函数未使用  
+  **解法**: 删除或实际使用这些 import 函数
+
+- [ ] **[lint]** 统一错误处理模式：部分用 `thiserror`, 部分用手动 `Display` impl  
+  **解法**: 全面使用 `thiserror` 简化错误定义
 
 ---
 
 ## 已完成
 
-- [x] 2026-01-12: 全代码分析与 TODO.md 重写（P0-P4 分级）
+- [x] 2026-01-13: 全代码深度分析（架构、代码质量、测试覆盖、文档）
+- [x] 2026-01-12: TODO.md 重写（P0-P4 分级）
 - [x] 2026-01-10: i18n 架构重构（debug 热重载 + release 嵌入）
 - [x] 2026-01-09: 键盘/鼠标映射器 toggle 快捷键（F10）
 - [x] 2026-01-08: CJK 字体支持
@@ -166,4 +276,13 @@ _无进行中任务，待审核确认后开始_
 
 ---
 
-**注**: 优先级基于影响范围（crash > 功能失效 > UX 缺陷 > 技术债），请从 P0 开始逐项修复
+## 优先级说明
+
+- **P0**: 可能导致崩溃或数据丢失，必须立即修复
+- **P1**: 影响稳定性或严重影响用户体验，应尽快解决
+- **P2**: 代码质量问题，影响长期可维护性，计划内解决
+- **P3**: 功能增强，可选特性，按需实现
+- **P4**: 测试覆盖，质量保障，持续改进
+- **P5**: 文档与规范，长期维护，逐步完善
+
+**建议处理顺序**: P0 → P1（架构） → P1（配置） → P2（代码结构） → P4（核心模块测试） → P3（功能增强）
