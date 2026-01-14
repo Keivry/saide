@@ -1,13 +1,30 @@
 # SAide 任务清单
 
-> **最后更新**: 2026-01-13  
-> **当前状态**: 核心功能完成，需系统性提升架构质量与健壮性
+> **最后更新**: 2026-01-14  
+> **当前状态**: 核心功能完成，开始延迟优化工作
 
 ---
 
 ## 进行中
 
-_无进行中任务_
+### 延迟优化项目 (Phase 1)
+
+- [ ] **[latency]** 实现延迟测量系统 (`src/profiler/latency.rs`)  
+  **需求**: 追踪网络→解码→渲染各阶段时间戳,生成延迟分解报告
+
+- [ ] **[latency]** FFmpeg 解码器优化 (`src/decoder/h264.rs:59`)  
+  **解法**: 添加 `AV_CODEC_FLAG2_FAST` 和 `strict_std_compliance` 标志
+
+- [ ] **[latency]** Linux TCP_QUICKACK 优化 (`src/scrcpy/connection.rs:433`)  
+  **解法**: 在 TCP_NODELAY 后添加 `setsockopt(fd, sockopt::TcpQuickAck, &true)`
+
+- [ ] **[latency]** 移除控制消息过度 flush (`src/controller/control_sender.rs:52`)  
+  **解法**: 移除 `stream.flush()`,依赖 TCP_NODELAY 自动推送
+
+- [ ] **[latency]** 动态 AV 同步阈值 (`src/avsync/clock.rs`)  
+  **解法**: 实现 `JitterEstimator`,根据网络抖动动态调整丢帧阈值
+
+**参考文档**: `docs/LATENCY_OPTIMIZATION.md`
 
 ---
 
@@ -185,8 +202,19 @@ _无进行中任务_
 - [ ] **[decoder]** `src/scrcpy/hwcodec.rs:104`: `list_video_encoders` 空实现  
   **需求**: 通过 scrcpy-server 查询设备编解码器列表（H.264/H.265/AV1）
 
-- [ ] **[latency]** `src/saide/ui/player.rs:374`: `latency_ms` 固定为 0  
-  **需求**: 实现 PTS - 系统时间的端到端延迟估算（显示在 UI）
+### 延迟优化 (Phase 2-3) - 见 docs/LATENCY_OPTIMIZATION.md
+
+- [ ] **[latency]** 零拷贝 GPU 解码 (NVDEC/VAAPI)  
+  **需求**: 解码器直接输出 GPU 纹理,在着色器完成 YUV→RGBA 转换
+
+- [ ] **[latency]** CPAL 独占模式 (`src/decoder/audio/player.rs`)  
+  **需求**: 尝试音频独占模式降低系统混音缓冲延迟
+
+- [ ] **[latency]** 原始输入设备监听 (新建 `src/input/raw_device.rs`)  
+  **需求**: Linux evdev 直接读取输入,绕过 egui 事件循环
+
+- [ ] **[latency]** 鼠标移动速度自适应 (`src/controller/mouse.rs:95`)  
+  **需求**: 根据移动速度动态调整拖拽更新间隔
 
 ### 平台支持
 
@@ -266,6 +294,8 @@ _无进行中任务_
 
 ## 已完成
 
+- [x] 2026-01-14: 延迟优化路线图 (`docs/LATENCY_OPTIMIZATION.md`)
+- [x] 2026-01-14: 音视频回放和输入映射延迟分析
 - [x] 2026-01-13: 全代码深度分析（架构、代码质量、测试覆盖、文档）
 - [x] 2026-01-12: TODO.md 重写（P0-P4 分级）
 - [x] 2026-01-10: i18n 架构重构（debug 热重载 + release 嵌入）
@@ -285,4 +315,11 @@ _无进行中任务_
 - **P4**: 测试覆盖，质量保障，持续改进
 - **P5**: 文档与规范，长期维护，逐步完善
 
-**建议处理顺序**: P0 → P1（架构） → P1（配置） → P2（代码结构） → P4（核心模块测试） → P3（功能增强）
+**建议处理顺序**: 
+1. **延迟优化 Phase 1** (当前进行中)
+2. P0 崩溃风险修复
+3. P1 架构设计问题
+4. **延迟优化 Phase 2-3**
+5. P2 代码质量提升
+6. P4 核心模块测试
+7. P3 功能增强
