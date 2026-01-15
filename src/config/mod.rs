@@ -10,7 +10,7 @@ pub mod scrcpy;
 use {
     crate::{
         config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
-        constant::{CONFIG_PATH, SCRCPY_SERVER_VERSION_STRING},
+        constant::{self, SCRCPY_SERVER_VERSION_STRING},
         error::Result,
     },
     directories::ProjectDirs,
@@ -21,6 +21,7 @@ use {
         path::{Path, PathBuf},
         sync::Arc,
     },
+    tracing::warn,
 };
 
 /// Position of the indicator on the screen
@@ -168,10 +169,17 @@ impl ConfigManager {
     /// Create a new ConfigManager, loading existing config or using defaults
     pub fn new() -> Result<Self> {
         // Determine which config file to load
-        // 1. Check if the default config path exists
-        // 2. If not, check if "config.toml" exists in the current directory
-        // 3. If neither exists, use default config values
-        let path = CONFIG_PATH.clone();
+        // 1. Try standard config path (user config dir)
+        // 2. Fallback to ./config.toml in current directory
+        // 3. Fallback to temp directory if ProjectDirs unavailable
+        // 4. If none exist, create default config
+        let path = constant::config_dir().unwrap_or_else(|| {
+            warn!(
+                "Unable to determine config directory, using fallback: {:?}",
+                constant::fallback_config_path()
+            );
+            constant::fallback_config_path()
+        });
 
         let config = if path.is_file() {
             SAideConfig::load(&path)?

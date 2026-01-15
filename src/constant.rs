@@ -3,25 +3,27 @@
 //! This module defines various constants used in the SAide application,
 //! including default paths, version strings, server configurations, and audio settings.
 
-use {directories::ProjectDirs, lazy_static::lazy_static, std::path::PathBuf};
+use std::path::PathBuf;
 
-lazy_static! {
-    /// Project directories for SAide application
-    static ref PROJECT_DIR: ProjectDirs =
-        ProjectDirs::from("io", "keivry", "saide").expect("Failed to determine project directories");
-
-    /// Default configuration file path
-    /// E.g., on Linux, this would typically be "~/.config/saide/config.toml"
-    /// on Windows, it would be "C:\Users\<User>\AppData\Roaming\saide\config.toml"
-    /// on macOS, it would be "~/Library/Application Support/saide/config.toml"
-    pub static ref CONFIG_PATH: PathBuf = PROJECT_DIR.config_dir().join("config.toml");
-
-    /// Data directory path
-    /// E.g., on Linux, this would typically be "~/.local/share/saide/"
-    /// on Windows, it would be "C:\Users\<User>\AppData\Roaming\saide\Data"
-    /// on macOS, it would be "~/Library/Application Support/saide/"
-    pub static ref DATA_PATH: PathBuf = PROJECT_DIR.data_dir().to_owned();
+/// Get project configuration directory path
+/// Returns None if unable to determine (e.g., Docker/sandbox environment)
+pub fn config_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("io", "keivry", "saide")
+        .map(|dirs| dirs.config_dir().join("config.toml"))
 }
+
+/// Get project data directory path
+/// Returns None if unable to determine (e.g., Docker/sandbox environment)
+pub fn data_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("io", "keivry", "saide").map(|dirs| dirs.data_dir().to_owned())
+}
+
+/// Fallback configuration path (used when ProjectDirs unavailable)
+/// Uses /tmp for Linux/Unix, %TEMP% for Windows
+pub fn fallback_config_path() -> PathBuf { std::env::temp_dir().join("saide").join("config.toml") }
+
+/// Fallback data directory path
+pub fn fallback_data_path() -> PathBuf { std::env::temp_dir().join("saide") }
 
 /// Version of the scrcpy server
 pub const SCRCPY_SERVER_VERSION: &str = "3.3.3";
