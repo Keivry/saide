@@ -91,15 +91,16 @@ impl JitterEstimator {
 
     /// Update with new PTS, returns estimated jitter (microseconds)
     fn update(&mut self, pts: i64) -> i64 {
-        if let Some(last) = self.last_pts {
-            let delta = pts - last;
-            if delta > 0 {
-                self.samples.push_back(delta);
-                if self.samples.len() > self.max_samples {
-                    self.samples.pop_front();
-                }
+        if let Some(last) = self.last_pts
+            && let Some(delta) = pts.checked_sub(last)
+            && delta > 0
+        {
+            self.samples.push_back(delta);
+            if self.samples.len() > self.max_samples {
+                self.samples.pop_front();
             }
         }
+        // Silently ignore overflow (PTS went backwards or wrapped around)
         self.last_pts = Some(pts);
         self.estimate_jitter()
     }
