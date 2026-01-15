@@ -2,4 +2,4 @@
 
 pub mod latency;
 
-pub use latency::{LatencyBreakdown, LatencyProfiler};
+pub use latency::{LatencyBreakdown, LatencyProfiler, LatencyStats};

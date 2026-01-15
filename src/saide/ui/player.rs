@@ -18,6 +18,7 @@ use {
             new_nv12_render_callback,
         },
         error::{Result, SAideError},
+        profiler::{LatencyProfiler, LatencyStats},
         scrcpy::protocol::video::VideoPacket,
     },
     crossbeam_channel::{Receiver, Sender, bounded},
@@ -99,6 +100,9 @@ pub struct StreamPlayer {
     /// Stream statistics
     stats: StreamStats,
 
+    /// Latency statistics aggregator
+    latency_stats: Arc<Mutex<LatencyStats>>,
+
     /// Player state
     state: PlayerState,
 
@@ -149,6 +153,7 @@ impl StreamPlayer {
             stats_rx: None,
             current_frame: None,
             stats: StreamStats::default(),
+            latency_stats: Arc::new(Mutex::new(LatencyStats::new(60))),
             state: PlayerState::Idle,
             stream_thread: None,
             video_rect: egui::Rect::NOTHING,
@@ -180,6 +185,7 @@ impl StreamPlayer {
 
         let event_tx = self.event_tx.clone();
         let cancel_token = self.cancel_token.clone();
+        let latency_stats = self.latency_stats.clone();
         self.stream_thread = Some(thread::spawn(move || {
             if cancel_token.is_cancelled() {
                 debug!("Stream worker exiting due to cancellation");
@@ -192,6 +198,7 @@ impl StreamPlayer {
                 video_resolution,
                 event_tx.clone(),
                 cancel_token,
+                latency_stats,
             ) {
                 if !e.is_cancelled() {
                     error!("Stream worker error: {e}");
@@ -367,14 +374,16 @@ impl StreamPlayer {
 
     /// Get video statistics
     pub fn video_stats(&self) -> VideoStats {
+        let stats = self.latency_stats.lock();
+
         VideoStats {
             fps: self.fps,
             total_frames: self.stats.video_frames as u32,
             dropped_frames: self.stats.dropped_frames as u32,
-            latency_ms: 0.0,
+            latency_ms: stats.average() as f32,
             latency_decode_ms: 0.0,
             latency_upload_ms: 0.0,
-            latency_p95_ms: 0.0,
+            latency_p95_ms: stats.p95() as f32,
         }
     }
 
@@ -459,6 +468,7 @@ fn stream_worker(
     video_resolution: (u32, u32),
     event_tx: Sender<PlayerEvent>,
     token: CancellationToken,
+    latency_stats: Arc<Mutex<LatencyStats>>,
 ) -> Result<()> {
     let (width, height) = video_resolution;
     info!("Video resolution: {}x{}", width, height);
@@ -604,10 +614,13 @@ fn stream_worker(
                 return Ok(());
             }
 
+            let mut profiler = LatencyProfiler::new();
+
             // Read video packet with error tolerance
+            profiler.mark_receive();
             let video_packet = match VideoPacket::read_from(&mut video_stream) {
                 Ok(packet) => {
-                    consecutive_read_errors = 0; // Reset on success
+                    consecutive_read_errors = 0;
                     packet
                 }
                 Err(e) => {
@@ -664,6 +677,7 @@ fn stream_worker(
             }
 
             // Decode frame
+            profiler.mark_decode();
             let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
                 Ok(frame) => frame,
                 Err(e) => {
@@ -678,6 +692,8 @@ fn stream_worker(
             };
 
             if let Some(frame) = frame_opt {
+                profiler.mark_upload();
+
                 let current_stats = {
                     let mut s = stats.lock();
                     s.video_frames += 1;
@@ -690,6 +706,12 @@ fn stream_worker(
                     let mut s = stats.lock();
                     s.dropped_frames += 1;
                     continue;
+                }
+
+                profiler.mark_display();
+
+                if let Some(breakdown) = profiler.breakdown() {
+                    latency_stats.lock().add_sample(breakdown.total_ms());
                 }
 
                 // Send frame - if channel is closed, receiver dropped, exit gracefully
