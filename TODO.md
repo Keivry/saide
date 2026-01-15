@@ -1,28 +1,45 @@
 # SAide 任务清单
 
-> **最后更新**: 2026-01-14  
-> **当前状态**: 核心功能完成，开始延迟优化工作
+> **最后更新**: 2026-01-15  
+> **当前状态**: Phase 1 延迟优化完成（基础设施），待实际集成
+
+---
+
+# SAide 任务清单
+
+> **最后更新**: 2026-01-15  
+> **当前状态**: Phase 1 延迟优化完成（基础设施），待实际集成
 
 ---
 
 ## 进行中
 
-### 延迟优化项目 (Phase 1)
+### 延迟优化项目 (Phase 1 - 集成阶段)
 
-- [ ] **[latency]** 实现延迟测量系统 (`src/profiler/latency.rs`)  
-  **需求**: 追踪网络→解码→渲染各阶段时间戳,生成延迟分解报告
+**Phase 1 基础设施已完成 (commit beb2893)**:
+- [x] 延迟测量系统 (`src/profiler/latency.rs`) - 追踪 5 个阶段
+- [x] FFmpeg 解码器优化 - 添加 `AV_CODEC_FLAG2_FAST` + `FF_COMPLIANCE_EXPERIMENTAL`
+- [x] Linux TCP_QUICKACK - 降低网络 ACK 延迟 3-5ms
+- [x] 移除控制消息过度 flush - 依赖 TCP_NODELAY 自动推送
+- [x] 动态 AV 同步阈值 - 实现 `JitterEstimator` 根据网络抖动调整
+- [x] UI 集成 - 扩展 `VideoStats` 显示延迟分解（avg/p95/decode/upload）
 
-- [ ] **[latency]** FFmpeg 解码器优化 (`src/decoder/h264.rs:59`)  
-  **解法**: 添加 `AV_CODEC_FLAG2_FAST` 和 `strict_std_compliance` 标志
+**待完成 - 实际集成**:
+- [ ] **[latency]** 在视频解码线程集成 LatencyProfiler  
+  **位置**: `src/saide/ui/player.rs:498` (`stream_worker` 函数)  
+  **需求**: 在数据包接收/解码/上传/显示时调用 `profiler.mark_*()` 方法
 
-- [ ] **[latency]** Linux TCP_QUICKACK 优化 (`src/scrcpy/connection.rs:433`)  
-  **解法**: 在 TCP_NODELAY 后添加 `setsockopt(fd, sockopt::TcpQuickAck, &true)`
+- [ ] **[latency]** 在音频解码线程集成 LatencyProfiler  
+  **位置**: `src/saide/ui/player.rs:498` (同一 worker 内的音频线程)  
+  **需求**: 追踪音频接收→解码→播放延迟
 
-- [ ] **[latency]** 移除控制消息过度 flush (`src/controller/control_sender.rs:52`)  
-  **解法**: 移除 `stream.flush()`,依赖 TCP_NODELAY 自动推送
+- [ ] **[latency]** 将 LatencyStats 传递到 UI  
+  **位置**: `src/saide/ui/player.rs:369` (`video_stats` 方法)  
+  **需求**: 从 profiler 获取统计数据填充 `VideoStats` 字段
 
-- [ ] **[latency]** 动态 AV 同步阈值 (`src/avsync/clock.rs`)  
-  **解法**: 实现 `JitterEstimator`,根据网络抖动动态调整丢帧阈值
+**预期收益**: 
+- 总延迟降低: 15-25ms (网络 3-5ms + 解码 5-10ms + 输入 2-5ms + AV同步 3-5ms)
+- UI 可见性: 实时显示延迟分解，便于诊断瓶颈
 
 **参考文档**: `docs/LATENCY_OPTIMIZATION.md`
 
@@ -294,6 +311,13 @@
 
 ## 已完成
 
+- [x] 2026-01-15: Phase 1 延迟优化基础设施完成 (commits 4ea165a, 527a89c, beb2893)
+  - [x] LatencyProfiler 实现 (5 阶段追踪 + 统计)
+  - [x] FFmpeg 解码器优化 (FAST + EXPERIMENTAL 标志)
+  - [x] TCP_QUICKACK 网络优化 (Linux)
+  - [x] ControlSender flush 移除
+  - [x] 动态 AV 同步阈值 (JitterEstimator)
+  - [x] UI 集成准备 (VideoStats 扩展 + 指示器显示)
 - [x] 2026-01-14: 延迟优化路线图 (`docs/LATENCY_OPTIMIZATION.md`)
 - [x] 2026-01-14: 音视频回放和输入映射延迟分析
 - [x] 2026-01-13: 全代码深度分析（架构、代码质量、测试覆盖、文档）
