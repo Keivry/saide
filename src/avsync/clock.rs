@@ -10,6 +10,7 @@
 //! - Video thread = reads atomic snapshot (non-locking)
 
 use std::{
+    collections::VecDeque,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicI64, Ordering},
@@ -63,6 +64,67 @@ impl AVClock {
     }
 }
 
+/// Network jitter estimator for dynamic threshold adjustment
+///
+/// Tracks recent frame arrival intervals to estimate network jitter.
+/// Used to dynamically adjust sync threshold:
+/// - Low jitter → tighter threshold (lower latency)
+/// - High jitter → looser threshold (fewer drops)
+#[derive(Debug)]
+struct JitterEstimator {
+    /// Recent inter-arrival deltas (microseconds)
+    samples: VecDeque<i64>,
+    /// Maximum samples to keep
+    max_samples: usize,
+    /// Last PTS seen
+    last_pts: Option<i64>,
+}
+
+impl JitterEstimator {
+    fn new(max_samples: usize) -> Self {
+        Self {
+            samples: VecDeque::with_capacity(max_samples),
+            max_samples,
+            last_pts: None,
+        }
+    }
+
+    /// Update with new PTS, returns estimated jitter (microseconds)
+    fn update(&mut self, pts: i64) -> i64 {
+        if let Some(last) = self.last_pts {
+            let delta = pts - last;
+            if delta > 0 {
+                self.samples.push_back(delta);
+                if self.samples.len() > self.max_samples {
+                    self.samples.pop_front();
+                }
+            }
+        }
+        self.last_pts = Some(pts);
+        self.estimate_jitter()
+    }
+
+    /// Calculate jitter as standard deviation of deltas
+    fn estimate_jitter(&self) -> i64 {
+        if self.samples.len() < 2 {
+            return 10_000; // Default 10ms
+        }
+
+        let mean: i64 = self.samples.iter().sum::<i64>() / self.samples.len() as i64;
+        let variance: i64 = self
+            .samples
+            .iter()
+            .map(|&x| {
+                let diff = x - mean;
+                diff * diff
+            })
+            .sum::<i64>()
+            / self.samples.len() as i64;
+
+        (variance as f64).sqrt() as i64
+    }
+}
+
 /// Atomic snapshot for video thread (read-only)
 ///
 /// Lock-free access to current sync state.
@@ -73,8 +135,10 @@ pub struct AVSyncSnapshot {
     audio_pts: AtomicI64,
     /// Average drift (microseconds, positive = audio ahead)
     avg_drift_us: AtomicI64,
-    /// Sync threshold (microseconds)
-    threshold_us: i64,
+    /// Dynamic sync threshold (microseconds)
+    threshold_us: AtomicI64,
+    /// Base threshold (microseconds)
+    base_threshold_us: i64,
     /// Whether clock is initialized
     clock_ready: AtomicBool,
 }
@@ -86,14 +150,14 @@ impl AVSyncSnapshot {
     /// audio by more than threshold.
     pub fn should_drop_video(&self, video_pts: i64) -> bool {
         if !self.clock_ready.load(Ordering::Acquire) {
-            return false; // No clock yet, don't drop
+            return false;
         }
 
         let audio_pts = self.audio_pts.load(Ordering::Acquire);
         let drift = video_pts - audio_pts;
+        let threshold = self.threshold_us.load(Ordering::Acquire);
 
-        // Video too far behind audio → drop
-        drift < -(self.threshold_us)
+        drift < -threshold
     }
 
     /// Get average drift in microseconds
@@ -102,8 +166,8 @@ impl AVSyncSnapshot {
     /// Get current audio PTS
     pub fn audio_pts(&self) -> i64 { self.audio_pts.load(Ordering::Acquire) }
 
-    /// Get sync threshold
-    pub fn threshold_us(&self) -> i64 { self.threshold_us }
+    /// Get current sync threshold (microseconds)
+    pub fn threshold_us(&self) -> i64 { self.threshold_us.load(Ordering::Acquire) }
 }
 
 /// AV sync state for coordinating audio and video
@@ -120,13 +184,15 @@ pub struct AVSync {
     clock: Option<AVClock>,
     /// Atomic snapshot for video thread
     snapshot: Arc<AVSyncSnapshot>,
+    /// Jitter estimator for dynamic threshold
+    jitter: JitterEstimator,
 }
 
 impl AVSync {
     /// Create new AV sync controller
     ///
     /// # Arguments
-    /// * `threshold_ms` - Sync threshold in milliseconds (default: 20ms)
+    /// * `threshold_ms` - Base sync threshold in milliseconds (default: 20ms)
     pub fn new(threshold_ms: u32) -> Self {
         let threshold_us = threshold_ms as i64 * 1000;
         Self {
@@ -134,9 +200,11 @@ impl AVSync {
             snapshot: Arc::new(AVSyncSnapshot {
                 audio_pts: AtomicI64::new(0),
                 avg_drift_us: AtomicI64::new(0),
-                threshold_us,
+                threshold_us: AtomicI64::new(threshold_us),
+                base_threshold_us: threshold_us,
                 clock_ready: AtomicBool::new(false),
             }),
+            jitter: JitterEstimator::new(30),
         }
     }
 
@@ -149,14 +217,18 @@ impl AVSync {
     /// Called by audio thread on every frame.
     /// Automatically initializes clock on first call.
     pub fn update_audio_pts(&mut self, audio_pts: i64) {
-        // Auto-initialize clock on first audio frame
         if self.clock.is_none() {
             self.clock = Some(AVClock::new(audio_pts));
             self.snapshot.clock_ready.store(true, Ordering::Release);
         }
 
-        // Update snapshot atomically
         self.snapshot.audio_pts.store(audio_pts, Ordering::Release);
+
+        let jitter_us = self.jitter.update(audio_pts);
+        let dynamic_threshold = self.snapshot.base_threshold_us + (jitter_us * 2);
+        self.snapshot
+            .threshold_us
+            .store(dynamic_threshold, Ordering::Release);
     }
 }
 

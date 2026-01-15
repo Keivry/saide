@@ -49,7 +49,6 @@ impl ControlSender {
 
         let mut stream = self.stream.lock();
         stream.write_all(&buf)?;
-        stream.flush()?;
         trace!("Sent control message: {:?}", msg);
 
         Ok(())
