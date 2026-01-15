@@ -83,11 +83,7 @@ impl ScrcpyConnection {
     /// 2. Setup ADB reverse tunnel
     /// 3. Start server process
     /// 4. Accept socket connections
-    pub async fn connect(
-        serial: &str,
-        server_jar_path: &str,
-        mut params: ServerParams,
-    ) -> Result<Self> {
+    pub fn connect(serial: &str, server_jar_path: &str, mut params: ServerParams) -> Result<Self> {
         let scid = params.scid;
         let socket_name = get_socket_name(scid);
 

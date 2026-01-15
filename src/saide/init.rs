@@ -275,12 +275,10 @@ async fn scrcpy_connection(
         info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
     }
 
-    ScrcpyConnection::connect(serial, server_path, params)
-        .await
-        .map_err(|e| {
-            error!("Failed to establish scrcpy connection: {}", e);
-            e
-        })
+    ScrcpyConnection::connect(serial, server_path, params).map_err(|e| {
+        error!("Failed to establish scrcpy connection: {}", e);
+        e
+    })
 }
 
 /// Start device monitor thread
