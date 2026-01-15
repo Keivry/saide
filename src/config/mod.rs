@@ -148,13 +148,21 @@ impl SAideConfig {
         Ok(config)
     }
 
-    /// Save configuration to file
+    /// Save configuration to file atomically
+    ///
+    /// Writes to a temporary file first, then atomically renames it to avoid
+    /// corruption if interrupted (power loss, ctrl-c, etc).
     pub fn save<P>(&self, path: P) -> Result<()>
     where
         P: AsRef<Path>,
     {
+        let path = path.as_ref();
         let content = toml::to_string_pretty(self)?;
-        fs::write(path, content)?;
+
+        let tmp_path = path.with_extension("toml.tmp");
+        fs::write(&tmp_path, content)?;
+        fs::rename(&tmp_path, path)?;
+
         Ok(())
     }
 }
