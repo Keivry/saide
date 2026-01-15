@@ -451,8 +451,13 @@ impl SAideApp {
             return;
         }
 
+        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+            warn!("Keyboard mapper not available, skipping mapping config events");
+            return;
+        };
+
         // Get current mappings for display
-        if let Some(mappings) = self.keyboard_mapper.as_ref().unwrap().get_active_mappings() {
+        if let Some(mappings) = keyboard_mapper.get_active_mappings() {
             // Draw the config window and handle events
             let video_rect = self.player.video_rect();
             let event = self.mapping_config_window.draw(
@@ -619,8 +624,10 @@ impl SAideApp {
             return Ok(true);
         }
 
-        // Unwrap is safe here, keyboard_mapper existence is checked before processing events
-        let keyboard_mapper = self.keyboard_mapper.as_ref().unwrap();
+        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+            debug!("Keyboard mapper not available, ignoring key event");
+            return Ok(false);
+        };
 
         // Handle custom keymapping first, if enabled and IME is off
         if self.keyboard_custom_mapping_enabled
@@ -682,13 +689,14 @@ impl SAideApp {
 
         let button = MouseButton::from(button);
 
-        // Unwrap is safe here, mouse_mapper existence is checked before processing events
-        if let Err(e) = self.mouse_mapper.as_ref().unwrap().handle_button_event(
-            button,
-            pressed,
-            scrcpy_pos.x,
-            scrcpy_pos.y,
-        ) {
+        let Some(mouse_mapper) = &self.mouse_mapper else {
+            debug!("Mouse mapper not available, ignoring button event");
+            return;
+        };
+
+        if let Err(e) =
+            mouse_mapper.handle_button_event(button, pressed, scrcpy_pos.x, scrcpy_pos.y)
+        {
             error!("Failed to handle mouse button event: {}", e);
         }
     }
@@ -699,8 +707,9 @@ impl SAideApp {
         pos: &VisualPos,
         last_pointer_pos: &VisualPos,
     ) -> Option<VisualPos> {
-        // Unwrap is safe here, mouse_mapper existence is checked before processing events
-        let mouse_mapper = self.mouse_mapper.as_ref().unwrap();
+        let Some(mouse_mapper) = &self.mouse_mapper else {
+            return None;
+        };
 
         if self.is_in_video_rect(pos) {
             trace!("PointerMoved inside video rect at {:?}", pos);
@@ -794,12 +803,12 @@ impl SAideApp {
             WheelDirection::Down
         };
 
-        if let Err(e) = self
-            .mouse_mapper
-            .as_ref()
-            .unwrap() // Safe unwrap, mouse_mapper existence is checked before processing events
-            .handle_wheel_event(scrcpy_pos.x, scrcpy_pos.y, &dir)
-        {
+        let Some(mouse_mapper) = &self.mouse_mapper else {
+            debug!("Mouse mapper not available, ignoring wheel event");
+            return;
+        };
+
+        if let Err(e) = mouse_mapper.handle_wheel_event(scrcpy_pos.x, scrcpy_pos.y, &dir) {
             error!("Failed to handle wheel event: {}", e);
         } else {
             debug!(
