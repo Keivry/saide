@@ -6,7 +6,7 @@
 
 ## Panic 预防陷阱 (P0 优先级)
 
-> **2026-01-15 更新**: P0.1-P0.4 已全部修复 (commits d59dca5, 23ea5f7, 673e8ee, 9e3b9a6)
+> **2026-01-15 更新**: P0.1-P0.9 已全部修复（9/9 完成）
 
 ### ✅ FIXED: Option::unwrap() 在初始化竞态 (commit 9e3b9a6)
 
@@ -71,6 +71,286 @@ let codec_id = u32::from_be_bytes(
 4. 即使"永不 panic"的代码也应该文档化这个保证
 
 **Pattern**: 所有 `.unwrap()` 必须改为 `.expect("BUG: <invariant>")`（测试代码除外）
+
+---
+
+### ✅ FIXED: unreachable!() 在取模后 (commit 7c6a4fa)
+
+**位置**: `src/saide/coords.rs:152,194,275,326` (已修复)  
+**问题**: 在取模运算后使用 `unreachable!()`，整数溢出可能触发
+
+**修复前**:
+```rust
+// ❌ 错误示例：整数溢出可能导致 unreachable 被触发
+let rotation = (self.device_orientation + capture_orient) % 4;
+match rotation {
+    0 | 1 | 2 | 3 => { /* ... */ }
+    _ => unreachable!(),  // 如果溢出，仍会触发！
+}
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：归一化 + debug_assert + 降级处理
+self.orientation = value % 4;  // 归一化保证有效范围
+match rotation {
+    0 => { /* ... */ }
+    1 => { /* ... */ }
+    2 => { /* ... */ }
+    3 => { /* ... */ }
+    _ => {
+        debug_assert!(false, "rotation should be 0-3 after % 4, got {}", rotation);
+        default_position()  // 降级处理
+    }
+}
+```
+
+**教训**:
+1. `unreachable!()` 仅用于逻辑上绝对不可能的分支
+2. 涉及外部输入或计算的值应使用 `debug_assert!` + fallback
+3. 优先归一化输入（`% 4`）而非信任计算结果
+4. Release 模式下 `debug_assert!` 被移除，fallback 保证不 panic
+
+**Pattern**: `debug_assert!(false); fallback_value` 优于 `unreachable!()`
+
+---
+
+### ✅ FIXED: cpal 音频回调边界检查 (commit 5f6b793)
+
+**位置**: `src/decoder/audio/player.rs:95` (已修复)  
+**问题**: cpal 音频回调中缺少数组边界检查，可能导致数组越界 panic
+
+**修复前**:
+```rust
+// ❌ 错误示例：未检查 buffer 长度
+data_callback: move |data: &mut [f32], _: &_| {
+    for sample in data.iter_mut() {
+        *sample = rx.recv().unwrap();  // 可能越界或 panic
+    }
+}
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：边界检查 + 优雅降级
+data_callback: move |data: &mut [f32], _: &_| {
+    for sample in data.iter_mut() {
+        match rx.try_recv() {
+            Ok(s) => *sample = s,
+            Err(_) => *sample = 0.0,  // 静音填充
+        }
+    }
+}
+```
+
+**教训**:
+1. 音频回调在独立线程执行，panic 会导致进程崩溃
+2. 必须使用 `try_recv()` 而非 `recv()` 避免阻塞
+3. 无数据时用静音填充（`0.0`）而非 panic
+4. 回调中禁止任何可能 panic 的操作（unwrap、expect、assert）
+
+**Pattern**: 音频回调 = 100% panic-free zone
+
+---
+
+### ✅ FIXED: Error::source() 未实现导致错误链丢失 (commit 1834c36)
+
+**位置**: `src/error.rs:18-46` (已修复)  
+**问题**: `IoError` 未实现 `std::error::Error::source()`，丢失底层错误信息
+
+**修复前**:
+```rust
+// ❌ 错误示例：仅保存 ErrorKind，丢失原始错误
+pub struct IoError {
+    pub source_kind: io::ErrorKind,
+}
+
+impl std::error::Error for IoError {}  // source() 返回 None
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：保存完整错误 + 实现 source()
+pub struct IoError {
+    pub source: Option<Box<io::Error>>,
+}
+
+impl std::error::Error for IoError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|e| e.as_ref() as _)
+    }
+}
+```
+
+**教训**:
+1. 错误类型必须实现 `Error::source()` 保留错误链
+2. 仅保存 `ErrorKind` 会丢失具体信息（文件路径、权限等）
+3. 使用 `Box<dyn Error>` 或 `Box<ConcreteError>` 保存原始错误
+4. 错误链对于调试至关重要（`error: {}, caused by: {}`）
+
+**Pattern**: 所有自定义 Error 必须实现 `source()` 或使用 `thiserror` derive
+
+---
+
+### ✅ FIXED: async 签名但阻塞 I/O (commit 8edf92c)
+
+**位置**: `src/scrcpy/connection.rs:86` (已修复)  
+**问题**: `connect` 签名为 `async fn` 但内部使用阻塞 I/O（`TcpListener::accept`）
+
+**修复前**:
+```rust
+// ❌ 错误示例：假 async（内部阻塞线程）
+pub async fn connect(&mut self) -> Result<()> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let (stream, _) = listener.accept()?;  // 阻塞！
+    // ...
+}
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：移除 async，统一为同步 API
+pub fn connect(&mut self) -> Result<()> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let (stream, _) = listener.accept()?;  // 明确是同步
+    // ...
+}
+```
+
+**教训**:
+1. `async fn` 不代表非阻塞，仅表示可 `.await`
+2. 阻塞 I/O 会阻塞整个 executor 线程（tokio/async-std）
+3. 要么全部用 `tokio::net`，要么全部用 `std::net`
+4. 混用会导致难以追踪的性能问题
+
+**Pattern**: `async fn` 内部禁止 `std::net`、`std::fs`、`std::thread::sleep`
+
+---
+
+### ✅ FIXED: ADB 路径未验证 (commit ec5596e)
+
+**位置**: 多处 `Command::new("adb")` (已修复)  
+**问题**: 假设 ADB 在 PATH 中，未验证可执行性
+
+**修复前**:
+```rust
+// ❌ 错误示例：直接执行，ADB 不存在时产生神秘错误
+Command::new("adb").args(&["devices"]).output()?;
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：启动时验证 + 清晰错误消息
+impl AdbShell {
+    pub fn verify_adb_available() -> Result<()> {
+        Command::new("adb")
+            .arg("version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| {
+                SAideError::AdbError(format!(
+                    "ADB not found in PATH. Please install Android SDK Platform Tools. Error: {}",
+                    e
+                ))
+            })?
+            .success()
+            .then_some(())
+            .ok_or_else(|| {
+                SAideError::AdbError(
+                    "ADB command failed. Please check Android SDK installation.".to_string(),
+                )
+            })
+    }
+}
+
+// main.rs 启动时调用
+fn main() -> Result<()> {
+    AdbShell::verify_adb_available()?;  // Fail fast
+    // ...
+}
+```
+
+**教训**:
+1. 不同系统 ADB 路径不同（Linux: `/usr/bin/adb`, Windows: `platform-tools/adb.exe`）
+2. 用户可能未安装 Android SDK
+3. 启动时验证外部依赖，fail fast with clear message
+4. 错误消息必须告诉用户如何解决（安装 Android SDK Platform Tools）
+
+**Pattern**: 所有外部工具（adb、ffmpeg、scrcpy-server）必须启动时验证
+
+---
+
+### ✅ FIXED: ProjectDirs::from() 在非标准环境 panic (commit d59dca5)
+
+**位置**: `src/constant.rs:11` (已修复)  
+**问题**: `ProjectDirs::from(..).expect(..)` 在 Docker/沙盒环境 panic
+
+**修复前**:
+```rust
+// ❌ 错误示例：Docker 环境无 HOME 变量时 panic
+lazy_static! {
+    static ref PROJECT_DIRS: ProjectDirs = 
+        ProjectDirs::from("com", "SAide", "SAide")
+            .expect("Failed to get project directories");
+}
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：3 层 fallback
+pub fn config_dir() -> Option<PathBuf> {
+    ProjectDirs::from("com", "SAide", "SAide")
+        .map(|dirs| dirs.config_dir().to_path_buf())
+}
+
+pub fn get_config_path() -> PathBuf {
+    config_dir()
+        .map(|dir| dir.join("config.toml"))
+        .unwrap_or_else(|| PathBuf::from("./config.toml"))  // Fallback 1
+}
+
+// src/config/mod.rs 中再添加 Fallback 2
+let path = get_config_path();
+if !path.exists() {
+    return Config::default();  // 使用默认配置
+}
+```
+
+**教训**:
+1. Docker/CI 环境可能没有 `HOME`、`XDG_CONFIG_HOME` 等变量
+2. 必须提供多层 fallback（user dir → ./config.toml → /tmp/saide）
+3. 配置文件不存在时使用默认配置，而非 panic
+4. 避免 `lazy_static!` + `expect()` 组合（初始化时 panic 难以调试）
+
+**Pattern**: 配置路径 = 用户目录 → 当前目录 → 临时目录 → 默认值
+
+---
+
+### ✅ FIXED: 非 UTF-8 路径 panic (commit 23ea5f7)
+
+**位置**: `src/config/mod.rs:121` (已修复)  
+**问题**: `path.to_str().unwrap()` 在 Windows 特殊字符路径 panic
+
+**修复前**:
+```rust
+// ❌ 错误示例：Windows 日文/中文路径包含非 UTF-8 字符时 panic
+let path_str = path.to_str().unwrap();
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：使用 to_string_lossy() 容忍非 UTF-8
+let path_str = path.to_string_lossy();
+```
+
+**教训**:
+1. Windows 路径可能包含非 UTF-8 字符（特殊语言、emoji）
+2. `to_str()` 返回 `Option<&str>`，遇到非 UTF-8 返回 `None`
+3. `to_string_lossy()` 将非 UTF-8 字节替换为 `�`（U+FFFD）
+4. 路径显示场景（日志、错误消息）应优先使用 `to_string_lossy()`
+
+**Pattern**: 路径转字符串 = `to_string_lossy()` > `to_str().ok_or(...)` >> `to_str().unwrap()`
 
 ---
 
@@ -271,9 +551,9 @@ match rotation {
 
 ## ADB 集成陷阱
 
-### ❌ 假设 ADB 在 PATH 中
+### ✅ FIXED: 假设 ADB 在 PATH 中 (commit ec5596e)
 
-**位置**: `src/controller/adb.rs`, `src/scrcpy/server.rs`  
+**位置**: `src/controller/adb.rs`, `src/scrcpy/server.rs` (已修复)  
 **问题**: 多处 `Command::new("adb")` 未验证可执行性
 
 **教训**:
@@ -283,16 +563,14 @@ match rotation {
 
 **正确做法**:
 ```rust
-// ✅ 启动时验证
+// ✅ 启动时验证（已实现）
 impl AdbShell {
-    pub fn verify_adb() -> Result<PathBuf> {
-        let adb_path = which::which("adb")
-            .or_else(|_| std::env::var("ADB_PATH").map(PathBuf::from))
-            .map_err(|_| SAideError::AdbError("ADB not found in PATH".into()))?;
-        
-        // 测试执行
-        Command::new(&adb_path).arg("version").status()?;
-        Ok(adb_path)
+    pub fn verify_adb_available() -> Result<()> {
+        Command::new("adb")
+            .arg("version")
+            .status()
+            .map_err(|_| SAideError::AdbError("ADB not found in PATH. Please install Android SDK Platform Tools.".into()))?;
+        Ok(())
     }
 }
 ```
