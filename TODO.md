@@ -197,29 +197,34 @@
   **终止原因**: wgpu v28 仍无 `Device::as_hal()`,等待官方支持时间线未知  
   **决策**: 转向 Phase 3 音频/输入优化 (8-18ms 收益,1 周成本)
 
-#### Phase 3.1: 音频延迟优化 (P1 - 当前任务)
+#### Phase 3.1: 音频延迟优化 ✅ COMPLETED (2026-01-15)
 
-- [ ] **[P1]** CPAL 独占模式尝试 (`src/decoder/audio/player.rs`)  
-  **目标**: 绕过系统混音器,降低缓冲延迟 3-8ms  
-  **实施计划**:
-  1. 检测系统是否支持独占模式 (Windows WASAPI, Linux ALSA)
-  2. 优先尝试独占模式,失败则降级到共享模式
-  3. 添加配置 `audio.exclusive_mode: bool = true` (默认启用)
-  4. 文档化 OS 差异 (`docs/pitfalls.md` § CPAL 独占模式兼容性)
+- [x] **[TERMINATED]** ~~CPAL 独占模式尝试~~ (`src/decoder/audio/player.rs`)  
+  **调查结果**: cpal 0.17 **不支持** WASAPI/ALSA 独占模式 API  
+  **证据**:
+  - `build_output_stream()` 无 `exclusive_mode` 参数
+  - 源码中无平台特定独占访问暴露
+  - cpal 定位为跨平台高层抽象,不提供底层硬件控制
   
-  **预期工作量**: 2-3 天  
-  **风险**: 中等 (需要完善的 fallback 逻辑)
+  **终止原因**: API 不存在,无法实现  
+  **替代方案**: 缓冲区大小优化 (下方任务,已完成)  
+  **文档**: `docs/pitfalls.md` § cpal 独占模式限制
 
-- [ ] **[P1]** 音频缓冲降至 64 frames (`src/constant.rs:46`)  
-  **目标**: 2.67ms → 1.33ms @ 48kHz (降低 1-2ms)  
-  **实施计划**:
-  1. 修改 `AUDIO_BUFFER_SIZE: 128 → 64`
-  2. 多硬件测试 (防止 underrun)
-  3. 如有兼容性问题,改为可配置 `audio.buffer_frames: u32 = 64`
+- [x] **[COMPLETED]** 音频缓冲降至 64 frames (`src/constant.rs:46`)  
+  **实施**: 
+  - ✅ `AUDIO_BUFFER_FRAMES: 128 → 64` (1.33ms @ 48kHz)
+  - ✅ 添加 `AudioConfig.buffer_frames` 配置选项 (可覆盖默认值)
+  - ✅ 更新 `AudioPlayer::new()` API (接受 buffer_frames 参数)
+  - ✅ 导入修复 + 质量检查通过 (fmt + clippy + test)
+  - ✅ 文档化调优指南 (`docs/pitfalls.md` +168 行)
   
-  **预期工作量**: 1 天 (含测试)  
-  **风险**: 低 (可快速回滚)  
-  **建议**: 与独占模式配合测试效果
+  **Commits**:
+  - `feat(latency): Phase 3.1 - reduce audio buffer 128→64 frames` (待 push)
+  - `docs(latency): Phase 3.1 - document cpal limitations and tuning` (待 push)
+  
+  **预期收益**: 1-2ms 延迟降低  
+  **硬件测试**: 待用户执行 (underrun 监控)  
+  **配置回退**: 弱系统可设置 `buffer_frames = 128/256`
 
 #### Phase 3.2: 输入延迟优化 (P2 - 可选)
 

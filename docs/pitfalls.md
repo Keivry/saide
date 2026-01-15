@@ -431,3 +431,168 @@ fn update(&mut self, ctx: &egui::Context) {
 1. egui UI 循环避免堆分配
 2. 音频回调使用无锁结构（`rtrb`）
 3. 视频解码优先硬件加速（VAAPI/NVDEC）
+
+---
+
+## 音频延迟优化陷阱 (Phase 3)
+
+### ❌ cpal 独占模式限制
+
+**调查日期**: 2026-01-15  
+**cpal 版本**: 0.17.0-0.17.1  
+**位置**: `src/decoder/audio/player.rs`
+
+**问题**: cpal **不支持**独占模式 API（WASAPI exclusive / ALSA exclusive）
+
+**证据**:
+```rust
+// ❌ 错误期望：cpal 应该有这些 API（实际没有）
+let stream = device.build_output_stream(
+    &config,
+    data_callback,
+    error_callback,
+    timeout,
+    // ❌ 不存在的参数：
+    // exclusive_mode: true,  // cpal 0.17 无此参数
+    // stream_priority: High, // cpal 0.17 无此参数
+)?;
+```
+
+**调查结果**:
+- 检查 `build_output_stream()` 签名：
+  - 参数仅有：`config`, `data_callback`, `error_callback`, `timeout`
+  - 无独占模式标志或流优先级选项
+- 搜索 cpal 源码：
+  - 仅在内部 mutex 注释中提到 "exclusive"
+  - 未暴露平台特定的独占访问 API（WASAPI/ALSA）
+
+**教训**:
+1. ❌ **不要假设音频库支持低级平台特性** - 必须先查文档确认 API
+2. ⚠️ 独占模式需绕过 OS 音频混音器，cpal 走的是高层抽象（跨平台一致性优先）
+3. ✅ 替代方案：**缓冲区大小优化**（已实现：128→64 frames）
+
+**替代优化** (已实施):
+- 减少 `AUDIO_BUFFER_FRAMES` 从 128→64（1.33ms 延迟降低）
+- 可通过 `[scrcpy.audio] buffer_frames` 在 config.toml 配置
+
+**未来考虑**:
+- 监控 cpal v0.18+ 是否添加独占模式 API
+- 如需极低延迟，考虑平台特定库（wasapi-rs, alsa）
+- 当前 64 frames 已接近硬件限制，进一步优化收益递减
+
+---
+
+### 音频缓冲调优指南
+
+**默认**: 64 frames (1.33ms @ 48kHz) - 低延迟优化
+
+#### 缓冲过小症状（欠载/underrun）
+
+**表现**:
+- 音频爆音、卡顿
+- 频繁静音间隙
+- 日志显示高 underrun 计数：`AudioPlayer stopped (N underruns)`
+
+**根本原因**:
+```
+音频回调周期 < 数据生成周期
+├─ 缓冲 64 frames = 每 1.33ms 请求新数据
+├─ 如果解码/网络延迟 > 1.33ms
+└─ 回调读空缓冲 → 填充静音 → 爆音
+```
+
+#### 解决方案（按优先级）
+
+**1. 增加缓冲区大小** (配置文件调优)
+
+```toml
+# ~/.config/saide/config.toml
+[scrcpy.audio]
+buffer_frames = 128  # 2.67ms (更稳定)
+# 或
+buffer_frames = 256  # 5.33ms (非常稳定，延迟稍高)
+```
+
+**2. 系统特定推荐值**
+
+| 平台 | 推荐值 (frames) | 延迟 @ 48kHz | 说明 |
+|------|----------------|-------------|------|
+| 树莓派 / 低功耗 | 256-512 | 5.33-10.67ms | CPU 弱，解码慢 |
+| 桌面 Linux (PulseAudio) | 128-256 | 2.67-5.33ms | 混音器开销 |
+| 桌面 Linux (PipeWire) | 64-128 | 1.33-2.67ms | 低延迟混音器 |
+| Windows (WASAPI shared) | 128-256 | 2.67-5.33ms | 共享模式开销 |
+| macOS (CoreAudio) | 64-128 | 1.33-2.67ms | 硬件性能优秀 |
+
+**3. 监控 underrun 率**
+
+```bash
+# 查看日志中的 underrun 计数
+journalctl -f | grep "Audio player"
+
+# 正常范围：
+# "Audio player stopped (15 underruns)"  ✅ 可接受（0.1% @ 60s）
+# "Audio player stopped (500 underruns)" ❌ 缓冲过小（5% @ 60s）
+```
+
+**4. 延迟 vs 稳定性权衡**
+
+```
+64 frames  = 1.33ms 延迟  (激进，可能欠载)  ⚡ Phase 3 默认
+128 frames = 2.67ms 延迟  (平衡，推荐)     ✅ Phase 1 默认
+256 frames = 5.33ms 延迟  (安全，弱系统)   🛡️ 保守选择
+512 frames = 10.67ms 延迟 (极稳，高延迟)   🐌 特殊场景
+```
+
+#### 调试流程
+
+```bash
+# 1. 运行应用，播放音频
+./saide
+
+# 2. 观察日志
+# 预期：
+# "Audio player started: 48000Hz, 2 channels, buffer=64frames (1.33ms)"
+# "Audio player stopped (0-50 underruns)"  # 正常范围
+
+# 3. 如果 underrun > 100:
+#    编辑 ~/.config/saide/config.toml
+#    设置 buffer_frames = 128
+#    重启应用测试
+
+# 4. 如果 underrun > 200:
+#    设置 buffer_frames = 256
+#    重启应用测试
+
+# 5. 如果仍有问题:
+#    检查系统负载 (top/htop)
+#    检查网络延迟 (ping 设备)
+#    考虑硬件限制或设备端问题
+```
+
+#### 技术原理
+
+**缓冲区作用**:
+```
+解码线程 → [Ring Buffer] → 音频回调线程
+            ↑               ↓
+            写入            读取 (每 1.33ms @ 64 frames)
+            
+缓冲越小：
+✅ 延迟越低（数据新鲜度高）
+❌ 抗抖动能力弱（网络波动敏感）
+
+缓冲越大：
+✅ 稳定性强（容忍网络抖动）
+❌ 延迟越高（数据老旧）
+```
+
+**Phase 3 设计哲学**:
+- 默认 64 frames：**激进低延迟**（假设用户有良好网络 + 中高端硬件）
+- 配置可调：**用户自主权**（弱系统可自行提高缓冲）
+- 监控 underrun：**可观测性**（日志显示性能是否满足需求）
+
+**历史变更**:
+```
+Phase 1: 128 frames (2.67ms) - 稳定优先
+Phase 3: 64 frames (1.33ms)  - 低延迟优先，可配置回退
+```
