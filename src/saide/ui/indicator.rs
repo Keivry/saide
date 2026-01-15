@@ -288,8 +288,20 @@ impl Indicator {
                                 ));
                                 ui.end_row();
 
-                                ui.label("Latency:");
-                                ui.label(format!("{}ms", self.video_stats.latency_ms));
+                                ui.label("Latency (avg):");
+                                ui.label(format!("{:.1}ms", self.video_stats.latency_ms));
+                                ui.end_row();
+
+                                ui.label("Latency (p95):");
+                                ui.label(format!("{:.1}ms", self.video_stats.latency_p95_ms));
+                                ui.end_row();
+
+                                ui.label("Decode:");
+                                ui.label(format!("{:.1}ms", self.video_stats.latency_decode_ms));
+                                ui.end_row();
+
+                                ui.label("GPU Upload:");
+                                ui.label(format!("{:.1}ms", self.video_stats.latency_upload_ms));
                                 ui.end_row();
 
                                 ui.label("Profile:");

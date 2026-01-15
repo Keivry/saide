@@ -371,7 +371,10 @@ impl StreamPlayer {
             fps: self.fps,
             total_frames: self.stats.video_frames as u32,
             dropped_frames: self.stats.dropped_frames as u32,
-            latency_ms: 0.0, // TODO: implement latency measurement
+            latency_ms: 0.0,
+            latency_decode_ms: 0.0,
+            latency_upload_ms: 0.0,
+            latency_p95_ms: 0.0,
         }
     }
 
