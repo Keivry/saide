@@ -3,7 +3,7 @@
 use {
     super::{
         super::{
-            coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, VisualCoordSys, VisualPos},
+            coords::{MappingPos, VisualPos},
             init::{
                 DeviceMonitorEvent,
                 INIT_RESULT_CHANNEL_CAPACITY,
@@ -15,31 +15,18 @@ use {
         indicator::Indicator,
         mapping::{MappingConfigEvent, MappingConfigWindow},
         player::{PlayerState, StreamPlayer},
+        state::{AppState, ConfigState, UIState},
         toolbar::{Toolbar, ToolbarEvent},
     },
     crate::{
-        config::{
-            ConfigManager,
-            SAideConfig,
-            mapping::{Key, MappingAction, MouseButton, WheelDirection},
-        },
-        controller::{
-            control_sender::ControlSender,
-            keyboard::KeyboardMapper,
-            mouse::{MouseMapper, MouseState},
-        },
+        config::mapping::{Key, MappingAction, MouseButton, WheelDirection},
+        controller::mouse::MouseState,
         error::Result,
-        scrcpy::connection::ScrcpyConnection,
         t,
     },
     crossbeam_channel::{Receiver, bounded},
     eframe::egui::{self, Color32},
-    std::{
-        sync::Arc,
-        thread,
-        time::{Duration, Instant},
-    },
-    tokio_util::sync::CancellationToken,
+    std::{thread, time::Instant},
     tracing::{debug, error, info, trace, warn},
 };
 
@@ -54,108 +41,40 @@ enum InitState {
     Failed(String),
 }
 
-/// Main UI state
 pub struct SAideApp {
-    /// Ctrl + C receiver
     shutdown_rx: Receiver<()>,
-
-    /// Shutdown requested flag
     shutdown_requested: bool,
 
     toolbar: Toolbar,
-
     indicator: Indicator,
-
     player: StreamPlayer,
+    mapping_config_window: MappingConfigWindow,
 
-    /// Configuration manager
-    config_manager: ConfigManager,
+    app_state: AppState,
+    config_state: ConfigState,
+    ui_state: UIState,
 
-    /// ScrcpyConnection (kept alive to prevent server shutdown)
-    connection: Option<ScrcpyConnection>,
-
-    /// Control sender (for sending input commands to device)
-    control_sender: Option<ControlSender>,
-
-    /// Mouse input mapper
-    mouse_mapper: Option<MouseMapper>,
-
-    /// Keyboard input mapper
-    keyboard_mapper: Option<KeyboardMapper>,
-
-    /// Device monitor receiver
-    device_monitor_rx: Option<Receiver<DeviceMonitorEvent>>,
-
-    /// Timestamp of last paint
-    last_paint_instant: Option<Instant>,
-
-    /// Device serial
-    device_serial: String,
-
-    /// Device orientation (0-3), clockwise
-    device_orientation: u32,
-
-    /// Coordinate systems
-    mapping_coords: MappingCoordSys,
-    scrcpy_coords: ScrcpyCoordSys,
-    visual_coords: VisualCoordSys,
-
-    /// Audio disabled warning message (if audio was requested but unavailable)
-    audio_warning: Option<String>,
-
-    // Frame rate limiter duration
-    frame_rate_limiter: Option<Duration>,
-
-    /// Initialization state machine
     init_state: InitState,
     init_instant: Option<Instant>,
     init_rx: Option<Receiver<InitEvent>>,
 
-    /// Keyboard mapping switch
-    keyboard_enabled: bool,
-
-    /// Mouse mapping switch
-    mouse_enabled: bool,
-
-    /// Last mouse pointer position in video rect
-    last_pointer_pos: VisualPos,
-
-    /// Keyboard custom mapping switch
-    keyboard_custom_mapping_enabled: bool,
-
-    /// Android device input method state
-    device_ime_state: bool,
-
-    /// Mapping configuration window
-    mapping_config_window: MappingConfigWindow,
-
-    /// Ui initialization state, to trigger first-time setups
-    /// (e.g. window resize)
-    ui_initialized: bool,
-
-    /// Cancellation token for background tasks
-    cancel_token: CancellationToken,
+    last_paint_instant: Option<Instant>,
 }
 
 impl SAideApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         serial: &str,
-        config_manager: ConfigManager,
+        config_manager: crate::config::ConfigManager,
         shutdown_rx: Receiver<()>,
     ) -> Self {
         let config = config_manager.config();
-
-        let keyboard_enabled = config.general.keyboard_enabled;
-        let mouse_enabled = config.general.mouse_enabled;
         let keyboard_custom_mapping_enabled = config.mappings.initial_state;
-
         let indicator_position = config.general.indicator_position;
         let max_fps = config.scrcpy.video.max_fps;
-        let vsync = config.gpu.vsync;
         let audio_buffer_frames = config.scrcpy.audio.buffer_frames;
 
-        let cancel_token = CancellationToken::new();
+        let cancel_token = tokio_util::sync::CancellationToken::new();
 
         let mut toolbar = Toolbar::new();
         toolbar.set_keyboard_mapping_enabled(keyboard_custom_mapping_enabled);
@@ -163,67 +82,24 @@ impl SAideApp {
         Self {
             shutdown_rx,
             shutdown_requested: false,
-
             toolbar,
             indicator: Indicator::new(indicator_position, max_fps as f32),
             player: StreamPlayer::new(cc, cancel_token.clone(), audio_buffer_frames),
-
-            config_manager,
-
-            connection: None,
-
-            control_sender: None,
-
-            mouse_mapper: None,
-
-            keyboard_mapper: None,
-
-            device_monitor_rx: None,
-
-            last_paint_instant: None,
-
-            device_serial: serial.to_owned(),
-
-            device_orientation: 0,
-
-            audio_warning: None,
-
-            // Initialize coordinate systems with default values
-            mapping_coords: MappingCoordSys::new(0),
-            scrcpy_coords: ScrcpyCoordSys::new(1, 1, None),
-            visual_coords: VisualCoordSys::new(0), // Only stores rotation, rect passed at runtime
-
-            frame_rate_limiter: if vsync {
-                None
-            } else {
-                Some(Duration::from_millis(u64::from(1000 / max_fps)))
-            },
-
+            mapping_config_window: MappingConfigWindow::new(),
+            app_state: AppState::new(serial.to_owned(), cancel_token),
+            config_state: ConfigState::new(config_manager),
+            ui_state: UIState::new(),
             init_state: InitState::NotStarted,
             init_instant: None,
             init_rx: None,
-
-            keyboard_enabled,
-            mouse_enabled,
-
-            last_pointer_pos: VisualPos::ZERO,
-
-            keyboard_custom_mapping_enabled,
-
-            device_ime_state: false,
-
-            mapping_config_window: MappingConfigWindow::new(),
-
-            ui_initialized: false,
-
-            cancel_token,
+            last_paint_instant: None,
         }
     }
 
-    // Get current configuration
-    pub fn config(&self) -> Arc<SAideConfig> { self.config_manager.config() }
+    pub fn config(&self) -> std::sync::Arc<crate::config::SAideConfig> {
+        self.config_state.config()
+    }
 
-    /// Background initialization function
     fn init(&mut self) {
         self.init_state = InitState::InProgress;
         self.init_instant = Some(Instant::now());
@@ -232,10 +108,10 @@ impl SAideApp {
         self.init_rx = Some(rx);
 
         start_initialization(
-            &self.device_serial,
-            self.config_manager.config(),
+            self.app_state.device_serial(),
+            self.config_state.config(),
             tx,
-            self.cancel_token.clone(),
+            self.app_state.cancel_token.clone(),
         );
     }
 
@@ -258,39 +134,41 @@ impl SAideApp {
                             "ScrcpyConnection ready: {}x{}, device: {} ({:?}), capture_orientation: {:?}",
                             video_resolution.0,
                             video_resolution.1,
-                            self.device_serial,
+                            self.app_state.device_serial(),
                             device_name,
                             corientation
                         );
 
                         // Store audio warning if present
-                        self.audio_warning = audio_disabled_reason;
+                        self.ui_state.audio_warning = audio_disabled_reason;
 
                         // Save connection (to keep it alive and prevent server shutdown)
-                        self.connection = Some(connection);
+                        self.app_state.connection = Some(connection);
 
                         // Save control sender
-                        self.control_sender = Some(control_sender);
+                        self.app_state.control_sender = Some(control_sender);
 
                         // Start player with streams
                         self.player.start(
                             video_stream,
                             audio_stream,
                             video_resolution,
-                            &self.device_serial,
+                            self.app_state.device_serial(),
                         );
 
                         // Initialize capture orientation for ScrcpyCoordSys
-                        self.scrcpy_coords.update_capture_orientation(corientation);
+                        self.app_state
+                            .scrcpy_coords_mut()
+                            .update_capture_orientation(corientation);
                     }
                     InitEvent::KeyboardMapper(keyboard_mapper) => {
-                        self.keyboard_mapper = Some(keyboard_mapper);
+                        self.app_state.keyboard_mapper = Some(keyboard_mapper);
                     }
                     InitEvent::MouseMapper(mouse_mapper) => {
-                        self.mouse_mapper = Some(mouse_mapper);
+                        self.app_state.mouse_mapper = Some(mouse_mapper);
                     }
                     InitEvent::DeviceMonitor(_device_monitor_rx) => {
-                        self.device_monitor_rx = Some(_device_monitor_rx);
+                        self.app_state.device_monitor_rx = Some(_device_monitor_rx);
                     }
                     InitEvent::Error(e) => {
                         error!("Initialization error: {}", e);
@@ -310,21 +188,27 @@ impl SAideApp {
                 && video_rect.height() > 0.0
                 && !video_rect.min.x.is_nan();
 
-            if self.device_monitor_rx.is_some() && stream_ready {
+            if self.app_state.device_monitor_rx.is_some() && stream_ready {
                 self.init_state = InitState::Ready;
                 info!("Initialization completed successfully");
 
                 // Initialize coordinate systems now that video is ready
-                self.mapping_coords
-                    .update_device_orientation(self.device_orientation);
-                debug!("Initial device orientation: {}", self.device_orientation);
-                self.visual_coords.update_rotation(self.player.rotation());
+                self.ui_state
+                    .mapping_coords_mut()
+                    .update_device_orientation(self.app_state.device_orientation());
+                debug!(
+                    "Initial device orientation: {}",
+                    self.app_state.device_orientation()
+                );
+                self.ui_state
+                    .visual_coords_mut()
+                    .update_rotation(self.player.rotation());
                 debug!("Initial video rotation: {}", self.player.rotation());
 
                 // Apply turn_screen_off setting if enabled
                 let config = self.config();
                 if config.scrcpy.options.turn_screen_off
-                    && let Some(sender) = &self.control_sender
+                    && let Some(sender) = &self.app_state.control_sender
                 {
                     if let Err(e) = sender.send_screen_off_with_brightness_save() {
                         error!("Failed to turn screen off on init: {}", e);
@@ -365,7 +249,9 @@ impl SAideApp {
         ctx.request_repaint();
 
         // Update VisualCoordSys (user rotation changed)
-        self.visual_coords.update_rotation(video_rotation);
+        self.ui_state
+            .visual_coords_mut()
+            .update_rotation(video_rotation);
 
         debug!("Video rotated to {}", video_rotation);
     }
@@ -377,15 +263,15 @@ impl SAideApp {
 
     /// Toggle keyboard custom mapping
     fn toggle_keyboard_mapping(&mut self) {
-        self.keyboard_custom_mapping_enabled = !self.keyboard_custom_mapping_enabled;
+        self.config_state.toggle_keyboard_custom_mapping();
 
         // Update toolbar button state
         self.toolbar
-            .set_keyboard_mapping_enabled(self.keyboard_custom_mapping_enabled);
+            .set_keyboard_mapping_enabled(self.config_state.keyboard_custom_mapping_enabled());
 
         info!(
             "Keyboard custom mapping toggled: {}",
-            self.keyboard_custom_mapping_enabled
+            self.config_state.keyboard_custom_mapping_enabled()
         );
     }
 
@@ -407,18 +293,18 @@ impl SAideApp {
 
         let mut rotated = false;
 
-        if let Some(rx) = &self.device_monitor_rx {
+        if let Some(rx) = &self.app_state.device_monitor_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     DeviceMonitorEvent::Rotated(new_orientation) => {
                         debug!("Device rotated to orientation: {}", new_orientation * 90);
-                        self.device_orientation = new_orientation % 4;
+                        self.app_state.device_orientation = new_orientation % 4;
                         rotated = true;
                     }
                     DeviceMonitorEvent::ImStateChanged(im_state) => {
-                        if im_state != self.device_ime_state {
+                        if im_state != self.config_state.device_ime_state() {
                             debug!("Device IME state changed: {}", im_state);
-                            self.device_ime_state = im_state;
+                            self.config_state.device_ime_state = im_state;
                         }
                     }
                     DeviceMonitorEvent::DeviceOffline => {
@@ -436,12 +322,16 @@ impl SAideApp {
             self.refresh_mapping_profiles();
 
             self.indicator
-                .update_device_orientation(self.device_orientation);
+                .update_device_orientation(self.app_state.device_orientation());
 
             // Update MappingCoordSys (device orientation changed)
-            self.mapping_coords
-                .update_device_orientation(self.device_orientation);
-            debug!("Updated device orientation to {}", self.device_orientation);
+            self.ui_state
+                .mapping_coords_mut()
+                .update_device_orientation(self.app_state.device_orientation());
+            debug!(
+                "Updated device orientation to {}",
+                self.app_state.device_orientation()
+            );
         }
     }
 
@@ -451,7 +341,7 @@ impl SAideApp {
             return;
         }
 
-        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             warn!("Keyboard mapper not available, skipping mapping config events");
             return;
         };
@@ -464,9 +354,9 @@ impl SAideApp {
                 ctx,
                 &mappings,
                 video_rect,
-                &self.visual_coords,
-                &self.scrcpy_coords,
-                &self.mapping_coords,
+                self.ui_state.visual_coords(),
+                self.app_state.scrcpy_coords(),
+                self.ui_state.mapping_coords(),
             );
 
             match event {
@@ -477,11 +367,11 @@ impl SAideApp {
                     // Convert screen position to mapping percentage coordinates (0.0-1.0)
                     // Visual -> Scrcpy -> Mapping
                     let video_rect = self.player.video_rect();
-                    if let Some(percent_pos) = self.visual_coords.to_mapping(
+                    if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
                         &screen_pos,
                         &video_rect,
-                        &self.scrcpy_coords,
-                        &self.mapping_coords,
+                        self.app_state.scrcpy_coords(),
+                        self.ui_state.mapping_coords(),
                     ) {
                         info!(
                             "Add mapping: screen=({:.1},{:.1}) -> percent=({:.6},{:.6}) [device_orientation={}]",
@@ -489,7 +379,7 @@ impl SAideApp {
                             screen_pos.y,
                             percent_pos.x,
                             percent_pos.y,
-                            self.device_orientation
+                            self.app_state.device_orientation()
                         );
 
                         self.mapping_config_window
@@ -500,11 +390,11 @@ impl SAideApp {
                     // Find nearest mapping to delete
                     // Visual -> Scrcpy -> Mapping
                     let video_rect = self.player.video_rect();
-                    if let Some(percent_pos) = self.visual_coords.to_mapping(
+                    if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
                         &screen_pos,
                         &video_rect,
-                        &self.scrcpy_coords,
-                        &self.mapping_coords,
+                        self.app_state.scrcpy_coords(),
+                        self.ui_state.mapping_coords(),
                     ) && let Some((nearest_key, nearest_pos)) =
                         find_nearest_mapping(&percent_pos, &mappings)
                     {
@@ -560,7 +450,7 @@ impl SAideApp {
     fn add_mapping(&mut self, key: Key, pos: &MappingPos) {
         info!("Adding mapping: {:?} -> ({:.4}, {:.4})", key, pos.x, pos.y);
 
-        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             error!("Keyboard mapper not initialized");
             return;
         };
@@ -569,7 +459,7 @@ impl SAideApp {
         keyboard_mapper.add_mapping(key, action);
 
         // Save to config file
-        if let Err(e) = self.config_manager.save() {
+        if let Err(e) = self.config_state.config_manager.save() {
             error!("Failed to save config: {}", e);
         } else {
             info!("Mapping saved successfully");
@@ -580,7 +470,7 @@ impl SAideApp {
     fn delete_mapping(&mut self, key: Key) {
         info!("Deleting mapping: {:?}", key);
 
-        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             error!("Keyboard mapper not initialized");
             return;
         };
@@ -588,7 +478,7 @@ impl SAideApp {
         keyboard_mapper.delete_mapping(&key);
 
         // Save to config file
-        if let Err(e) = self.config_manager.save() {
+        if let Err(e) = self.config_state.config_manager.save() {
             error!("Failed to save config: {}", e);
         } else {
             info!("Mapping deleted successfully");
@@ -596,7 +486,7 @@ impl SAideApp {
     }
 
     fn get_mapping(&self, key: &Key) -> Option<MappingAction> {
-        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             return None;
         };
 
@@ -624,14 +514,14 @@ impl SAideApp {
             return Ok(true);
         }
 
-        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             debug!("Keyboard mapper not available, ignoring key event");
             return Ok(false);
         };
 
         // Handle custom keymapping first, if enabled and IME is off
-        if self.keyboard_custom_mapping_enabled
-            && !self.device_ime_state
+        if self.config_state.keyboard_custom_mapping_enabled()
+            && !self.config_state.device_ime_state()
             && keyboard_mapper.handle_custom_keymapping_event(key)?
         {
             return Ok(true);
@@ -666,9 +556,10 @@ impl SAideApp {
 
         // Use video coordinates for scrcpy control channel
         let video_rect = self.player.video_rect();
-        let Some(scrcpy_pos) = self
-            .visual_coords
-            .to_scrcpy(pos, &video_rect, &self.scrcpy_coords)
+        let Some(scrcpy_pos) =
+            self.ui_state
+                .visual_coords
+                .to_scrcpy(pos, &video_rect, self.app_state.scrcpy_coords())
         else {
             debug!("Failed to convert screen coords to video coords");
             return;
@@ -680,16 +571,16 @@ impl SAideApp {
         );
 
         // Update ControlSender screen size
-        if let Some(sender) = &self.control_sender {
+        if let Some(sender) = &self.app_state.control_sender {
             sender.update_screen_size(
-                self.scrcpy_coords.video_width,
-                self.scrcpy_coords.video_height,
+                self.app_state.scrcpy_coords().video_width,
+                self.app_state.scrcpy_coords().video_height,
             );
         }
 
         let button = MouseButton::from(button);
 
-        let Some(mouse_mapper) = &self.mouse_mapper else {
+        let Some(mouse_mapper) = &self.app_state.mouse_mapper else {
             debug!("Mouse mapper not available, ignoring button event");
             return;
         };
@@ -707,7 +598,7 @@ impl SAideApp {
         pos: &VisualPos,
         last_pointer_pos: &VisualPos,
     ) -> Option<VisualPos> {
-        let Some(mouse_mapper) = &self.mouse_mapper else {
+        let Some(mouse_mapper) = &self.app_state.mouse_mapper else {
             return None;
         };
 
@@ -715,15 +606,16 @@ impl SAideApp {
             trace!("PointerMoved inside video rect at {:?}", pos);
 
             let video_rect = self.player.video_rect();
-            if let Some(scrcpy_pos) =
-                self.visual_coords
-                    .to_scrcpy(pos, &video_rect, &self.scrcpy_coords)
-            {
+            if let Some(scrcpy_pos) = self.ui_state.visual_coords().to_scrcpy(
+                pos,
+                &video_rect,
+                self.app_state.scrcpy_coords(),
+            ) {
                 // Update ControlSender screen size
-                if let Some(sender) = &self.control_sender {
+                if let Some(sender) = &self.app_state.control_sender {
                     sender.update_screen_size(
-                        self.scrcpy_coords.video_width,
-                        self.scrcpy_coords.video_height,
+                        self.app_state.scrcpy_coords().video_width,
+                        self.app_state.scrcpy_coords().video_height,
                     );
                 }
 
@@ -744,15 +636,17 @@ impl SAideApp {
             // If dragging and moved outside, send a button release
             let video_rect = self.player.video_rect();
             if mouse_mapper.get_button_state() != MouseState::Idle
-                && let Some(scrcpy_pos) =
-                    self.visual_coords
-                        .to_scrcpy(last_pointer_pos, &video_rect, &self.scrcpy_coords)
+                && let Some(scrcpy_pos) = self.ui_state.visual_coords().to_scrcpy(
+                    last_pointer_pos,
+                    &video_rect,
+                    self.app_state.scrcpy_coords(),
+                )
             {
                 // Update ControlSender screen size
-                if let Some(sender) = &self.control_sender {
+                if let Some(sender) = &self.app_state.control_sender {
                     sender.update_screen_size(
-                        self.scrcpy_coords.video_width,
-                        self.scrcpy_coords.video_height,
+                        self.app_state.scrcpy_coords().video_width,
+                        self.app_state.scrcpy_coords().video_height,
                     );
                 }
 
@@ -782,18 +676,19 @@ impl SAideApp {
         );
 
         let video_rect = self.player.video_rect();
-        let Some(scrcpy_pos) =
-            self.visual_coords
-                .to_scrcpy(pointer_pos, &video_rect, &self.scrcpy_coords)
-        else {
+        let Some(scrcpy_pos) = self.ui_state.visual_coords().to_scrcpy(
+            pointer_pos,
+            &video_rect,
+            self.app_state.scrcpy_coords(),
+        ) else {
             return;
         };
 
         // Update ControlSender screen size
-        if let Some(sender) = &self.control_sender {
+        if let Some(sender) = &self.app_state.control_sender {
             sender.update_screen_size(
-                self.scrcpy_coords.video_width,
-                self.scrcpy_coords.video_height,
+                self.app_state.scrcpy_coords().video_width,
+                self.app_state.scrcpy_coords().video_height,
             );
         }
 
@@ -803,7 +698,7 @@ impl SAideApp {
             WheelDirection::Down
         };
 
-        let Some(mouse_mapper) = &self.mouse_mapper else {
+        let Some(mouse_mapper) = &self.app_state.mouse_mapper else {
             debug!("Mouse mapper not available, ignoring wheel event");
             return;
         };
@@ -834,12 +729,8 @@ impl SAideApp {
         }
 
         // Update mouse state (check for long press and send drag updates)
-        if self.mouse_enabled
-            && let Err(e) = self
-                .mouse_mapper
-                .as_ref()
-                .unwrap() // Safe unwrap
-                .update()
+        if self.config_state.mouse_enabled()
+            && let Err(e) = self.app_state.mouse_mapper.as_ref().unwrap().update()
         {
             error!("Failed to update mouse mapper: {}", e);
         }
@@ -850,7 +741,7 @@ impl SAideApp {
 
             for event in &input.events {
                 // Process keyboard events
-                if self.keyboard_enabled {
+                if self.config_state.keyboard_enabled() {
                     if let egui::Event::Key {
                         key,
                         pressed,
@@ -873,9 +764,10 @@ impl SAideApp {
                         && let egui::Event::Text(text) = event
                         && !text.is_empty()
                         && let Err(e) = self
+                            .app_state
                             .keyboard_mapper
                             .as_ref()
-                            .unwrap() // Safe unwrap
+                            .unwrap()
                             .handle_text_input_event(text)
                     {
                         info!("Failed to handle text input event: {}", e);
@@ -883,7 +775,7 @@ impl SAideApp {
                 }
 
                 // Process mouse events
-                if !self.mouse_enabled {
+                if !self.config_state.mouse_enabled() {
                     continue;
                 }
 
@@ -898,9 +790,9 @@ impl SAideApp {
                     }
                     egui::Event::PointerMoved(pos) => {
                         if let Some(new_pos) =
-                            self.process_mouse_move_event(pos, &self.last_pointer_pos)
+                            self.process_mouse_move_event(pos, &self.ui_state.last_pointer_pos)
                         {
-                            self.last_pointer_pos = new_pos;
+                            self.ui_state.last_pointer_pos = new_pos;
                         }
                     }
                     egui::Event::MouseWheel { delta, .. } => {
@@ -914,15 +806,15 @@ impl SAideApp {
     }
 
     fn refresh_mapping_profiles(&mut self) {
-        let device_orientation = self.device_orientation;
+        let device_orientation = self.app_state.device_orientation();
 
-        let Some(keyboard_mapper) = &self.keyboard_mapper else {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             debug!("Keyboard mapper not available for profile refresh");
             self.indicator.reset_profiles();
             return;
         };
 
-        keyboard_mapper.refresh_profiles(&self.device_serial, device_orientation);
+        keyboard_mapper.refresh_profiles(self.app_state.device_serial(), device_orientation);
 
         let avail_profile_names = keyboard_mapper.get_avail_profiles();
         let active_profile_name = keyboard_mapper.get_active_profile_name();
@@ -948,7 +840,7 @@ impl SAideApp {
                 }
                 ToolbarEvent::ToggleScreenPower => {
                     debug!("Turning off screen from toolbar");
-                    if let Some(sender) = &self.control_sender {
+                    if let Some(sender) = &self.app_state.control_sender {
                         // Only turn OFF screen, wake up with physical power button
                         if let Err(e) = sender.send_set_display_power(false) {
                             error!("Failed to turn off screen: {}", e);
@@ -983,7 +875,7 @@ impl Drop for SAideApp {
         debug!("SAideApp dropping, cleaning up connection");
 
         // Explicitly shutdown connection to ensure server process is killed
-        if let Some(mut conn) = self.connection.take()
+        if let Some(mut conn) = self.app_state.connection.take()
             && let Err(e) = conn.shutdown()
         {
             debug!("Failed to shutdown connection: {}", e);
@@ -998,7 +890,7 @@ impl eframe::App for SAideApp {
         debug!("SAideApp exiting, cancelling background tasks");
 
         // Cancel background tasks
-        self.cancel_token.cancel();
+        self.app_state.cancel_token.cancel();
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1036,7 +928,7 @@ impl eframe::App for SAideApp {
             }
             InitState::Ready => {
                 // Store dimensions before update
-                let old_dimensions = if self.ui_initialized {
+                let old_dimensions = if self.ui_state.is_ui_initialized() {
                     self.player.video_dimensions()
                 } else {
                     // First frame after init, force resize
@@ -1063,11 +955,12 @@ impl eframe::App for SAideApp {
                     self.indicator.update_video_resolution(new_dimensions);
 
                     // Update ScrcpyCoordSys (video resolution changed)
-                    self.scrcpy_coords
+                    self.app_state
+                        .scrcpy_coords_mut()
                         .update_video_size(new_dimensions.0 as u16, new_dimensions.1 as u16);
 
                     // Mark UI as initialized
-                    self.ui_initialized = true;
+                    self.ui_state.set_ui_initialized();
                 }
 
                 // Process mapping configuration window
@@ -1101,7 +994,7 @@ impl eframe::App for SAideApp {
         }
 
         // Show audio warning if present (overlay at top)
-        if let Some(warning) = self.audio_warning.clone() {
+        if let Some(warning) = self.ui_state.audio_warning.clone() {
             let mut close_clicked = false;
             egui::Area::new(egui::Id::new("audio_warning"))
                 .fixed_pos(egui::pos2(Toolbar::width() + 10.0, 10.0))
@@ -1135,13 +1028,13 @@ impl eframe::App for SAideApp {
                         });
                 });
             if close_clicked {
-                self.audio_warning = None;
+                self.ui_state.audio_warning = None;
             }
         }
 
         // Frame rate limiting (only when streaming)
         if matches!(self.player.state(), PlayerState::Streaming) {
-            if let Some(limiter) = self.frame_rate_limiter {
+            if let Some(limiter) = self.config_state.frame_rate_limiter() {
                 if let Some(last) = self.last_paint_instant {
                     let elapsed = last.elapsed();
                     if elapsed < limiter {

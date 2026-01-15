@@ -3,6 +3,7 @@ mod indicator;
 mod mapping;
 mod player;
 mod saide;
+mod state;
 mod toolbar;
 
 pub use {saide::SAideApp, toolbar::Toolbar};
