@@ -149,7 +149,13 @@ impl MappingCoordSys {
                         (1.0 - pos.x) * target.video_height as f32,
                     )
                 }
-                _ => unreachable!(),
+                _ => {
+                    debug_assert!(false, "rotation must be 0-3, got {}", rotation);
+                    (
+                        pos.x * target.video_width as f32,
+                        pos.y * target.video_height as f32,
+                    )
+                }
             }
         } else {
             // Capture not locked - video follows device orientation
@@ -191,7 +197,10 @@ impl MappingCoordSys {
                     // 270° CCW: (x, y) -> (1-y, x)
                     (1.0 - py, px)
                 }
-                _ => unreachable!(),
+                _ => {
+                    debug_assert!(false, "rotation must be 0-3, got {}", rotation);
+                    (px, py)
+                }
             }
         } else {
             // Capture not locked - video follows device
@@ -272,7 +281,10 @@ impl ScrcpyCoordSys {
                 // 270° CW: (x, y) -> (y, w - x)
                 (y_norm * video_h, video_w - x_norm * video_w)
             }
-            _ => unreachable!(),
+            _ => {
+                debug_assert!(false, "rotation must be 0-3, got {}", rotation);
+                (x_norm * video_w, y_norm * video_h)
+            }
         };
 
         VisualPos::new(rect.left() + rel_x, rect.top() + rel_y)
@@ -323,7 +335,10 @@ impl ScrcpyCoordSys {
                 // Inverse: (x', y') -> (h - y', x')
                 (display_height - rel_y, rel_x, display_height, display_width)
             }
-            _ => unreachable!(),
+            _ => {
+                debug_assert!(false, "rotation must be 0-3, got {}", rotation);
+                (rel_x, rel_y, display_width, display_height)
+            }
         };
 
         // Normalize and scale to video resolution

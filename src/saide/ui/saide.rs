@@ -412,7 +412,7 @@ impl SAideApp {
                 match event {
                     DeviceMonitorEvent::Rotated(new_orientation) => {
                         debug!("Device rotated to orientation: {}", new_orientation * 90);
-                        self.device_orientation = new_orientation;
+                        self.device_orientation = new_orientation % 4;
                         rotated = true;
                     }
                     DeviceMonitorEvent::ImStateChanged(im_state) => {
