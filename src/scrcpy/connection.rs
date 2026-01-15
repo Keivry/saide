@@ -187,9 +187,21 @@ impl ScrcpyConnection {
                 debug!("Failed to read video codec metadata: {}", e);
                 None
             } else {
-                let codec_id = u32::from_be_bytes(codec_meta[0..4].try_into().unwrap());
-                let width = u32::from_be_bytes(codec_meta[4..8].try_into().unwrap());
-                let height = u32::from_be_bytes(codec_meta[8..12].try_into().unwrap());
+                let codec_id = u32::from_be_bytes(
+                    codec_meta[0..4]
+                        .try_into()
+                        .expect("BUG: slice [0..4] from [u8; 12] must be 4 bytes"),
+                );
+                let width = u32::from_be_bytes(
+                    codec_meta[4..8]
+                        .try_into()
+                        .expect("BUG: slice [4..8] from [u8; 12] must be 4 bytes"),
+                );
+                let height = u32::from_be_bytes(
+                    codec_meta[8..12]
+                        .try_into()
+                        .expect("BUG: slice [8..12] from [u8; 12] must be 4 bytes"),
+                );
                 debug!(
                     "Video codec meta: id=0x{:08x}, {}x{}",
                     codec_id, width, height
