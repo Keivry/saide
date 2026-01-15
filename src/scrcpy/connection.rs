@@ -53,25 +53,16 @@ pub struct ScrcpyConnection {
     /// Video resolution (width, height) from codec meta
     pub video_resolution: Option<(u32, u32)>,
 
-    /// Video stream socket
-    pub video_stream: Option<TcpStream>,
-
-    /// Audio stream socket (optional)
-    pub audio_stream: Option<TcpStream>,
-
     /// Audio disabled reason (if audio was requested but unavailable)
     pub audio_disabled_reason: Option<String>,
-
-    /// Control stream socket
-    pub control_stream: Option<TcpStream>,
 
     /// Local TCP port used for tunneling
     pub local_port: u16,
 
-    /// Server process handle
+    video_stream: Option<TcpStream>,
+    audio_stream: Option<TcpStream>,
+    control_stream: Option<TcpStream>,
     server_process: Option<Child>,
-
-    /// Device serial
     serial: String,
 }
 
@@ -304,14 +295,11 @@ impl ScrcpyConnection {
     /// Read and parse an audio packet
     pub fn read_audio_packet(&mut self) -> Result<AudioPacket> {
         if let Some(ref mut stream) = self.audio_stream {
-            // Read 12-byte header first
             let mut header = [0u8; 12];
             stream.read_exact(&mut header)?;
 
-            // Parse packet size from header
             let packet_size = u32::from_be_bytes([header[8], header[9], header[10], header[11]]);
 
-            // Read full packet (header + payload)
             let total_size = 12 + packet_size as usize;
             let mut data = vec![0u8; total_size];
             data[..12].copy_from_slice(&header);
@@ -325,7 +313,14 @@ impl ScrcpyConnection {
         ))
     }
 
-    /// Gracefully shutdown connection
+    pub fn take_video_stream(&mut self) -> Option<TcpStream> { self.video_stream.take() }
+
+    pub fn take_audio_stream(&mut self) -> Option<TcpStream> { self.audio_stream.take() }
+
+    pub fn take_control_stream(&mut self) -> Option<TcpStream> { self.control_stream.take() }
+
+    pub fn set_control_stream(&mut self, stream: TcpStream) { self.control_stream = Some(stream); }
+
     pub fn shutdown(&mut self) -> Result<()> {
         debug!("Shutting down connection");
 

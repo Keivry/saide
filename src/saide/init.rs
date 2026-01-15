@@ -147,15 +147,12 @@ fn start_scrcpy_connection(
 
         info!("ScrcpyConnection established successfully");
 
-        // Extract streams (but keep connection alive)
         let video_stream = connection
-            .video_stream
-            .take()
+            .take_video_stream()
             .ok_or_else(|| SAideError::Other("Video stream not available".to_string()))?;
-        let audio_stream = connection.audio_stream.take();
+        let audio_stream = connection.take_audio_stream();
         let control_stream = connection
-            .control_stream
-            .take()
+            .take_control_stream()
             .ok_or_else(|| SAideError::Other("Control stream not available".to_string()))?;
         let video_resolution = connection
             .video_resolution
@@ -163,8 +160,6 @@ fn start_scrcpy_connection(
         let device_name = connection.device_name.clone();
         let audio_disabled_reason = connection.audio_disabled_reason.clone();
 
-        // Create ControlSender with cloned stream
-        // We need to clone the TcpStream to keep both in ControlSender and return original
         let control_stream_clone = control_stream
             .try_clone()
             .map_err(|e| SAideError::Other(format!("Failed to clone control stream: {}", e)))?;
@@ -180,8 +175,7 @@ fn start_scrcpy_connection(
             video_resolution.0, video_resolution.1, capture_orientation
         );
 
-        // Put the original control_stream back into connection to keep it alive
-        connection.control_stream = Some(control_stream);
+        connection.set_control_stream(control_stream);
 
         // Send connection ready event (with connection to keep alive)
         tx.send(InitEvent::ConnectionReady {
