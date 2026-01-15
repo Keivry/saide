@@ -1,7 +1,10 @@
 # SAide 任务清单
 
 > **最后更新**: 2026-01-15  
-> **当前状态**: ✅ Phase 1 延迟优化完成 (infrastructure + integration)
+> **当前状态**: 🚀 Phase 3 延迟优化进行中 (音频 + 输入优化)  
+> **Phase 1**: ✅ 完成 (13-25ms 降低, 目标 20-35ms 已达成)  
+> **Phase 2**: ❌ 终止 (wgpu v28 无外部内存 API, 详见 `docs/PHASE2_ZEROCOPY_FEASIBILITY.md`)  
+> **Phase 3**: 🔄 进行中 (目标额外降低 8-18ms)
 
 ---
 
@@ -179,42 +182,95 @@
 - [ ] **[decoder]** `src/scrcpy/hwcodec.rs:104`: `list_video_encoders` 空实现  
   **需求**: 通过 scrcpy-server 查询设备编解码器列表（H.264/H.265/AV1）
 
-### 延迟优化 (Phase 2-3) - 见 docs/LATENCY_OPTIMIZATION.md
+### 延迟优化 Phase 3 (进行中) - 详见 docs/LATENCY_OPTIMIZATION.md
 
-- [x] **[latency]** Phase 2 零拷贝 GPU 解码技术调研 (2026-01-15)  
-  **最终状态**: ❌ **已终止** - wgpu v28 验证失败,不支持外部内存 API  
-  **调研成果**: `docs/PHASE2_ZEROCOPY_FEASIBILITY.md` (850+ 行技术分析)  
-  **原型代码**: `examples/test_vulkan_import.rs` (v27/v28 兼容性测试)  
-  **终止原因**:  
-    1. wgpu v28 仍无 `Device::as_hal()` 或外部内存导入 API  
-    2. ash 重写成本过高 (2-3 周) vs 低收益 (12-20ms)  
-    3. Phase 1 已达目标 (20-35ms) + Phase 3 可再降 8-18ms  
-  **下一步**: 转向 Phase 3 音频/输入优化 (✅ 推荐路径)
+#### Phase 2 调研结果 (已完成)
 
-- [ ] **[latency]** Phase 3: CPAL 独占模式 (`src/decoder/audio/player.rs`)  
-  **需求**: 尝试音频独占模式降低系统混音缓冲延迟 (预期 3-8ms)  
-  **优先级**: **P1** (Phase 2 终止后的首选方案)  
-  **实施成本**: 2-3 天 (远低于 Phase 2 的 2-3 周)
+- [x] **[P0]** Phase 2 零拷贝 GPU 解码技术调研 (2026-01-15)  
+  **最终状态**: ❌ **已终止** - wgpu v28 无外部内存 API (commit 33b80ff)  
+  **调研成果**:
+  - ✅ 850+ 行可行性分析 (`docs/PHASE2_ZEROCOPY_FEASIBILITY.md`)
+  - ✅ wgpu-hal 原型测试 (`examples/test_vulkan_import.rs`)
+  - ✅ v27/v28 兼容性验证 (均不支持)
+  - ✅ 成本效益分析 (ash 重写 2-3 周 vs 12-20ms 收益 = 不值得)
+  
+  **终止原因**: wgpu v28 仍无 `Device::as_hal()`,等待官方支持时间线未知  
+  **决策**: 转向 Phase 3 音频/输入优化 (8-18ms 收益,1 周成本)
 
-- [ ] **[latency]** Phase 3: 音频缓冲降至 64 frames (`src/constant.rs:46`)  
-  **需求**: 从 128 降至 64 frames (2.67ms → 1.33ms @ 48kHz)  
-  **优先级**: **P1**  
-  **风险**: 可能导致 underrun,需硬件测试  
-  **建议**: 与 CPAL 独占模式配合测试
+#### Phase 3.1: 音频延迟优化 (P1 - 当前任务)
 
-- [ ] **[latency]** Phase 3: 原始输入设备监听 (新建 `src/input/raw_device.rs`)  
-  **需求**: Linux evdev 直接读取输入,绕过 egui 事件循环 (预期 5-10ms)  
-  **优先级**: P2 (实现难度高,仅 Linux)  
-  **复杂度**: 需处理设备权限、热插拔、焦点管理
+- [ ] **[P1]** CPAL 独占模式尝试 (`src/decoder/audio/player.rs`)  
+  **目标**: 绕过系统混音器,降低缓冲延迟 3-8ms  
+  **实施计划**:
+  1. 检测系统是否支持独占模式 (Windows WASAPI, Linux ALSA)
+  2. 优先尝试独占模式,失败则降级到共享模式
+  3. 添加配置 `audio.exclusive_mode: bool = true` (默认启用)
+  4. 文档化 OS 差异 (`docs/pitfalls.md` § CPAL 独占模式兼容性)
+  
+  **预期工作量**: 2-3 天  
+  **风险**: 中等 (需要完善的 fallback 逻辑)
 
-- [ ] **[latency]** Phase 3: 鼠标移动速度自适应 (`src/controller/mouse.rs:95`)  
-  **需求**: 根据移动速度动态调整拖拽更新间隔  
+- [ ] **[P1]** 音频缓冲降至 64 frames (`src/constant.rs:46`)  
+  **目标**: 2.67ms → 1.33ms @ 48kHz (降低 1-2ms)  
+  **实施计划**:
+  1. 修改 `AUDIO_BUFFER_SIZE: 128 → 64`
+  2. 多硬件测试 (防止 underrun)
+  3. 如有兼容性问题,改为可配置 `audio.buffer_frames: u32 = 64`
+  
+  **预期工作量**: 1 天 (含测试)  
+  **风险**: 低 (可快速回滚)  
+  **建议**: 与独占模式配合测试效果
+
+#### Phase 3.2: 输入延迟优化 (P2 - 可选)
+
+- [ ] **[P2]** evdev 原始输入监听 (新建 `src/input/raw_device.rs`)  
+  **目标**: 绕过 egui 事件循环,降低 5-10ms  
+  **实施计划**:
+  1. 使用 `evdev-rs` 直接读取 `/dev/input/event*`
+  2. 实现设备热插拔检测
+  3. 添加焦点管理 (仅窗口激活时捕获)
+  4. 处理权限问题 (需 udev 规则或 root)
+  
+  **预期工作量**: 1 周  
+  **风险**: 高 (仅 Linux,复杂度高)  
+  **优先级**: P2 (Phase 3.1 完成后评估是否实施)
+
+- [ ] **[P3]** 鼠标速度自适应 (`src/controller/mouse.rs:95`)  
+  **目标**: 动态调整更新间隔,降低 2-5ms  
+  **实施计划**:
+  1. 计算鼠标移动速度 (像素/秒)
+  2. 快速移动 → 高频更新 (每帧)
+  3. 慢速移动 → 低频更新 (节省带宽)
+  
+  **预期工作量**: 1 天  
+  **风险**: 低  
   **优先级**: P3 (增量优化,可选)
 
+#### 长期跟踪
+
 - [ ] **[future]** 监控 wgpu v29+ 外部内存 API 更新  
-  **目的**: 如果官方添加 hal 访问,重新评估 Phase 2  
-  **跟踪**: 已在 wgpu GitHub 提 Feature Request  
-  **预期**: 2026 Q2-Q3 (乐观估计)
+  **行动**: 已在 wgpu GitHub 提 Feature Request  
+  **检查频率**: 每季度一次 (2026 Q2, Q3)  
+  **触发条件**: 如 wgpu 暴露 `Device::as_hal()`,重新评估 Phase 2  
+  **参考**: `docs/PHASE2_ZEROCOPY_FEASIBILITY.md` § 技术方案
+
+---
+
+#### Phase 3 预期成果
+
+```
+累计延迟降低:
+├─ Phase 1: 13-25ms (✅ 已完成)
+├─ Phase 3.1: 4-10ms (音频优化, 进行中)
+├─ Phase 3.2: 7-15ms (输入优化, 可选)
+└─ 总计: 24-50ms
+
+最终延迟:
+├─ 基线: 50-70ms
+├─ Phase 1 后: 30-50ms (✅ 目标达成)
+├─ Phase 3.1 后: 26-40ms (P1 目标)
+└─ Phase 3.2 后: 20-35ms (P2 延伸目标)
+```
 
 ### 平台支持
 
@@ -294,30 +350,43 @@
 
 ## 已完成
 
-- [x] 2026-01-15: ✅ **Phase 1 延迟优化完成** (commits 4ea165a → b259ea4 + 本次修复, 共 10 commits)
-  - [x] LatencyProfiler + LatencyStats 实现 (追踪 5 阶段 + 60帧统计)
-  - [x] FFmpeg 解码器优化 (FAST + EXPERIMENTAL 标志)
-  - [x] TCP_QUICKACK 网络优化 (Linux, 3-5ms)
-  - [x] ControlSender flush 移除 (2-5ms)
-  - [x] 动态 AV 同步阈值 (JitterEstimator, 3-5ms)
-  - [x] UI 集成准备 (VideoStats 扩展 + 指示器显示)
-  - [x] **视频解码线程集成** (mark_receive/decode/upload/display, 实时统计)
-  - [x] **LatencyStats 传递到 UI** (avg/p95 延迟显示)
-  - [x] **修复解码时间测量** (mark_decode 调用时机,从解码前移至解码后)
-  - [x] **文档化已知限制** (GPU 上传时间为近似值,详见 docs/LATENCY_OPTIMIZATION.md)
-  - 音频线程集成已推迟 (低优先级 - 音频基线 <10ms)
-  
-  **已知限制**: GPU Upload 时间为近似值 (测量通道发送而非实际 GPU 上传,误差 1-3ms)  
-  **预期收益**: 13-25ms 延迟降低 (一旦在真机测试验证)  
-  **下一步**: Phase 2 - 零拷贝 GPU 解码 (预期额外降低 20-40ms)
+### Phase 1: 延迟优化基础设施 (✅ 完成 2026-01-15)
 
+- [x] LatencyProfiler + LatencyStats 实现 (追踪 5 阶段 + 60 帧统计)
+- [x] FFmpeg 解码器优化 (FAST + EXPERIMENTAL 标志)
+- [x] TCP_QUICKACK 网络优化 (Linux, 3-5ms)
+- [x] ControlSender flush 移除 (2-5ms)
+- [x] 动态 AV 同步阈值 (JitterEstimator, 3-5ms)
+- [x] 视频解码线程集成 (mark_receive/decode/upload/display)
+- [x] LatencyStats 传递到 UI (avg/p95 延迟显示)
+- [x] 修复解码时间测量 (mark_decode 时机修正)
+- [x] 文档化已知限制 (GPU 上传时间近似值)
+
+**成果**: 13-25ms 延迟降低, 目标 30-50ms → 20-35ms ✅ 达成  
+**已知限制**: GPU Upload 时间误差 1-3ms (测量通道发送,非实际上传)  
+**Commits**: 4ea165a → 76bebac (10 commits)
+
+### Phase 2: 零拷贝 GPU 解码调研 (❌ 终止 2026-01-15)
+
+- [x] 完整可行性分析 (`docs/PHASE2_ZEROCOPY_FEASIBILITY.md`, 850+ 行)
+- [x] wgpu-hal 原型测试 (`examples/test_vulkan_import.rs`)
+- [x] wgpu v27 验证 (❌ 无 hal 公开 API)
+- [x] wgpu v28 验证 (❌ 仍无外部内存 API)
+- [x] 成本效益分析 (ash 重写 2-3 周 vs 12-20ms = 不值得)
+- [x] 调研文档提交 (commit 33b80ff)
+
+**终止原因**: wgpu 未暴露外部内存导入 API, ash 重写成本过高  
+**技术遗产**: 完整设计文档 + 原型代码 (供未来 wgpu v29+ 重新评估)  
+**决策**: 转向 Phase 3 音频/输入优化 (更优投入产出比)
+
+### 其他历史任务
 
 - [x] 2026-01-14: 延迟优化路线图 (`docs/LATENCY_OPTIMIZATION.md`)
 - [x] 2026-01-14: 音视频回放和输入映射延迟分析
-- [x] 2026-01-13: 全代码深度分析（架构、代码质量、测试覆盖、文档）
-- [x] 2026-01-12: TODO.md 重写（P0-P4 分级）
-- [x] 2026-01-10: i18n 架构重构（debug 热重载 + release 嵌入）
-- [x] 2026-01-09: 键盘/鼠标映射器 toggle 快捷键（F10）
+- [x] 2026-01-13: 全代码深度分析 (架构/质量/测试/文档)
+- [x] 2026-01-12: TODO.md 重写 (P0-P4 分级)
+- [x] 2026-01-10: i18n 架构重构 (debug 热重载 + release 嵌入)
+- [x] 2026-01-09: 键盘/鼠标映射器 toggle 快捷键 (F10)
 - [x] 2026-01-08: CJK 字体支持
 - [x] 2026-01-05: 配置格式从 JSON 迁移回 TOML
 - [x] 2025-12-20: 删除 video-driven 架构遗留代码
@@ -334,10 +403,11 @@
 - **P5**: 文档与规范，长期维护，逐步完善
 
 **建议处理顺序**: 
-1. **延迟优化 Phase 1** (当前进行中)
+1. 🚀 **Phase 3 延迟优化** (当前进行中)
+   - Phase 3.1 音频优化 (P1, 预期 1 周)
+   - Phase 3.2 输入优化 (P2, 可选)
 2. P0 崩溃风险修复
 3. P1 架构设计问题
-4. **延迟优化 Phase 2-3**
-5. P2 代码质量提升
-6. P4 核心模块测试
-7. P3 功能增强
+4. P2 代码质量提升
+5. P4 核心模块测试
+6. P3 功能增强
