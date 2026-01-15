@@ -24,16 +24,16 @@
 - [x] **[panic]** `src/saide/ui/saide.rs:454,622,685,702,799,831,868`: 多处 `keyboard_mapper.unwrap()` 和 `mouse_mapper.unwrap()`  
   ✅ **已修复** (commit 9e3b9a6): 使用 `let Some(...) else` 模式 + 早期返回
 
-- [ ] **[panic]** `src/saide/coords.rs:152,194,275,326`: `unreachable!()` 在取模运算后（理论上可达，因为整数溢出）  
-  **解法**: 改用 `debug_assert!` + 返回 `Result<MappingPos, CoordError>`
+- [x] **[panic]** `src/saide/coords.rs:152,194,275,326`: `unreachable!()` 在取模运算后（理论上可达，因为整数溢出）  
+  ✅ **已修复** (commit 7c6a4fa): 改用 `debug_assert!` + % 4 normalization + fallback
 
-- [ ] **[panic]** `src/decoder/audio/player.rs:95`: cpal 音频回调中包含潜在 panic 点  
-  **解法**: 回调函数中使用 `if let Ok(...) = ...` 模式，记录错误计数而非 panic
+- [x] **[panic]** `src/decoder/audio/player.rs:95`: cpal 音频回调中包含潜在 panic 点  
+  ✅ **已修复** (commit 5f6b793): 添加 bounds checking 防止数组越界
 
 ### 错误链丢失
 
-- [ ] **[error-source]** `src/error.rs:18-46`: `IoError` 未实现 `std::error::Error::source()`，丢失错误链  
-  **解法**: 将 `source_kind: io::ErrorKind` 改为存储 `source: Box<io::Error>`，实现 `source()` 方法
+- [x] **[error-source]** `src/error.rs:18-46`: `IoError` 未实现 `std::error::Error::source()`，丢失错误链  
+  ✅ **已修复** (commit 1834c36): 存储 `Option<Box<io::Error>>` + 实现 `source()` 方法
 
 ### 资源管理
 
