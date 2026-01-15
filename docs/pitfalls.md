@@ -4,6 +4,76 @@
 
 ---
 
+## Panic 预防陷阱 (P0 优先级)
+
+> **2026-01-15 更新**: P0.1-P0.4 已全部修复 (commits d59dca5, 23ea5f7, 673e8ee, 9e3b9a6)
+
+### ✅ FIXED: Option::unwrap() 在初始化竞态 (commit 9e3b9a6)
+
+**位置**: `src/saide/ui/saide.rs` 多处 (已修复)  
+**问题**: `keyboard_mapper.as_ref().unwrap()` 在初始化未完成时 panic
+
+**修复前**:
+```rust
+// ❌ 错误示例：InitEvent 未触发时 panic
+fn process_keyboard_event(&self, key: &Key) {
+    let keyboard_mapper = self.keyboard_mapper.as_ref().unwrap();  // panic!
+    keyboard_mapper.handle_key_event(key);
+}
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：优雅降级 + 日志
+fn process_keyboard_event(&self, key: &Key) {
+    let Some(keyboard_mapper) = &self.keyboard_mapper else {
+        debug!("Keyboard mapper not available, ignoring key event");
+        return Ok(false);
+    };
+    keyboard_mapper.handle_key_event(key)?;
+}
+```
+
+**教训**:
+1. **所有 Option 字段必须用 `if let Some(...)` 或 `let Some(...) else`**
+2. 注释说"Safe unwrap"不能替代实际的错误处理
+3. 初始化是异步的 (InitEvent)，事件处理可能先于初始化触发
+4. 早期返回比 panic 更好 - 应用可以继续运行
+
+**Pattern**: 优先使用 `let Some(x) = &self.field else { return; }` 而非 `if let Some(...)`
+
+---
+
+### ✅ FIXED: slice try_into().unwrap() (commit 673e8ee)
+
+**位置**: `src/scrcpy/connection.rs:190-192` (已修复)  
+**问题**: `codec_meta[0..4].try_into().unwrap()` 缺少错误上下文
+
+**修复前**:
+```rust
+// ❌ 错误示例：panic 没有说明为什么安全
+let codec_id = u32::from_be_bytes(codec_meta[0..4].try_into().unwrap());
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：用 expect() 标注不变式
+let codec_id = u32::from_be_bytes(
+    codec_meta[0..4].try_into()
+        .expect("BUG: slice [0..4] from [u8; 12] must be 4 bytes")
+);
+```
+
+**教训**:
+1. `.unwrap()` 隐藏了代码意图，`.expect("...")` 显式说明为何安全
+2. "BUG:" 前缀标识这是编程错误而非运行时错误
+3. 描述不变式有助于未来维护者理解代码假设
+4. 即使"永不 panic"的代码也应该文档化这个保证
+
+**Pattern**: 所有 `.unwrap()` 必须改为 `.expect("BUG: <invariant>")`（测试代码除外）
+
+---
+
 ## 架构设计陷阱
 
 ### ❌ God Object 反模式
@@ -273,6 +343,78 @@ fn parse_orientation(output: &str) -> Option<u32> {
 ---
 
 ## 配置管理陷阱
+
+### ✅ FIXED: ProjectDirs panic in Docker/CI (commit d59dca5)
+
+**位置**: `src/constant.rs:11` (已修复)  
+**问题**: `ProjectDirs::from(...).expect()` 在 Docker/CI 环境（无 HOME 变量）panic
+
+**修复前**:
+```rust
+// ❌ 错误示例：Docker 环境立即崩溃
+lazy_static! {
+    static ref PROJECT_DIR: ProjectDirs =
+        ProjectDirs::from("io", "keivry", "saide")
+            .expect("Failed to determine project directories");
+}
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：3 层降级策略
+pub fn config_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("io", "keivry", "saide")
+        .map(|dirs| dirs.config_dir().join("config.toml"))
+}
+
+// ConfigManager::new() 中:
+let path = constant::config_dir().unwrap_or_else(|| {
+    warn!("Unable to determine config directory, using fallback: /tmp/saide");
+    constant::fallback_config_path()  // /tmp/saide/config.toml
+});
+```
+
+**教训**:
+1. **永远不要在 `lazy_static!` 中 `.expect()`** - 它在程序启动时就会评估
+2. 环境变量（HOME, XDG_CONFIG_HOME）在 Docker/CI/sandbox 可能不存在
+3. 必须提供降级路径：用户目录 → 当前目录 → 临时目录
+4. Docker 用户应挂载卷持久化配置：`docker run -v /host/config:/tmp/saide`
+
+**相关**: commit 23ea5f7 (非 UTF-8 路径修复)
+
+---
+
+### ✅ FIXED: 非 UTF-8 路径 panic (commit 23ea5f7)
+
+**位置**: `src/config/mod.rs:122` (已修复)  
+**问题**: `path.to_str().unwrap()` 在 Windows 特殊字符路径 panic
+
+**修复前**:
+```rust
+// ❌ 错误示例：Windows 用户名含中文/特殊字符时崩溃
+let path = dir.data_dir().join("scrcpy-server");
+if path.is_file() {
+    return path.to_str().unwrap().to_string();  // panic!
+}
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例：to_string_lossy 处理无效 UTF-8
+if path.is_file() {
+    return path.to_string_lossy().to_string();  // 替换无效字符为 �
+}
+```
+
+**教训**:
+1. Windows 路径可能包含非 Unicode 字符（旧版编码遗留）
+2. `to_str()` 返回 `Option<&str>`，遇到非 UTF-8 返回 `None`
+3. `to_string_lossy()` 返回 `Cow<str>`，保证不 panic
+4. 文件路径必须用 `to_string_lossy()`，绝不能 `unwrap()`
+
+**相关**: `std::path::Path` 文档中的 UTF-8 注意事项
+
+---
 
 ### ❌ 非原子文件写入
 

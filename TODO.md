@@ -12,17 +12,17 @@
 
 ### 错误处理 & Panic 风险
 
-- [ ] **[panic]** `src/constant.rs:11`: `ProjectDirs::from(..).expect(..)` 在非标准环境（Docker/沙盒）会直接 panic  
-  **解法**: 改为返回 `Result<PathBuf>`，在 `main.rs` 提供降级策略（临时目录 `/tmp/saide`）
+- [x] **[panic]** `src/constant.rs:11`: `ProjectDirs::from(..).expect(..)` 在非标准环境（Docker/沙盒）会直接 panic  
+  ✅ **已修复** (commit d59dca5): 改为 `config_dir() -> Option<PathBuf>` + fallback 到 `/tmp/saide`
   
-- [ ] **[panic]** `src/config/mod.rs:121`: `path.to_str().unwrap()` 在非 UTF-8 路径（Windows 特殊字符）会 panic  
-  **解法**: 使用 `to_string_lossy()` 或返回 `ConfigError::InvalidPath`
+- [x] **[panic]** `src/config/mod.rs:121`: `path.to_str().unwrap()` 在非 UTF-8 路径（Windows 特殊字符）会 panic  
+  ✅ **已修复** (commit 23ea5f7): 使用 `to_string_lossy()` 处理非 UTF-8 路径
 
-- [ ] **[panic]** `src/scrcpy/connection.rs:190-192`: `try_into().unwrap()` 无错误上下文  
-  **解法**: 改用 `expect("Failed to parse video codec metadata: width/height")`
+- [x] **[panic]** `src/scrcpy/connection.rs:190-192`: `try_into().unwrap()` 无错误上下文  
+  ✅ **已修复** (commit 673e8ee): 改用 `expect("BUG: ...")` 并标注不变式
 
-- [ ] **[panic]** `src/saide/ui/saide.rs:454,622,685,702,799,831,868`: 多处 `keyboard_mapper.unwrap()` 和 `mouse_mapper.unwrap()`  
-  **解法**: 使用 `if let Some(mapper) = self.keyboard_mapper.as_mut()` 模式避免 panic
+- [x] **[panic]** `src/saide/ui/saide.rs:454,622,685,702,799,831,868`: 多处 `keyboard_mapper.unwrap()` 和 `mouse_mapper.unwrap()`  
+  ✅ **已修复** (commit 9e3b9a6): 使用 `let Some(...) else` 模式 + 早期返回
 
 - [ ] **[panic]** `src/saide/coords.rs:152,194,275,326`: `unreachable!()` 在取模运算后（理论上可达，因为整数溢出）  
   **解法**: 改用 `debug_assert!` + 返回 `Result<MappingPos, CoordError>`
