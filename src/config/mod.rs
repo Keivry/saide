@@ -119,7 +119,8 @@ fn default_scrcpy_server_path() -> String {
     if let Some(dir) = ProjectDirs::from("io", "keivry", "saide") {
         let path = dir.data_dir().join(scrcpy_server.as_str());
         if path.is_file() {
-            return path.to_str().unwrap().to_string();
+            // Use to_string_lossy to handle non-UTF-8 paths on Windows
+            return path.to_string_lossy().to_string();
         }
     }
 
