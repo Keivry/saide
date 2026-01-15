@@ -37,11 +37,11 @@
 
 ### 资源管理
 
-- [ ] **[blocking-io]** `src/scrcpy/connection.rs:86`: `connect` 签名为 `async` 但内部使用阻塞 I/O（`TcpListener::accept`）  
-  **解法**: 统一为同步 API（移除 `async`）或完全改用 `tokio::net::TcpListener`
+- [x] **[blocking-io]** `src/scrcpy/connection.rs:86`: `connect` 签名为 `async` 但内部使用阻塞 I/O（`TcpListener::accept`）  
+  ✅ **已修复** (commit 8edf92c): 移除 `async` 签名，统一为同步 API
 
-- [ ] **[validation]** ADB 命令路径未验证：多处 `Command::new("adb")` 假设 ADB 在 PATH 中  
-  **解法**: 在 `AdbShell::new()` 验证 `adb` 可执行性，缓存路径或提供 `config.adb_path` 覆盖
+- [x] **[validation]** ADB 命令路径未验证：多处 `Command::new("adb")` 假设 ADB 在 PATH 中  
+  ✅ **已修复** (commit ec5596e): 添加 `AdbShell::verify_adb_available()`，在启动时验证
 
 ---
 
