@@ -118,13 +118,13 @@ fn start_scrcpy_connection(
 
         debug!("Connecting to device: {}", serial);
 
-        // Check if we should lock orientation for NVDEC
-        // TODO: User can override this in config later
-        let capture_orientation = if ServerParams::should_lock_orientation_for_nvdec() {
-            Some(0) // Lock to portrait (0°)
-        } else {
-            None
-        };
+        let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
+            if ServerParams::should_lock_orientation_for_nvdec() {
+                Some(0)
+            } else {
+                None
+            }
+        });
 
         // Establish ScrcpyConnection (blocking)
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -275,10 +275,12 @@ async fn scrcpy_connection(
         info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
     }
 
-    ScrcpyConnection::connect(serial, server_path, params).map_err(|e| {
-        error!("Failed to establish scrcpy connection: {}", e);
-        e
-    })
+    ScrcpyConnection::connect(serial, server_path, &config.general.bind_address, params).map_err(
+        |e| {
+            error!("Failed to establish scrcpy connection: {}", e);
+            e
+        },
+    )
 }
 
 /// Start device monitor thread

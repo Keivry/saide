@@ -14,10 +14,6 @@ use {
 
 const WGPU_LOG_LEVEL: &str = "error";
 
-// Default player window size
-const DEFAULT_WIDTH: u32 = 1280;
-const DEFAULT_HEIGHT: u32 = 720;
-
 fn main() -> Result<()> {
     let config_manager = ConfigManager::new()?;
 
@@ -71,11 +67,13 @@ fn main() -> Result<()> {
 
 fn start_ui(serial: &str, config_manager: ConfigManager, shutdown_rx: Receiver<()>) -> Result<()> {
     let toolbar_width = Toolbar::width();
+    let window_width = config_manager.config().general.window_width;
+    let window_height = config_manager.config().general.window_height;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("SAide")
-            .with_inner_size([DEFAULT_WIDTH as f32 + toolbar_width, DEFAULT_HEIGHT as f32]),
+            .with_inner_size([window_width as f32 + toolbar_width, window_height as f32]),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             // Set present mode based on VSync config

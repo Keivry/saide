@@ -42,8 +42,7 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
 
-    let mut conn =
-        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
+    let mut conn = ScrcpyConnection::connect(&serial, server_jar, params)?;
 
     if conn.audio_stream.is_none() {
         println!("⚠️  Audio not available");

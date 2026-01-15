@@ -24,6 +24,10 @@ pub struct VideoConfig {
     pub codec: String,
     #[serde(default = "default_encoder")]
     pub encoder: Option<String>,
+    /// Lock screen orientation during capture (0-3: portrait/landscape/portrait180/landscape180)
+    /// None = auto-rotate with device, Some(0) = lock to portrait
+    #[serde(default)]
+    pub capture_orientation: Option<u32>,
 }
 
 impl Default for VideoConfig {
@@ -34,6 +38,7 @@ impl Default for VideoConfig {
             max_size: default_max_size(),
             codec: default_codec(),
             encoder: default_encoder(),
+            capture_orientation: None,
         }
     }
 }

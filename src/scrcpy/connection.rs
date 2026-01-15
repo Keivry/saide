@@ -83,7 +83,12 @@ impl ScrcpyConnection {
     /// 2. Setup ADB reverse tunnel
     /// 3. Start server process
     /// 4. Accept socket connections
-    pub fn connect(serial: &str, server_jar_path: &str, mut params: ServerParams) -> Result<Self> {
+    pub fn connect(
+        serial: &str,
+        server_jar_path: &str,
+        bind_address: &str,
+        mut params: ServerParams,
+    ) -> Result<Self> {
         let scid = params.scid;
         let socket_name = get_socket_name(scid);
 
@@ -118,11 +123,9 @@ impl ScrcpyConnection {
         // (as per scrcpy: client must listen before server starts)
         let local_port = find_available_port(DEFAULT_PORT_RANGE.0, DEFAULT_PORT_RANGE.1)?;
 
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))?;
+        let listener = TcpListener::bind(format!("{}:{}", bind_address, local_port))?;
 
-        listener.set_nonblocking(false)?;
-
-        debug!("Listening on 127.0.0.1:{}", local_port);
+        debug!("Listening on {}:{}", bind_address, local_port);
 
         // Step 3: Setup ADB reverse tunnel (after listener is ready)
         setup_reverse_tunnel(serial, &socket_name, local_port)?;

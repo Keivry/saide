@@ -327,8 +327,7 @@ fn test_codec_options(
         .build()?;
 
     let result = rt.block_on(async {
-        // Try to establish connection
-        let mut conn = match ScrcpyConnection::connect(serial, server_jar, params) {
+        let mut conn = match ScrcpyConnection::connect(serial, server_jar, "127.0.0.1", params) {
             Ok(c) => c,
             Err(e) => {
                 info!("  Connection failed: {}", e);

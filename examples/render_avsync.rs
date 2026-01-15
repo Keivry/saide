@@ -217,8 +217,7 @@ fn av_worker(
         .enable_all()
         .build()?;
 
-    let mut conn =
-        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
+    let mut conn = ScrcpyConnection::connect(&serial, server_jar, params)?;
 
     // Get resolution before extracting streams
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));

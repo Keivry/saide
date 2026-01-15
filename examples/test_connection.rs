@@ -44,11 +44,7 @@ fn main() -> Result<()> {
     println!("  send_codec_meta: {}", params.send_codec_meta);
 
     println!("\n🔌 建立连接中...");
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let mut conn =
-        rt.block_on(async { ScrcpyConnection::connect(&serial, server_jar, params).await })?;
+    let mut conn = ScrcpyConnection::connect(&serial, server_jar, params)?;
 
     println!("✅ 连接成功!");
     println!(

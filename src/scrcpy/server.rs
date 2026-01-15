@@ -95,32 +95,24 @@ pub struct ServerParams {
 impl Default for ServerParams {
     fn default() -> Self {
         Self {
-            // Use only 31 bits to avoid signed int issues on Java side
             scid: rand::random::<u32>() & 0x7FFF_FFFF,
             video: true,
             video_codec: "h264".to_string(),
             video_bit_rate: 8_000_000,
-            max_size: 1600,
+            max_size: 1920,
             max_fps: 60,
             audio: false,
             audio_codec: "opus".to_string(),
-            audio_source: "output".to_string(), // Default to REMOTE_SUBMIX
+            audio_source: "output".to_string(),
             control: true,
             tunnel_forward: false,
             send_dummy_byte: true,
             send_frame_meta: true,
-            send_codec_meta: true, // Match scrcpy default. TODO: server ignores false?
-            send_device_meta: true, // Default is true in scrcpy
+            send_codec_meta: true,
+            send_device_meta: true,
             log_level: "info".to_string(),
-            video_encoder: None, // Auto-select best encoder
+            video_encoder: None,
 
-            // 🚀 LATENCY OPTIMIZATION: Use Baseline profile, no B-frames
-            // Default is None, set per-device in for_device()
-            // Benefits:
-            // - Lower latency (~50-100ms)
-            // - Better compatibility with hardware decoders (NVDEC)
-            // - Reduced CPU usage on decoding side
-            // - Avoids issues with B-frames on some devices
             video_codec_options: None,
 
             // Auto (follows device rotation)
@@ -345,7 +337,7 @@ mod tests {
             video: true,
             video_codec: "h264".to_string(),
             video_bit_rate: 8_000_000,
-            max_size: 1600,
+            max_size: 1920,
             max_fps: 60,
             audio: false,
             control: true,
@@ -362,7 +354,7 @@ mod tests {
         assert!(args.contains(&"scid=12345678".to_string()));
         assert!(args.contains(&"log_level=info".to_string()));
         assert!(args.contains(&"video_bit_rate=8000000".to_string()));
-        assert!(args.contains(&"max_size=1600".to_string()));
+        assert!(args.contains(&"max_size=1920".to_string()));
         assert!(args.contains(&"max_fps=60".to_string()));
         assert!(args.contains(&"audio=false".to_string()));
         assert!(args.contains(&"send_dummy_byte=true".to_string()));

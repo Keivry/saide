@@ -109,13 +109,11 @@ impl AdbShell {
                             .and_then(|rotation_part| {
                                 let rotation_str = rotation_part.trim();
 
-                                // Match rotation strings like "ROTATION_0", "ROTATION_90", etc.
-                                // TODO: Support different Android versions if output format changes
                                 match rotation_str {
-                                    "ROTATION_0" => Some(0),
-                                    "ROTATION_90" => Some(1),
-                                    "ROTATION_180" => Some(2),
-                                    "ROTATION_270" => Some(3),
+                                    "ROTATION_0" | "0" => Some(0),
+                                    "ROTATION_90" | "1" => Some(1),
+                                    "ROTATION_180" | "2" => Some(2),
+                                    "ROTATION_270" | "3" => Some(3),
                                     _ => None,
                                 }
                             })
@@ -328,8 +326,10 @@ impl AdbShell {
         match status {
             Ok(output) if !output.status.success() => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                // Ignore "not found" errors (tunnel already removed)
-                if !stderr.contains("not found") && !stderr.is_empty() {
+                if stderr.contains("not found") || stderr.contains("No such reverse") {
+                    return Ok(());
+                }
+                if !stderr.is_empty() {
                     return Err(SAideError::AdbError(format!(
                         "Failed to remove adb reverse tunnel for device [{}], adb exited with status: {}, stderr: {}",
                         serial, output.status, stderr

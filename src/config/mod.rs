@@ -92,6 +92,19 @@ pub struct GeneralConfig {
     #[serde(default)]
     pub indicator_position: IndicatorPosition,
 
+    /// Default window width in pixels
+    #[serde(default = "default_window_width")]
+    pub window_width: u32,
+
+    /// Default window height in pixels
+    #[serde(default = "default_window_height")]
+    pub window_height: u32,
+
+    /// Network bind address for scrcpy server connection
+    /// "127.0.0.1" for IPv4 localhost, "[::1]" for IPv6 localhost
+    #[serde(default = "default_bind_address")]
+    pub bind_address: String,
+
     /// Path to the scrcpy server file, if not set, uses the built-in version
     /// Defaults to "scrcpy-server-<version>" in the user data directory if available
     /// otherwise falls back to the filename in the current directory
@@ -107,6 +120,9 @@ impl Default for GeneralConfig {
             init_timeout: default_init_timeout(),
             indicator: default_true(),
             indicator_position: IndicatorPosition::default(),
+            window_width: default_window_width(),
+            window_height: default_window_height(),
+            bind_address: default_bind_address(),
             scrcpy_server: default_scrcpy_server_path(),
         }
     }
@@ -114,6 +130,9 @@ impl Default for GeneralConfig {
 
 fn default_true() -> bool { true }
 fn default_init_timeout() -> u32 { 15 }
+fn default_window_width() -> u32 { 1280 }
+fn default_window_height() -> u32 { 720 }
+fn default_bind_address() -> String { "127.0.0.1".to_string() }
 fn default_scrcpy_server_path() -> String {
     let scrcpy_server = format!("scrcpy-server-{}", SCRCPY_SERVER_VERSION_STRING);
     if let Some(dir) = ProjectDirs::from("io", "keivry", "saide") {
