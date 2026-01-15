@@ -88,13 +88,12 @@ impl NvdecDecoder {
 
             // DON'T set width/height here - let CUVID auto-detect from stream
             // Setting them causes "AVHWFramesContext is already initialized" error
-            // when using ConstrainedBaseline profile with dynamic resolution
+            (*ctx_ptr).sw_pix_fmt = ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NV12;
 
-            // 🚀 LOW LATENCY OPTIMIZATIONS
-            // 1. Low delay flag - disables frame reordering
             (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
+            (*ctx_ptr).flags2 |= ffmpeg::sys::AV_CODEC_FLAG2_FAST;
+            (*ctx_ptr).strict_std_compliance = ffmpeg::sys::FF_COMPLIANCE_EXPERIMENTAL;
 
-            // 2. Single thread - NVDEC decodes in hardware
             (*ctx_ptr).thread_count = 1;
         }
 

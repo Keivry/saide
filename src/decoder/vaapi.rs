@@ -94,11 +94,10 @@ impl VaapiDecoder {
             // VAAPI will output NV12 after hw transfer
             (*ctx_ptr).sw_pix_fmt = ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NV12;
 
-            // 🚀 LOW LATENCY OPTIMIZATIONS
-            // 1. Low delay flag - disables frame reordering
             (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
+            (*ctx_ptr).flags2 |= ffmpeg::sys::AV_CODEC_FLAG2_FAST;
+            (*ctx_ptr).strict_std_compliance = ffmpeg::sys::FF_COMPLIANCE_EXPERIMENTAL;
 
-            // 2. Single thread - VAAPI decodes in hardware, single thread reduces overhead
             (*ctx_ptr).thread_count = 1;
         }
 

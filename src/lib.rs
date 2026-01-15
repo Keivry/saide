@@ -6,6 +6,7 @@ pub mod decoder;
 pub mod error;
 pub mod gpu;
 pub mod i18n;
+pub mod profiler;
 pub mod saide;
 pub mod scrcpy;
 

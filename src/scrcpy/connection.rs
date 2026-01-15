@@ -428,8 +428,6 @@ fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStr
 
     debug!("{} connection accepted from {}", channel, addr);
 
-    // 🚀 LOW LATENCY: Enable TCP_NODELAY to disable Nagle's algorithm
-    // This reduces latency by 5-10ms by sending packets immediately
     stream.set_nodelay(true).map_err(|e| {
         SAideError::IoError(IoError::new(e).with_message(format!(
             "Failed to set TCP_NODELAY for {} connection",
@@ -439,11 +437,37 @@ fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStr
 
     debug!("{} connection: TCP_NODELAY enabled", channel);
 
-    // 🛡️ CRITICAL: Set read timeout to detect USB disconnection
-    // Without timeout, read() blocks forever when USB is unplugged
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+
+        let fd = stream.as_raw_fd();
+
+        let quickack: libc::c_int = 1;
+        let ret = unsafe {
+            libc::setsockopt(
+                fd,
+                libc::IPPROTO_TCP,
+                libc::TCP_QUICKACK,
+                &quickack as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+
+        if ret < 0 {
+            debug!(
+                "Failed to set TCP_QUICKACK for {} connection: errno {}",
+                channel,
+                std::io::Error::last_os_error()
+            );
+        } else {
+            debug!("{} connection: TCP_QUICKACK enabled", channel);
+        }
+    }
+
     let timeout = match channel {
-        Channel::Control => Duration::from_secs(2), // Faster detection for control
-        _ => Duration::from_secs(5),                // Video/Audio can tolerate more delay
+        Channel::Control => Duration::from_secs(2),
+        _ => Duration::from_secs(5),
     };
     stream.set_read_timeout(Some(timeout)).map_err(|e| {
         SAideError::IoError(IoError::new(e).with_message(format!(
