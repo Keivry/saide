@@ -47,6 +47,8 @@ fn main() -> Result<()> {
 
     info!("SAide starting...");
 
+    AdbShell::verify_adb_available()?;
+
     info!("Video backend: {}", config.gpu.backend.to_string());
     info!(
         "Max video size: {}",

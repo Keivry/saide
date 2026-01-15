@@ -26,6 +26,31 @@ pub enum DeviceState {
 pub struct AdbShell;
 
 impl AdbShell {
+    /// Verify that ADB is available in PATH
+    ///
+    /// Should be called once at application startup to fail fast
+    /// if ADB is not installed or not in PATH.
+    pub fn verify_adb_available() -> Result<()> {
+        Command::new("adb")
+            .arg("version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| {
+                SAideError::AdbError(format!(
+                    "ADB not found in PATH. Please install Android SDK Platform Tools. Error: {}",
+                    e
+                ))
+            })?
+            .success()
+            .then_some(())
+            .ok_or_else(|| {
+                SAideError::AdbError(
+                    "ADB command failed. Please check Android SDK installation.".to_string(),
+                )
+            })
+    }
+
     /// Get Android device screen size using separate adb command
     pub fn get_physical_screen_size(serial: &str) -> Result<(u32, u32)> {
         check_serial(serial)?;
