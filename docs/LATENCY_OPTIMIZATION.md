@@ -585,6 +585,37 @@ ui.label(format!(
 
 ---
 
+## 已知限制 (Phase 1 实现)
+
+### GPU 上传时间测量不精确
+
+**现象**: UI Indicator 显示的 "GPU Upload" 时间为近似值,非实际 GPU 上传耗时
+
+**原因**:
+- `LatencyProfiler.mark_upload()` 在视频解码线程调用 (位于 `src/saide/ui/player.rs:703`)
+- 实际 GPU 上传发生在 UI 渲染线程的 `Nv12RenderCallback::prepare()` 中 (位于 `src/decoder/nv12_render.rs:330`)
+- 跨线程时间测量需要额外同步机制 (Phase 1 未实现)
+
+**当前测量值含义**:
+- 测量的是 "解码完成 → 帧发送到渲染通道" 的时间
+- 包含通道发送延迟,但不包含实际 GPU texture 上传时间
+
+**影响范围**:
+- 平均延迟 (Avg) 和 P95 延迟: ✅ 准确 (端到端测量不受影响)
+- 解码时间 (Decode): ✅ 准确 (Phase 1 已修复)
+- GPU 上传时间 (Upload): ⚠️ 近似值 (误差约 1-3ms)
+
+**Phase 2 改进计划**:
+1. 在 `Arc<DecodedFrame>` 中嵌入 `Arc<Mutex<LatencyProfiler>>`
+2. 在 `Nv12RenderCallback::prepare()` 开始和结束时分别调用 `mark_upload_start()` / `mark_upload_end()`
+3. 通过另一个 channel 将精确上传时间回传到解码线程进行统计
+
+**当前使用建议**:
+- 使用平均延迟和 P95 延迟进行优化效果评估 (这两个值是准确的)
+- GPU 上传时间仅用于相对比较,不要依赖其绝对值
+
+---
+
 ## 成功指标
 
 优化完成后,目标延迟指标:
@@ -609,4 +640,4 @@ ui.label(format!(
 ---
 
 **维护者**: SAide Development Team  
-**最后更新**: 2026-01-14
+**最后更新**: 2026-01-15

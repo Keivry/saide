@@ -271,7 +271,7 @@
 
 ## 已完成
 
-- [x] 2026-01-15: ✅ **Phase 1 延迟优化完成** (commits 4ea165a → da16500, 共 5 commits)
+- [x] 2026-01-15: ✅ **Phase 1 延迟优化完成** (commits 4ea165a → b259ea4 + 本次修复, 共 10 commits)
   - [x] LatencyProfiler + LatencyStats 实现 (追踪 5 阶段 + 60帧统计)
   - [x] FFmpeg 解码器优化 (FAST + EXPERIMENTAL 标志)
   - [x] TCP_QUICKACK 网络优化 (Linux, 3-5ms)
@@ -280,10 +280,14 @@
   - [x] UI 集成准备 (VideoStats 扩展 + 指示器显示)
   - [x] **视频解码线程集成** (mark_receive/decode/upload/display, 实时统计)
   - [x] **LatencyStats 传递到 UI** (avg/p95 延迟显示)
+  - [x] **修复解码时间测量** (mark_decode 调用时机,从解码前移至解码后)
+  - [x] **文档化已知限制** (GPU 上传时间为近似值,详见 docs/LATENCY_OPTIMIZATION.md)
   - 音频线程集成已推迟 (低优先级 - 音频基线 <10ms)
   
-  **预期收益**: 13-25ms 延迟降低 (一旦在真机测试验证)
+  **已知限制**: GPU Upload 时间为近似值 (测量通道发送而非实际 GPU 上传,误差 1-3ms)  
+  **预期收益**: 13-25ms 延迟降低 (一旦在真机测试验证)  
   **下一步**: Phase 2 - 零拷贝 GPU 解码 (预期额外降低 20-40ms)
+
 
 - [x] 2026-01-14: 延迟优化路线图 (`docs/LATENCY_OPTIMIZATION.md`)
 - [x] 2026-01-14: 音视频回放和输入映射延迟分析

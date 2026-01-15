@@ -683,9 +683,11 @@ fn stream_worker(
             }
 
             // Decode frame
-            profiler.mark_decode();
             let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
-                Ok(frame) => frame,
+                Ok(frame) => {
+                    profiler.mark_decode();
+                    frame
+                }
                 Err(e) => {
                     if token.is_cancelled() {
                         debug!("Video decode loop exiting due to cancellation");
@@ -698,6 +700,10 @@ fn stream_worker(
             };
 
             if let Some(frame) = frame_opt {
+                // NOTE: mark_upload() is approximate - actual GPU upload happens in UI render
+                // thread (Nv12RenderCallback::prepare in
+                // src/decoder/nv12_render.rs) For precise upload timing, need to
+                // instrument render callback (Phase 2 work)
                 profiler.mark_upload();
 
                 let current_stats = {
