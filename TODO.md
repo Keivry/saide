@@ -181,17 +181,40 @@
 
 ### 延迟优化 (Phase 2-3) - 见 docs/LATENCY_OPTIMIZATION.md
 
-- [ ] **[latency]** 零拷贝 GPU 解码 (NVDEC/VAAPI)  
-  **需求**: 解码器直接输出 GPU 纹理,在着色器完成 YUV→RGBA 转换
+- [x] **[latency]** Phase 2 零拷贝 GPU 解码技术调研 (2026-01-15)  
+  **最终状态**: ❌ **已终止** - wgpu v28 验证失败,不支持外部内存 API  
+  **调研成果**: `docs/PHASE2_ZEROCOPY_FEASIBILITY.md` (850+ 行技术分析)  
+  **原型代码**: `examples/test_vulkan_import.rs` (v27/v28 兼容性测试)  
+  **终止原因**:  
+    1. wgpu v28 仍无 `Device::as_hal()` 或外部内存导入 API  
+    2. ash 重写成本过高 (2-3 周) vs 低收益 (12-20ms)  
+    3. Phase 1 已达目标 (20-35ms) + Phase 3 可再降 8-18ms  
+  **下一步**: 转向 Phase 3 音频/输入优化 (✅ 推荐路径)
 
-- [ ] **[latency]** CPAL 独占模式 (`src/decoder/audio/player.rs`)  
-  **需求**: 尝试音频独占模式降低系统混音缓冲延迟
+- [ ] **[latency]** Phase 3: CPAL 独占模式 (`src/decoder/audio/player.rs`)  
+  **需求**: 尝试音频独占模式降低系统混音缓冲延迟 (预期 3-8ms)  
+  **优先级**: **P1** (Phase 2 终止后的首选方案)  
+  **实施成本**: 2-3 天 (远低于 Phase 2 的 2-3 周)
 
-- [ ] **[latency]** 原始输入设备监听 (新建 `src/input/raw_device.rs`)  
-  **需求**: Linux evdev 直接读取输入,绕过 egui 事件循环
+- [ ] **[latency]** Phase 3: 音频缓冲降至 64 frames (`src/constant.rs:46`)  
+  **需求**: 从 128 降至 64 frames (2.67ms → 1.33ms @ 48kHz)  
+  **优先级**: **P1**  
+  **风险**: 可能导致 underrun,需硬件测试  
+  **建议**: 与 CPAL 独占模式配合测试
 
-- [ ] **[latency]** 鼠标移动速度自适应 (`src/controller/mouse.rs:95`)  
-  **需求**: 根据移动速度动态调整拖拽更新间隔
+- [ ] **[latency]** Phase 3: 原始输入设备监听 (新建 `src/input/raw_device.rs`)  
+  **需求**: Linux evdev 直接读取输入,绕过 egui 事件循环 (预期 5-10ms)  
+  **优先级**: P2 (实现难度高,仅 Linux)  
+  **复杂度**: 需处理设备权限、热插拔、焦点管理
+
+- [ ] **[latency]** Phase 3: 鼠标移动速度自适应 (`src/controller/mouse.rs:95`)  
+  **需求**: 根据移动速度动态调整拖拽更新间隔  
+  **优先级**: P3 (增量优化,可选)
+
+- [ ] **[future]** 监控 wgpu v29+ 外部内存 API 更新  
+  **目的**: 如果官方添加 hal 访问,重新评估 Phase 2  
+  **跟踪**: 已在 wgpu GitHub 提 Feature Request  
+  **预期**: 2026 Q2-Q3 (乐观估计)
 
 ### 平台支持
 
