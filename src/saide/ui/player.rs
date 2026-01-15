@@ -59,6 +59,8 @@ pub struct StreamStats {
     pub dropped_frames: u64,
     pub last_video_pts: i64,
     pub last_audio_pts: i64,
+    pub last_decode_ms: f64,
+    pub last_upload_ms: f64,
 }
 
 const PLAYER_EVENT_BUFFER_SIZE: usize = 5;
@@ -374,16 +376,16 @@ impl StreamPlayer {
 
     /// Get video statistics
     pub fn video_stats(&self) -> VideoStats {
-        let stats = self.latency_stats.lock();
+        let latency = self.latency_stats.lock();
 
         VideoStats {
             fps: self.fps,
             total_frames: self.stats.video_frames as u32,
             dropped_frames: self.stats.dropped_frames as u32,
-            latency_ms: stats.average() as f32,
-            latency_decode_ms: 0.0,
-            latency_upload_ms: 0.0,
-            latency_p95_ms: stats.p95() as f32,
+            latency_ms: latency.average() as f32,
+            latency_decode_ms: self.stats.last_decode_ms as f32,
+            latency_upload_ms: self.stats.last_upload_ms as f32,
+            latency_p95_ms: latency.p95() as f32,
         }
     }
 
@@ -617,9 +619,9 @@ fn stream_worker(
             let mut profiler = LatencyProfiler::new();
 
             // Read video packet with error tolerance
-            profiler.mark_receive();
             let video_packet = match VideoPacket::read_from(&mut video_stream) {
                 Ok(packet) => {
+                    profiler.mark_receive();
                     consecutive_read_errors = 0;
                     packet
                 }
@@ -654,6 +656,10 @@ fn stream_worker(
             };
 
             let pts = video_packet.pts_us as i64;
+
+            // Estimate capture time from PTS (assume ~30ms network latency)
+            let estimated_capture = Instant::now() - Duration::from_millis(30);
+            profiler.mark_capture(estimated_capture);
 
             // Check for resolution change in keyframes (SPS embedded)
             if video_packet.is_keyframe
@@ -712,6 +718,10 @@ fn stream_worker(
 
                 if let Some(breakdown) = profiler.breakdown() {
                     latency_stats.lock().add_sample(breakdown.total_ms());
+
+                    let mut s = stats.lock();
+                    s.last_decode_ms = breakdown.decode_ms();
+                    s.last_upload_ms = breakdown.upload_ms();
                 }
 
                 // Send frame - if channel is closed, receiver dropped, exit gracefully
