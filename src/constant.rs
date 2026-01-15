@@ -42,8 +42,10 @@ pub const GRACEFUL_WAIT_MS: u64 = 250;
 pub const DEFAULT_PORT_RANGE: (u16, u16) = (27183, 27199);
 
 /// Audio playback buffer size (frames per CPAL callback)
-/// 128 frames = 2.67ms @ 48kHz (ultra-low latency)
-pub const AUDIO_BUFFER_FRAMES: usize = 128;
+/// Phase 3 optimization: Reduced to 64 frames (1.33ms @ 48kHz) for minimal latency
+/// Previous: 128 frames (2.67ms)
+/// Can be overridden via config.toml: [scrcpy.audio] buffer_frames = 64
+pub const AUDIO_BUFFER_FRAMES: usize = 64;
 
 /// Ring buffer capacity (total samples, interleaved)
 /// Opus frame: ~1920 samples (20ms @ 48kHz stereo)

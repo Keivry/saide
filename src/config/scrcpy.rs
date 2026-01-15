@@ -52,6 +52,11 @@ pub struct AudioConfig {
     pub codec: String,
     #[serde(default = "default_audio_source")]
     pub source: String,
+    /// Audio buffer size in frames (lower = less latency, higher = more stable)
+    /// Typical values: 64 (1.33ms @ 48kHz), 128 (2.67ms), 256 (5.33ms)
+    /// Default: 64 frames for minimal latency
+    #[serde(default = "default_buffer_frames")]
+    pub buffer_frames: u32,
 }
 
 impl Default for AudioConfig {
@@ -60,6 +65,7 @@ impl Default for AudioConfig {
             enabled: default_audio_enabled(),
             codec: default_audio_codec(),
             source: default_audio_source(),
+            buffer_frames: default_buffer_frames(),
         }
     }
 }
@@ -67,6 +73,7 @@ impl Default for AudioConfig {
 fn default_audio_enabled() -> bool { true }
 fn default_audio_codec() -> String { "opus".to_string() }
 fn default_audio_source() -> String { "playback".to_string() }
+fn default_buffer_frames() -> u32 { 64 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptionsConfig {

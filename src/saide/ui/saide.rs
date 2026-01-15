@@ -153,6 +153,7 @@ impl SAideApp {
         let indicator_position = config.general.indicator_position;
         let max_fps = config.scrcpy.video.max_fps;
         let vsync = config.gpu.vsync;
+        let audio_buffer_frames = config.scrcpy.audio.buffer_frames;
 
         let cancel_token = CancellationToken::new();
 
@@ -165,7 +166,7 @@ impl SAideApp {
 
             toolbar,
             indicator: Indicator::new(indicator_position, max_fps as f32),
-            player: StreamPlayer::new(cc, cancel_token.clone()),
+            player: StreamPlayer::new(cc, cancel_token.clone(), audio_buffer_frames),
 
             config_manager,
 

@@ -52,7 +52,7 @@ fn main() -> Result<()> {
 
     println!("\n🎧 Initializing audio (48kHz stereo)...");
     let mut decoder = OpusDecoder::new(48000, 2)?;
-    let player = AudioPlayer::new(48000, 2)?;
+    let player = AudioPlayer::new(48000, 2, 64)?;
 
     println!("\n📊 Collecting samples (5 seconds)...\n");
     let start_time = std::time::Instant::now();

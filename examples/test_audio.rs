@@ -70,7 +70,7 @@ fn main() -> Result<()> {
     // Initialize Opus decoder and audio player
     println!("\n🎧 Initializing audio...");
     let mut decoder = OpusDecoder::new(48000, 2)?;
-    let player = AudioPlayer::new(48000, 2)?;
+    let player = AudioPlayer::new(48000, 2, 64)?;
 
     println!("✅ Audio initialized: 48kHz stereo (libopus)");
 

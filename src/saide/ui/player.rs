@@ -134,10 +134,17 @@ pub struct StreamPlayer {
     /// Used to signal thread shutdown
     /// StreamPlayer MUST NOT call cancel() itself
     cancel_token: CancellationToken,
+
+    /// Audio buffer size in frames (configurable)
+    audio_buffer_frames: u32,
 }
 
 impl StreamPlayer {
-    pub fn new(cc: &eframe::CreationContext, cancel_token: CancellationToken) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext,
+        cancel_token: CancellationToken,
+        audio_buffer_frames: u32,
+    ) -> Self {
         // Register NV12 render resources
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
             let resources = Nv12RenderResources::new(&wgpu_state.device, wgpu_state.target_format);
@@ -168,6 +175,7 @@ impl StreamPlayer {
             event_tx,
             event_rx,
             cancel_token,
+            audio_buffer_frames,
         }
     }
 
@@ -188,6 +196,7 @@ impl StreamPlayer {
         let event_tx = self.event_tx.clone();
         let cancel_token = self.cancel_token.clone();
         let latency_stats = self.latency_stats.clone();
+        let audio_buffer_frames = self.audio_buffer_frames;
         self.stream_thread = Some(thread::spawn(move || {
             if cancel_token.is_cancelled() {
                 debug!("Stream worker exiting due to cancellation");
@@ -201,6 +210,7 @@ impl StreamPlayer {
                 event_tx.clone(),
                 cancel_token,
                 latency_stats,
+                audio_buffer_frames,
             ) {
                 if !e.is_cancelled() {
                     error!("Stream worker error: {e}");
@@ -471,6 +481,7 @@ fn stream_worker(
     event_tx: Sender<PlayerEvent>,
     token: CancellationToken,
     latency_stats: Arc<Mutex<LatencyStats>>,
+    audio_buffer_frames: u32,
 ) -> Result<()> {
     let (width, height) = video_resolution;
     info!("Video resolution: {}x{}", width, height);
@@ -490,7 +501,7 @@ fn stream_worker(
     // Initialize decoders (use Option for clean drop/rebuild lifecycle)
     let mut video_decoder = AutoDecoder::new(width, height)?;
     let mut audio_decoder = OpusDecoder::new(48000, 2)?;
-    let audio_player = AudioPlayer::new(48000, 2)?;
+    let audio_player = AudioPlayer::new(48000, 2, audio_buffer_frames)?;
 
     // Track last resolution for change detection
     let mut last_resolution = (width, height);

@@ -11,7 +11,7 @@ use {
         DecodedAudio,
         error::{AudioError, Result},
     },
-    crate::constant::{AUDIO_BUFFER_FRAMES, AUDIO_RING_CAPACITY},
+    crate::constant::AUDIO_RING_CAPACITY,
     cpal::{
         BufferSize,
         Stream,
@@ -58,7 +58,8 @@ impl AudioPlayer {
     /// # Arguments
     /// * `sample_rate` - Audio sample rate (Hz)
     /// * `channels` - Number of channels (1=mono, 2=stereo)
-    pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
+    /// * `buffer_frames` - Buffer size in frames (lower = less latency, higher = more stable)
+    pub fn new(sample_rate: u32, channels: u16, buffer_frames: u32) -> Result<Self> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or_else(|| {
             AudioError::InitializationError("No default audio output device found".to_string())
@@ -72,8 +73,7 @@ impl AudioPlayer {
         let config = StreamConfig {
             channels,
             sample_rate,
-            // CRITICAL: Fixed small buffer for minimal latency
-            buffer_size: BufferSize::Fixed(AUDIO_BUFFER_FRAMES as u32),
+            buffer_size: BufferSize::Fixed(buffer_frames),
         };
 
         debug!("Audio config: {:?}", config);
@@ -108,11 +108,11 @@ impl AudioPlayer {
         })?;
 
         info!(
-            "Audio player started: {}Hz, {} channels, buffer={}frames ({}ms)",
+            "Audio player started: {}Hz, {} channels, buffer={}frames ({:.2}ms)",
             sample_rate,
             channels,
-            AUDIO_BUFFER_FRAMES,
-            (AUDIO_BUFFER_FRAMES as f64 / sample_rate as f64 * 1000.0)
+            buffer_frames,
+            (buffer_frames as f64 / sample_rate as f64 * 1000.0)
         );
 
         Ok(Self {
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_audio_player_creation() {
-        let player = AudioPlayer::new(48000, 2);
+        let player = AudioPlayer::new(48000, 2, 64);
         assert!(player.is_ok());
     }
 }
