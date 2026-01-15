@@ -17,7 +17,7 @@ use {
             extract_resolution_from_stream,
             new_nv12_render_callback,
         },
-        error::{Result, SAideError},
+        error::Result,
         profiler::{LatencyProfiler, LatencyStats},
         scrcpy::protocol::video::VideoPacket,
     },
@@ -77,7 +77,10 @@ pub enum PlayerEvent {
         width: u32,
         height: u32,
     },
-    Failed(SAideError),
+    Failed {
+        error: String,
+        is_cancelled: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -212,12 +215,18 @@ impl StreamPlayer {
                 latency_stats,
                 audio_buffer_frames,
             ) {
-                if !e.is_cancelled() {
+                let is_cancelled = e.is_cancelled();
+                if !is_cancelled {
                     error!("Stream worker error: {e}");
                 }
-                event_tx.send(PlayerEvent::Failed(e)).unwrap_or_else(|err| {
-                    error!("Failed to send PlayerEvent::Failed: {err}");
-                });
+                event_tx
+                    .send(PlayerEvent::Failed {
+                        error: e.to_string(),
+                        is_cancelled,
+                    })
+                    .unwrap_or_else(|err| {
+                        error!("Failed to send PlayerEvent::Failed: {err}");
+                    });
             }
         }));
     }
@@ -259,12 +268,15 @@ impl StreamPlayer {
                     self.video_width = width;
                     self.video_height = height;
                 }
-                PlayerEvent::Failed(err) => {
-                    if !err.is_cancelled() {
-                        error!("Stream failed: {}", err);
+                PlayerEvent::Failed {
+                    error,
+                    is_cancelled,
+                } => {
+                    if !is_cancelled {
+                        error!("Stream failed: {}", error);
                     }
 
-                    self.state = PlayerState::Failed(err.to_string());
+                    self.state = PlayerState::Failed(error);
                 }
             }
         }
@@ -767,9 +779,15 @@ fn stream_worker(
             Ok(())
         }
         Err(e) => {
-            error!("Connection error: {e}");
+            let is_cancelled = e.is_cancelled();
+            if !is_cancelled {
+                error!("Connection error: {e}");
+            }
             event_tx
-                .send(PlayerEvent::Failed(e.clone()))
+                .send(PlayerEvent::Failed {
+                    error: e.to_string(),
+                    is_cancelled,
+                })
                 .unwrap_or_else(|err| {
                     error!("Failed to send PlayerEvent::Failed: {err}");
                 });

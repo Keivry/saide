@@ -14,23 +14,24 @@ use {
     thiserror::Error,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct IoError {
-    source_kind: io::ErrorKind,
+    source: Option<Box<io::Error>>,
     message: String,
 }
 
 impl IoError {
     pub fn new(source: io::Error) -> Self {
+        let message = source.to_string();
         Self {
-            source_kind: source.kind(),
-            message: source.to_string(),
+            source: Some(Box::new(source)),
+            message,
         }
     }
 
     pub fn new_with_message(message: impl Into<String>) -> Self {
         Self {
-            source_kind: io::ErrorKind::Other,
+            source: None,
             message: message.into(),
         }
     }
@@ -42,7 +43,12 @@ impl IoError {
 
     pub fn message(&self) -> &str { &self.message }
 
-    pub fn kind(&self) -> io::ErrorKind { self.source_kind }
+    pub fn kind(&self) -> io::ErrorKind {
+        self.source
+            .as_ref()
+            .map(|e| e.kind())
+            .unwrap_or(io::ErrorKind::Other)
+    }
 }
 
 impl fmt::Display for IoError {
@@ -52,8 +58,16 @@ impl fmt::Display for IoError {
     }
 }
 
+impl std::error::Error for IoError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_ref()
+            .map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
+    }
+}
+
 /// SAide unified error type
-#[derive(Clone, Debug, Error)]
+#[derive(Debug, Error)]
 pub enum SAideError {
     /// Normal shutdown via CancellationToken
     #[error("Application shutdown requested")]
