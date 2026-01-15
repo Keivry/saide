@@ -189,15 +189,21 @@ fn audio_callback(
     // Read samples from lock-free ring buffer
     let read = match consumer.read_chunk(output.len()) {
         Ok(chunk) => {
-            let len = chunk.len();
             let (first, second) = chunk.as_slices();
-            output[..first.len()].copy_from_slice(first);
-            if !second.is_empty() {
-                output[first.len()..len].copy_from_slice(second);
+
+            // Defensive check: ensure we don't overflow output buffer
+            let first_len = first.len().min(output.len());
+            let second_start = first_len;
+            let second_len = second.len().min(output.len().saturating_sub(second_start));
+
+            output[..first_len].copy_from_slice(&first[..first_len]);
+            if second_len > 0 {
+                output[second_start..second_start + second_len]
+                    .copy_from_slice(&second[..second_len]);
             }
-            // CRITICAL: Must commit to actually remove data from ring buffer!
+
             chunk.commit_all();
-            len
+            first_len + second_len
         }
         Err(_) => 0,
     };
