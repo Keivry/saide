@@ -49,45 +49,47 @@
 
 ### 架构设计
 
-- [ ] **[god-object]** `src/saide/ui/saide.rs:58-138`: `SAideApp` 包含 40+ 字段，违反单一职责原则  
-  **解法**: 拆分为 `AppState`（连接/映射器）、`UIState`（工具栏/指示器/播放器）、`ConfigState`
+- [x] **[god-object]** `src/saide/ui/saide.rs:58-138`: `SAideApp` 包含 40+ 字段，违反单一职责原则  
+  ✅ **已修复** (commit f2af6d5): 拆分为 `AppState` (8字段)、`UIState` (5字段)、`ConfigState` (6字段)
 
-- [ ] **[coupling]** `src/saide/init.rs`: 混合连接建立、设备监控、输入映射初始化三种职责  
-  **解法**: 分离为 `ConnectionService::new()`, `DeviceMonitor::new()`, `InputManager::new()`
+- [x] **[coupling]** `src/saide/init.rs`: 混合连接建立、设备监控、输入映射初始化三种职责  
+  ✅ **已修复**: 拆分为 `ConnectionService` (230行), `DeviceMonitor` (215行), init.rs 简化为协调器 (155行, -67%)
+
 
 - [ ] **[coupling]** `src/saide/ui/player.rs:453-728`: `stream_worker` 275 行单体函数，混合解码器初始化、音频线程、视频循环  
   **解法**: 拆分为 `DecoderManager::init()`, `AudioThread::spawn()`, `VideoLoop::run()`
 
-- [ ] **[abstraction]** `src/scrcpy/connection.rs:46-76`: `ScrcpyConnection` 公开原始 `TcpStream`  
-  **解法**: 字段改为私有，仅暴露 `read_video_packet()`, `send_control()` 等方法
+- [x] **[abstraction]** `src/scrcpy/connection.rs:46-76`: `ScrcpyConnection` 公开原始 `TcpStream`  
+  ✅ **已修复** (commit f41bcbd): 字段改为私有，仅暴露 `take_video_stream()`, `set_control_stream()` 等方法
 
-- [ ] **[dependency]** `src/error.rs:11-15`: 错误模块依赖 `decoder` 模块（应反向依赖）  
-  **解法**: 将 `VideoError`, `AudioError` 移到独立 `decoder/error.rs`，错误模块仅定义 `SAideError`
+- [x] **[dependency]** `src/error.rs:11-15`: 错误模块依赖 `decoder` 模块（应反向依赖）  
+  ✅ **已修复**: `VideoError`, `AudioError` 已在 `decoder/error.rs` 和 `decoder/audio/error.rs`  
+  ✅ **设计合理**: 顶层 `SAideError` 使用 `#[from]` 聚合子错误是标准 Rust 模式
 
 ### 配置与状态管理
 
-- [ ] **[atomic-write]** `ConfigManager::save()` 缺少原子写机制（当前直接覆盖文件）  
-  **解法**: 写到临时文件 `.config.toml.tmp` 再 `fs::rename()`（符合 POSIX 原子性）
+- [x] **[atomic-write]** `ConfigManager::save()` 缺少原子写机制（当前直接覆盖文件）  
+  ✅ **已修复** (commit 072e53d): 写到临时文件 `.toml.tmp` 再原子 `fs::rename()`
 
-- [ ] **[hardcoded]** `src/main.rs:18-19`: 窗口默认尺寸硬编码 `1280×720`，忽略 DPI 和屏幕尺寸  
-  **解法**: 从配置读取或基于主屏幕尺寸动态计算（如 `80%` 高度）
+- [x] **[hardcoded]** `src/main.rs:18-19`: 窗口默认尺寸硬编码 `1280×720`，忽略 DPI 和屏幕尺寸  
+  ✅ **已修复** (commit 18a1065): 添加 `general.window_width/height` 配置项
 
-- [ ] **[hardcoded]** `src/saide/init.rs:122`: `capture_orientation` 硬编码为 `Some(0)`  
-  **解法**: 在 `SAideConfig` 新增 `video.capture_orientation: Option<u32>`，默认 `None`（自动检测）
+- [x] **[hardcoded]** `src/saide/init.rs:122`: `capture_orientation` 硬编码为 `Some(0)`  
+  ✅ **已修复** (commit 18a1065): 添加 `video.capture_orientation: Option<u32>` 配置项
 
-- [ ] **[hardcoded]** `src/scrcpy/server.rs:103-104`: `max_size: 1600`, `max_fps: 60` 硬编码  
-  **解法**: 使用 `config.video.max_size` 和 `config.video.max_fps`
+- [x] **[hardcoded]** `src/scrcpy/server.rs:103-104`: `max_size: 1600`, `max_fps: 60` 硬编码  
+  ✅ **已修复** (commit 18a1065): 使用 `config.video.max_size` 和 `config.video.max_fps`
 
 ### 协议与兼容性
 
-- [ ] **[compat]** `src/controller/adb.rs:89-95`: `get_screen_orientation` 仅识别 `ROTATION_*` 字符串  
-  **解法**: 添加正则解析数字形式（如 `mCurrentRotation=1`）兼容 Android 6-8
+- [x] **[compat]** `src/controller/adb.rs:89-95`: `get_screen_orientation` 仅识别 `ROTATION_*` 字符串  
+  ✅ **已修复** (commit 18a1065): 支持数字形式 `0-3` 兼容旧版 Android
 
-- [ ] **[error-handling]** `src/controller/adb.rs:301`: `remove_reverse_tunnel` 不区分"隧道不存在"和真实错误  
-  **解法**: 检查 stderr 包含 `"not found"` 或 `"No such reverse"` 时返回 `Ok(())`
+- [x] **[error-handling]** `src/controller/adb.rs:301`: `remove_reverse_tunnel` 不区分"隧道不存在"和真实错误  
+  ✅ **已修复** (commit 18a1065): 检查 stderr 包含 `"No such reverse"` 时返回 `Ok(())`
 
-- [ ] **[ipv6]** `src/scrcpy/connection.rs:125`: 硬编码 `127.0.0.1`，无 IPv6 支持  
-  **解法**: 改为 `[::1]` 或添加配置 `network.bind_address`
+- [x] **[ipv6]** `src/scrcpy/connection.rs:125`: 硬编码 `127.0.0.1`，无 IPv6 支持  
+  ✅ **已修复** (commit 18a1065): 添加 `general.bind_address` 配置，支持 `[::1]`
 
 ### 文档缺失
 

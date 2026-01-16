@@ -1,50 +1,34 @@
-//! Background initialization for scrcpy connection, device monitor, and input mappers
+//! Background initialization coordinator
 //!
-//! This module handles the asynchronous initialization of the scrcpy connection,
-//! device monitoring (rotation and input method state), and input mappers (keyboard and mouse).
-//! It uses separate threads to perform these tasks and communicates results back
-//! to the main application thread via channels.
+//! Coordinates scrcpy connection, device monitoring, and input mapper initialization.
+//! Delegates work to ConnectionService, DeviceMonitor, and InputManager.
 
 use {
     crate::{
         config::SAideConfig,
-        controller::{
-            adb::{AdbShell, DeviceState},
-            control_sender::ControlSender,
-            keyboard::KeyboardMapper,
-            mouse::MouseMapper,
+        controller::{control_sender::ControlSender, keyboard::KeyboardMapper, mouse::MouseMapper},
+        error::SAideError,
+        saide::{
+            connection_service::{ConnectionResult, ConnectionService, InputManager},
+            device_monitor::DeviceMonitor,
         },
-        error::{Result, SAideError},
-        scrcpy::{connection::ScrcpyConnection, server::ServerParams},
+        scrcpy::connection::ScrcpyConnection,
     },
-    crossbeam_channel::{Receiver, Sender, bounded},
+    crossbeam_channel::{Receiver, Sender},
     std::{
         net::TcpStream,
         process::Command,
         sync::Arc,
-        thread::{self, JoinHandle},
+        thread,
         time::{Duration, Instant},
     },
     tokio_util::sync::CancellationToken,
-    tracing::{debug, error, info, warn},
 };
 
-// Device monitor polling interval (ms)
-pub const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
+pub use super::device_monitor::DeviceMonitorEvent;
 
-// Allow buffering rotation events to avoid blocking monitor thread
-pub const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 64;
-pub enum DeviceMonitorEvent {
-    /// Device rotated event with new orientation (0-3), clockwise
-    Rotated(u32),
-    /// Device input method (IME) state changed, true = shown, false = hidden
-    ImStateChanged(bool),
-    /// Device went offline (USB disconnected or connection lost)
-    DeviceOffline,
-}
-
-// Capacity for initialization result channel
 pub const INIT_RESULT_CHANNEL_CAPACITY: usize = 4;
+
 /// Initialization event
 pub enum InitEvent {
     /// ScrcpyConnection established with streams
@@ -71,15 +55,12 @@ pub fn start_initialization(
     tx: Sender<InitEvent>,
     cancellation_token: CancellationToken,
 ) {
-    // Note: External scrcpy initialization removed - using internal StreamPlayer
-
     const ADB_SERVER_STARTUP_WAIT_MS: u64 = 500;
     const ADB_SERVER_CHECK_INTERVAL_MS: u64 = 50;
 
     // Delay to allow ADB server to be ready
     let start = Instant::now();
     while start.elapsed() < Duration::from_millis(ADB_SERVER_STARTUP_WAIT_MS) {
-        // check if adb is responsive
         if Command::new("adb")
             .args(["shell", "echo", "ok"])
             .output()
@@ -90,95 +71,59 @@ pub fn start_initialization(
         thread::sleep(Duration::from_millis(ADB_SERVER_CHECK_INTERVAL_MS));
     }
 
-    // Device monitor initialization
-    start_device_monitor(serial, tx.clone(), cancellation_token.clone());
+    let serial = serial.to_owned();
 
-    // Scrcpy connection and input mappers initialization
-    start_scrcpy_connection(serial, config, tx.clone(), cancellation_token.clone());
+    // Start device monitor
+    match DeviceMonitor::start(&serial, cancellation_token.clone()) {
+        Ok(device_monitor_rx) => {
+            if tx
+                .send(InitEvent::DeviceMonitor(device_monitor_rx))
+                .is_err()
+            {
+                return;
+            }
+        }
+        Err(e) => {
+            let _ = tx.send(InitEvent::Error(e));
+            return;
+        }
+    }
+
+    // Start scrcpy connection (async)
+    let tx_clone = tx.clone();
+    ConnectionService::start(
+        &serial,
+        config.clone(),
+        move |result| match result {
+            Ok(conn_result) => {
+                send_connection_events(&tx_clone, conn_result, &config);
+            }
+            Err(e) => {
+                let _ = tx_clone.send(InitEvent::Error(e));
+            }
+        },
+        cancellation_token,
+    );
 }
 
-/// Start scrcpy connection and input mappers in a separate thread
-fn start_scrcpy_connection(
-    serial: &str,
-    config: Arc<SAideConfig>,
-    tx: Sender<InitEvent>,
-    token: CancellationToken,
+fn send_connection_events(
+    tx: &Sender<InitEvent>,
+    conn_result: ConnectionResult,
+    config: &Arc<SAideConfig>,
 ) {
-    // ScrcpyConnection initialization (async - moved to separate thread)
-    // This will create mappers AFTER connection is established
-    let serial = serial.to_owned();
-    thread::spawn(move || -> Result<()> {
-        info!("Establishing scrcpy connection...");
+    let ConnectionResult {
+        connection,
+        control_sender,
+        video_stream,
+        audio_stream,
+        video_resolution,
+        device_name,
+        audio_disabled_reason,
+        capture_orientation,
+    } = conn_result;
 
-        // Get device serial
-        if token.is_cancelled() {
-            info!("Scrcpy connection initialization cancelled");
-            return Ok(());
-        }
-
-        debug!("Connecting to device: {}", serial);
-
-        let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
-            if ServerParams::should_lock_orientation_for_nvdec() {
-                Some(0)
-            } else {
-                None
-            }
-        });
-
-        // Establish ScrcpyConnection (blocking)
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| {
-                error!("Failed to create Tokio runtime: {}", e);
-                SAideError::Other(format!("Failed to create Tokio runtime: {}", e))
-            })?;
-        let mut connection = runtime.block_on(async {
-            tokio::select! {
-                _ = token.cancelled() => {
-                    Err(SAideError::Cancelled)
-                },
-                conn = scrcpy_connection(&serial, config.clone(), capture_orientation) => {
-                    conn
-                }
-            }
-        })?;
-
-        info!("ScrcpyConnection established successfully");
-
-        let video_stream = connection
-            .take_video_stream()
-            .ok_or_else(|| SAideError::Other("Video stream not available".to_string()))?;
-        let audio_stream = connection.take_audio_stream();
-        let control_stream = connection
-            .take_control_stream()
-            .ok_or_else(|| SAideError::Other("Control stream not available".to_string()))?;
-        let video_resolution = connection
-            .video_resolution
-            .ok_or_else(|| SAideError::Other("Video resolution not available".to_string()))?;
-        let device_name = connection.device_name.clone();
-        let audio_disabled_reason = connection.audio_disabled_reason.clone();
-
-        let control_stream_clone = control_stream
-            .try_clone()
-            .map_err(|e| SAideError::Other(format!("Failed to clone control stream: {}", e)))?;
-
-        let control_sender = ControlSender::new(
-            control_stream_clone,
-            video_resolution.0 as u16,
-            video_resolution.1 as u16,
-        );
-
-        info!(
-            "ControlSender created with resolution {}x{}, capture_orientation={:?}",
-            video_resolution.0, video_resolution.1, capture_orientation
-        );
-
-        connection.set_control_stream(control_stream);
-
-        // Send connection ready event (with connection to keep alive)
-        tx.send(InitEvent::ConnectionReady {
+    if tx
+        .send(InitEvent::ConnectionReady {
             connection,
             control_sender: control_sender.clone(),
             video_stream,
@@ -187,288 +132,24 @@ fn start_scrcpy_connection(
             device_name,
             audio_disabled_reason,
             capture_orientation,
-        })?;
-
-        // Now create keyboard mapper (if enabled)
-        if config.general.keyboard_enabled {
-            let keyboard_mapper = KeyboardMapper::new(
-                config.mappings.clone(),
-                control_sender.clone(),
-                capture_orientation,
-            );
-            debug!("Keyboard mapper initialized with ControlSender");
-            tx.send(InitEvent::KeyboardMapper(keyboard_mapper))?;
-        }
-
-        // Create mouse mapper (if enabled)
-        if config.general.mouse_enabled {
-            let mouse_mapper = MouseMapper::new(control_sender.clone());
-            debug!("Mouse mapper initialized with ControlSender");
-            tx.send(InitEvent::MouseMapper(mouse_mapper))?;
-        }
-
-        Ok(())
-    });
-}
-
-/// Establish scrcpy connection with given config
-async fn scrcpy_connection(
-    serial: &str,
-    config: Arc<SAideConfig>,
-    capture_orientation: Option<u32>,
-) -> Result<ScrcpyConnection> {
-    let server_path = &config.general.scrcpy_server;
-
-    // Create server params from config
-    let mut params = ServerParams::for_device(serial)?;
-
-    // Apply config settings
-    let bit_rate = {
-        let rate_str = &config.scrcpy.video.bit_rate;
-        let multiplier = if rate_str.ends_with('M') || rate_str.ends_with('m') {
-            1_000_000
-        } else if rate_str.ends_with('K') || rate_str.ends_with('k') {
-            1_000
-        } else {
-            1
-        };
-        let num_str = rate_str.trim_end_matches(|c: char| !c.is_ascii_digit());
-        num_str.parse::<u32>().unwrap_or(8) * multiplier
-    };
-
-    params.video = true;
-    params.video_codec = config.scrcpy.video.codec.clone();
-    params.video_bit_rate = bit_rate;
-    params.max_size = config.scrcpy.video.max_size as u16;
-    params.max_fps = config.scrcpy.video.max_fps as u16;
-    params.audio = config.scrcpy.audio.enabled;
-    params.audio_codec = config.scrcpy.audio.codec.clone();
-    params.audio_source = config.scrcpy.audio.source.clone();
-    params.control = true;
-    params.send_device_meta = true;
-    params.send_codec_meta = true;
-    params.send_frame_meta = true;
-
-    // Apply screen control options
-    params.stay_awake = config.scrcpy.options.stay_awake;
-    params.screen_off_timeout = if config.scrcpy.options.turn_screen_off {
-        Some(-1) // Turn off immediately
-    } else {
-        None
-    };
-
-    // 🔒 NVDEC Optimization: Lock capture orientation to prevent resolution changes
-    // Benefits:
-    // - Avoid decoder rebuild overhead (~200ms + black screen)
-    // - No need for prepend-sps-pps-to-idr-frames=1 (compatibility)
-    // - More stable, works on all devices
-    if let Some(capture_orientation) = capture_orientation {
-        // Lock to current device orientation (absolute)
-        // @0 = lock to 0° (portrait), follows device's natural orientation
-        params.capture_orientation = Some(format!("@{}", capture_orientation));
-        info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
+        })
+        .is_err()
+    {
+        return;
     }
 
-    ScrcpyConnection::connect(serial, server_path, &config.general.bind_address, params).map_err(
-        |e| {
-            error!("Failed to establish scrcpy connection: {}", e);
-            e
+    let tx_keyboard = tx.clone();
+    InputManager::create_keyboard_mapper(
+        config.clone(),
+        control_sender.clone(),
+        capture_orientation,
+        move |mapper| {
+            let _ = tx_keyboard.send(InitEvent::KeyboardMapper(mapper));
         },
-    )
-}
+    );
 
-/// Start device monitor thread
-/// Monitors device state, rotation, and IME state
-fn start_device_monitor(
-    serial: &str,
-    tx: Sender<InitEvent>,
-    token: CancellationToken,
-) -> JoinHandle<Result<()>> {
-    let serial = serial.to_owned();
-    thread::spawn(move || -> Result<()> {
-        info!("Starting device monitor thread...");
-
-        if token.is_cancelled() {
-            info!("Device monitor initialization cancelled");
-            return Ok(());
-        }
-
-        // Create channel for rotation events
-        let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
-        tx.send(InitEvent::DeviceMonitor(event_rx))?;
-
-        // Start monitor threads
-        let handles = vec![
-            start_device_state_monitor(&serial, event_tx.clone(), token.clone()),
-            start_ime_state_monitor(&serial, event_tx.clone(), token.clone()),
-            start_rotation_monitor(&serial, event_tx.clone(), token.clone()),
-        ];
-
-        // Wait for all monitor threads to finish
-        for handle in handles {
-            if let Err(e) = handle.join().unwrap_or_else(|e| {
-                Err(SAideError::Other(format!(
-                    "Device monitor thread panicked: {:?}",
-                    e
-                )))
-            }) {
-                error!("Device monitor thread error: {}", e);
-            }
-        }
-
-        Ok(())
-    })
-}
-
-/// Device state monitor thread, checks if device is still connected
-/// Sends DeviceOffline event if device disconnects
-fn start_device_state_monitor(
-    serial: &str,
-    event_tx: Sender<DeviceMonitorEvent>,
-    token: CancellationToken,
-) -> JoinHandle<Result<()>> {
-    let serial = serial.to_owned();
-    thread::spawn(move || -> Result<()> {
-        info!("Starting device state monitor thread...");
-
-        loop {
-            // Check for cancellation
-            if token.is_cancelled() {
-                info!("Device state monitor cancellation requested, stopping...");
-                break;
-            }
-
-            match retry_adb_command(|| AdbShell::get_device_state(&serial)) {
-                Ok(state) => {
-                    if state != DeviceState::Connected {
-                        info!("Device went offline: {:?}", state);
-
-                        event_tx
-                            .send(DeviceMonitorEvent::DeviceOffline)
-                            .unwrap_or_else(|e| {
-                                error!("Failed to send DeviceOffline event: {}", e);
-                            });
-
-                        // Device is offline, exit monitoring
-                        break;
-                    }
-                }
-                Err(e) => {
-                    // Failed to get device state, report error and exit monitoring
-                    error!("Failed to get device state: {}", e);
-                    return Err(e);
-                }
-            }
-
-            thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
-        }
-        Ok(())
-    })
-}
-
-/// IME state monitor thread, checks if input method (keyboard) is shown or hidden
-/// Sends ImStateChanged event when state changes
-fn start_ime_state_monitor(
-    serial: &str,
-    event_tx: Sender<DeviceMonitorEvent>,
-    token: CancellationToken,
-) -> JoinHandle<Result<()>> {
-    let serial = serial.to_owned();
-    thread::spawn(move || -> Result<()> {
-        info!("Starting IME state monitor thread...");
-
-        loop {
-            if token.is_cancelled() {
-                info!("Device IME monitor cancellation requested, stopping...");
-                break;
-            }
-
-            match retry_adb_command(|| AdbShell::get_ime_state(&serial)) {
-                Ok(is_shown) => {
-                    event_tx
-                        .send(DeviceMonitorEvent::ImStateChanged(is_shown))
-                        .unwrap_or_else(|e| {
-                            error!("Failed to send IME state event: {}", e);
-                        });
-                }
-                Err(e) => {
-                    error!("Failed to get IME state: {}", e);
-                    return Err(e);
-                }
-            }
-
-            thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
-        }
-
-        Ok(())
-    })
-}
-fn start_rotation_monitor(
-    serial: &str,
-    event_tx: Sender<DeviceMonitorEvent>,
-    token: CancellationToken,
-) -> JoinHandle<Result<()>> {
-    let serial = serial.to_owned();
-    thread::spawn(move || -> Result<()> {
-        info!("Starting device rotation monitor thread...");
-
-        let mut last_orientation: Option<u32> = None;
-
-        loop {
-            if token.is_cancelled() {
-                info!("Device rotation monitor cancellation requested, stopping...");
-                break;
-            }
-
-            match retry_adb_command(|| AdbShell::get_screen_orientation(&serial)) {
-                Ok(orientation) => {
-                    if Some(orientation) != last_orientation {
-                        info!("Device rotated to orientation: {}", orientation);
-
-                        last_orientation = Some(orientation);
-
-                        event_tx
-                            .send(DeviceMonitorEvent::Rotated(orientation))
-                            .unwrap_or_else(|e| {
-                                error!("Failed to send rotation event: {}", e);
-                            });
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to get device orientation: {}", e);
-                    return Err(e);
-                }
-            }
-
-            thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
-        }
-
-        Ok(())
-    })
-}
-
-fn retry_adb_command<F, T>(mut command_fn: F) -> Result<T>
-where
-    F: FnMut() -> Result<T>,
-{
-    const MAX_RETRIES: u32 = 3;
-    const RETRY_DELAY_MS: u64 = 100;
-
-    let mut attempts = 0;
-    loop {
-        match command_fn() {
-            Ok(result) => return Ok(result),
-            Err(e) => {
-                attempts += 1;
-                if attempts >= MAX_RETRIES {
-                    return Err(e);
-                }
-                warn!(
-                    "ADB command failed (attempt {}): {}. Retrying in {} ms...",
-                    attempts, e, RETRY_DELAY_MS
-                );
-                thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
-            }
-        }
-    }
+    let tx_mouse = tx.clone();
+    InputManager::create_mouse_mapper(control_sender, move |mapper| {
+        let _ = tx_mouse.send(InitEvent::MouseMapper(mapper));
+    });
 }
