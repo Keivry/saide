@@ -11,7 +11,6 @@ use {
         DecodedAudio,
         error::{AudioError, Result},
     },
-    crate::constant::AUDIO_RING_CAPACITY,
     cpal::{
         BufferSize,
         Stream,
@@ -59,7 +58,13 @@ impl AudioPlayer {
     /// * `sample_rate` - Audio sample rate (Hz)
     /// * `channels` - Number of channels (1=mono, 2=stereo)
     /// * `buffer_frames` - Buffer size in frames (lower = less latency, higher = more stable)
-    pub fn new(sample_rate: u32, channels: u16, buffer_frames: u32) -> Result<Self> {
+    /// * `ring_capacity` - Ring buffer capacity in samples
+    pub fn new(
+        sample_rate: u32,
+        channels: u16,
+        buffer_frames: u32,
+        ring_capacity: usize,
+    ) -> Result<Self> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or_else(|| {
             AudioError::InitializationError("No default audio output device found".to_string())
@@ -79,7 +84,7 @@ impl AudioPlayer {
         debug!("Audio config: {:?}", config);
 
         // Create lock-free ring buffer (sample-level)
-        let (producer, mut consumer) = RingBuffer::<f32>::new(AUDIO_RING_CAPACITY);
+        let (producer, mut consumer) = RingBuffer::<f32>::new(ring_capacity);
 
         let running = Arc::new(AtomicBool::new(true));
         let underruns = Arc::new(AtomicU64::new(0));
@@ -239,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_audio_player_creation() {
-        let player = AudioPlayer::new(48000, 2, 64);
+        let player = AudioPlayer::new(48000, 2, 64, 5760);
         assert!(player.is_ok());
     }
 }

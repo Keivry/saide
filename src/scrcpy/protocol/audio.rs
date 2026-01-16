@@ -1,7 +1,10 @@
 //! Audio packet parsing for Scrcpy protocol
 
 use {
-    crate::error::{Result, SAideError},
+    crate::{
+        constant::MAX_PACKET_SIZE,
+        error::{Result, SAideError},
+    },
     byteorder::{BigEndian, ReadBytesExt},
     std::io::Cursor,
 };
@@ -48,6 +51,13 @@ impl AudioPacket {
         let packet_size = cursor
             .read_u32::<BigEndian>()
             .map_err(|e| SAideError::DecodeError(format!("Failed to read packet_size: {}", e)))?;
+
+        if packet_size as usize > MAX_PACKET_SIZE {
+            return Err(SAideError::ProtocolError(format!(
+                "Audio packet size {} exceeds maximum allowed {} (10MB)",
+                packet_size, MAX_PACKET_SIZE
+            )));
+        }
 
         // Extract PTS (lower 63 bits)
         let pts = (pts_and_flags & 0x7FFF_FFFF_FFFF_FFFF) as i64;

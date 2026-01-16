@@ -66,6 +66,39 @@ impl Display for GpuBackend {
     }
 }
 
+/// Input control configuration (mouse, touch, etc)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputConfig {
+    /// Long press duration threshold in milliseconds (default: 300ms)
+    /// Time the mouse button must be held before triggering long-press
+    #[serde(default = "default_long_press_ms")]
+    pub long_press_ms: u128,
+
+    /// Drag threshold in pixels (default: 5.0px)
+    /// Minimum movement distance to distinguish drag from click
+    #[serde(default = "default_drag_threshold")]
+    pub drag_threshold_px: f32,
+
+    /// Drag update interval in milliseconds (default: 8ms ≈ 120fps)
+    /// Interval for sending touch move events during dragging
+    #[serde(default = "default_drag_interval_ms")]
+    pub drag_interval_ms: u128,
+}
+
+impl Default for InputConfig {
+    fn default() -> Self {
+        Self {
+            long_press_ms: default_long_press_ms(),
+            drag_threshold_px: default_drag_threshold(),
+            drag_interval_ms: default_drag_interval_ms(),
+        }
+    }
+}
+
+fn default_long_press_ms() -> u128 { 300 }
+fn default_drag_threshold() -> f32 { 5.0 }
+fn default_drag_interval_ms() -> u128 { 8 }
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GPUConfig {
     #[serde(default)]
@@ -152,6 +185,7 @@ pub struct SAideConfig {
     pub general: GeneralConfig,
     pub scrcpy: Arc<ScrcpyConfig>,
     pub gpu: GPUConfig,
+    pub input: InputConfig,
     pub mappings: Arc<Mappings>,
     pub logging: LogConfig,
 }
@@ -164,7 +198,48 @@ impl SAideConfig {
     {
         let content = fs::read_to_string(path)?;
         let config: SAideConfig = toml::from_str(&content)?;
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Validate configuration values are within acceptable ranges
+    pub fn validate(&self) -> Result<()> {
+        if !(50..=2000).contains(&self.input.long_press_ms) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "input.long_press_ms ({}) must be 50-2000ms",
+                self.input.long_press_ms
+            )));
+        }
+
+        if !(1.0..=50.0).contains(&self.input.drag_threshold_px) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "input.drag_threshold_px ({}) must be 1.0-50.0px",
+                self.input.drag_threshold_px
+            )));
+        }
+
+        if !(1..=100).contains(&self.input.drag_interval_ms) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "input.drag_interval_ms ({}) must be 1-100ms",
+                self.input.drag_interval_ms
+            )));
+        }
+
+        if !(32..=16384).contains(&self.scrcpy.audio.buffer_frames) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "scrcpy.audio.buffer_frames ({}) must be 32-16384",
+                self.scrcpy.audio.buffer_frames
+            )));
+        }
+
+        if !(1024..=65536).contains(&self.scrcpy.audio.ring_capacity) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "scrcpy.audio.ring_capacity ({}) must be 1024-65536",
+                self.scrcpy.audio.ring_capacity
+            )));
+        }
+
+        Ok(())
     }
 
     /// Save configuration to file atomically

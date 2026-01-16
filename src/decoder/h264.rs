@@ -130,14 +130,7 @@ impl H264Decoder {
 
     /// Send packet to decoder
     fn send_packet(&mut self, data: &[u8], pts: i64) -> Result<()> {
-        let mut packet = ffmpeg::Packet::new(data.len());
-        packet.data_mut().unwrap().copy_from_slice(data);
-        packet.set_pts(Some(pts));
-        packet.set_dts(Some(pts));
-
-        self.decoder.send_packet(&packet)?;
-
-        Ok(())
+        super::packet::send_av_packet(&mut self.decoder, data, pts)
     }
 
     /// Receive decoded frames

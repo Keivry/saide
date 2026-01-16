@@ -53,3 +53,9 @@ pub const AUDIO_BUFFER_FRAMES: usize = 64;
 /// Opus frame: ~1920 samples (20ms @ 48kHz stereo)
 /// Capacity should be at least 2x the frame size to account for jitter
 pub const AUDIO_RING_CAPACITY: usize = 5760;
+
+/// Maximum allowed packet size for video/audio packets (10 MB)
+/// Protects against DoS attacks via maliciously large packet_size values
+/// Typical values: H.264 keyframe ~500KB, audio packet ~2KB
+/// This limit allows 4K video keyframes while preventing memory exhaustion
+pub const MAX_PACKET_SIZE: usize = 10 * 1024 * 1024;

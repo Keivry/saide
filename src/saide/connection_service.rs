@@ -217,12 +217,15 @@ impl InputManager {
     }
 
     /// Create mouse mapper
-    pub fn create_mouse_mapper<F>(control_sender: ControlSender, on_ready: F)
-    where
+    pub fn create_mouse_mapper<F>(
+        config: Arc<SAideConfig>,
+        control_sender: ControlSender,
+        on_ready: F,
+    ) where
         F: FnOnce(MouseMapper) + Send + 'static,
     {
         thread::spawn(move || {
-            let mapper = MouseMapper::new(control_sender);
+            let mapper = MouseMapper::new(control_sender, config.input.clone());
             debug!("Mouse mapper initialized with ControlSender");
             on_ready(mapper);
         });

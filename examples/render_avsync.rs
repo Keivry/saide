@@ -10,6 +10,7 @@ use {
     anyhow::{Context, Result},
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
+    parking_lot::Mutex,
     saide::{
         ScrcpyConnection,
         ServerParams,
@@ -237,7 +238,7 @@ fn av_worker(
     let mut av_sync = AVSync::new(20);
     let av_snapshot = av_sync.snapshot(); // For video thread
 
-    let stats = Arc::new(std::sync::Mutex::new(AVStats::default()));
+    let stats = Arc::new(Mutex::new(AVStats::default()));
 
     // Spawn audio thread (holds mutable AVSync)
     let stats_audio = stats.clone();
@@ -245,7 +246,7 @@ fn av_worker(
         info!("Audio thread spawned, entering read loop...");
         match (|| -> Result<()> {
             let mut audio_decoder = OpusDecoder::new(48000, 2)?;
-            let audio_player = AudioPlayer::new(48000, 2, 64)?;
+            let audio_player = AudioPlayer::new(48000, 2, 64, 5760)?;
             info!("Audio thread started (Opus)");
 
             loop {
@@ -270,7 +271,7 @@ fn av_worker(
 
                 // Update stats
                 {
-                    let mut s = stats_audio.lock().unwrap();
+                    let mut s = stats_audio.lock();
                     s.audio_frames += 1;
                     s.last_audio_pts = pts;
 
@@ -316,7 +317,7 @@ fn av_worker(
         if let Ok(Some(frame)) = video_decoder.decode(&video_packet.data, pts) {
             // Update stats
             let current_stats = {
-                let mut s = stats.lock().unwrap();
+                let mut s = stats.lock();
                 s.video_frames += 1;
                 s.last_video_pts = frame.pts;
                 *s
@@ -324,14 +325,14 @@ fn av_worker(
 
             // Check sync (lock-free read from snapshot)
             if av_snapshot.should_drop_video(frame.pts) {
-                let mut stats_guard = stats.lock().unwrap();
+                let mut stats_guard = stats.lock();
                 stats_guard.dropped_frames += 1;
                 continue;
             }
 
             // Send frame to UI
             if frame_tx.try_send(Arc::new(frame)).is_err() {
-                let mut stats_guard = stats.lock().unwrap();
+                let mut stats_guard = stats.lock();
                 stats_guard.dropped_frames += 1;
             }
 

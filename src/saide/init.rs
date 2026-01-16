@@ -149,7 +149,7 @@ fn send_connection_events(
     );
 
     let tx_mouse = tx.clone();
-    InputManager::create_mouse_mapper(control_sender, move |mapper| {
+    InputManager::create_mouse_mapper(config.clone(), control_sender, move |mapper| {
         let _ = tx_mouse.send(InitEvent::MouseMapper(mapper));
     });
 }

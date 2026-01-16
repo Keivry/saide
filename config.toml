@@ -15,6 +15,11 @@ codec = "h264"
 enabled = true
 codec = "opus"
 source = "playback"
+# Audio buffer size in frames (lower = less latency, higher = more stable)
+# Values: 64 (1.33ms), 128 (2.67ms), 256 (5.33ms) at 48kHz
+buffer_frames = 64
+# Ring buffer capacity in samples (higher = more buffering, less glitches)
+ring_capacity = 5760
 
 [scrcpy.options]
 turn_screen_off = true
@@ -23,6 +28,14 @@ stay_awake = true
 [gpu]
 vsync = false
 backend = "VULKAN"
+
+[input]
+# Long press duration in milliseconds (default: 300ms)
+long_press_ms = 300
+# Drag detection threshold in pixels (default: 5.0px)
+drag_threshold_px = 5.0
+# Drag update interval in milliseconds (default: 8ms ≈ 120fps)
+drag_interval_ms = 8
 
 [mappings]
 toggle = "F10"

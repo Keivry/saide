@@ -319,6 +319,14 @@ impl ScrcpyConnection {
 
             let packet_size = u32::from_be_bytes([header[8], header[9], header[10], header[11]]);
 
+            if packet_size as usize > crate::constant::MAX_PACKET_SIZE {
+                return Err(SAideError::ProtocolError(format!(
+                    "Audio packet size {} exceeds maximum allowed {} (10MB)",
+                    packet_size,
+                    crate::constant::MAX_PACKET_SIZE
+                )));
+            }
+
             let total_size = 12 + packet_size as usize;
             let mut data = vec![0u8; total_size];
             data[..12].copy_from_slice(&header);

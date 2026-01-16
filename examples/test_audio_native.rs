@@ -55,7 +55,7 @@ fn main() -> Result<()> {
     // Initialize native Opus decoder and audio player
     println!("\n🎧 Initializing native libopus decoder...");
     let mut decoder = OpusDecoder::new(48000, 2)?;
-    let player = AudioPlayer::new(48000, 2, 64)?;
+    let player = AudioPlayer::new(48000, 2, 64, 5760)?;
 
     println!("✅ Audio initialized: 48kHz stereo (native libopus)");
 

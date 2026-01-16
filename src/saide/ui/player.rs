@@ -163,6 +163,9 @@ pub struct StreamPlayer {
 
     /// Audio buffer size in frames (configurable)
     audio_buffer_frames: u32,
+
+    /// Audio ring buffer capacity in samples (configurable)
+    audio_ring_capacity: usize,
 }
 
 impl StreamPlayer {
@@ -170,6 +173,7 @@ impl StreamPlayer {
         cc: &eframe::CreationContext,
         cancel_token: CancellationToken,
         audio_buffer_frames: u32,
+        audio_ring_capacity: usize,
     ) -> Self {
         // Register NV12 render resources
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
@@ -202,6 +206,7 @@ impl StreamPlayer {
             event_rx,
             cancel_token,
             audio_buffer_frames,
+            audio_ring_capacity,
         }
     }
 
@@ -223,6 +228,8 @@ impl StreamPlayer {
         let cancel_token = self.cancel_token.clone();
         let latency_stats = self.latency_stats.clone();
         let audio_buffer_frames = self.audio_buffer_frames;
+        let audio_ring_capacity = self.audio_ring_capacity;
+        let event_tx_clone = event_tx.clone();
         self.stream_thread = Some(thread::spawn(move || {
             if cancel_token.is_cancelled() {
                 debug!("Stream worker exiting due to cancellation");
@@ -233,23 +240,22 @@ impl StreamPlayer {
                 video_stream,
                 audio_stream,
                 video_resolution,
-                event_tx.clone(),
-                cancel_token,
+                event_tx,
+                cancel_token.clone(),
                 latency_stats,
-                audio_buffer_frames,
+                StreamWorkerConfig {
+                    audio_buffer_frames,
+                    audio_ring_capacity,
+                },
             ) {
                 let is_cancelled = e.is_cancelled();
                 if !is_cancelled {
                     error!("Stream worker error: {e}");
                 }
-                event_tx
-                    .send(PlayerEvent::Failed {
-                        error: e.to_string(),
-                        is_cancelled,
-                    })
-                    .unwrap_or_else(|err| {
-                        error!("Failed to send PlayerEvent::Failed: {err}");
-                    });
+                let _ = event_tx_clone.send(PlayerEvent::Failed {
+                    error: e.to_string(),
+                    is_cancelled,
+                });
             }
         }));
     }
@@ -507,6 +513,11 @@ impl Drop for StreamPlayer {
     fn drop(&mut self) { self.stop(); }
 }
 
+struct StreamWorkerConfig {
+    audio_buffer_frames: u32,
+    audio_ring_capacity: usize,
+}
+
 /// Stream worker thread
 fn stream_worker(
     mut video_stream: TcpStream,
@@ -515,7 +526,7 @@ fn stream_worker(
     event_tx: Sender<PlayerEvent>,
     token: CancellationToken,
     latency_stats: Arc<Mutex<LatencyStats>>,
-    audio_buffer_frames: u32,
+    config: StreamWorkerConfig,
 ) -> Result<()> {
     let (width, height) = video_resolution;
     info!("Video resolution: {}x{}", width, height);
@@ -530,7 +541,12 @@ fn stream_worker(
         height,
     })?;
 
-    let mut decoder_mgr = DecoderManager::init(width, height, audio_buffer_frames)?;
+    let mut decoder_mgr = DecoderManager::init(
+        width,
+        height,
+        config.audio_buffer_frames,
+        config.audio_ring_capacity,
+    )?;
     let mut last_resolution = (width, height);
 
     let stats = Arc::new(Mutex::new(StreamStats::default()));
@@ -592,10 +608,15 @@ struct DecoderManager {
 }
 
 impl DecoderManager {
-    fn init(width: u32, height: u32, audio_buffer_frames: u32) -> Result<Self> {
+    fn init(
+        width: u32,
+        height: u32,
+        audio_buffer_frames: u32,
+        audio_ring_capacity: usize,
+    ) -> Result<Self> {
         let video_decoder = AutoDecoder::new(width, height)?;
         let audio_decoder = OpusDecoder::new(48000, 2)?;
-        let audio_player = AudioPlayer::new(48000, 2, audio_buffer_frames)?;
+        let audio_player = AudioPlayer::new(48000, 2, audio_buffer_frames, audio_ring_capacity)?;
         let av_sync = AVSync::new(20);
 
         info!(
@@ -680,6 +701,11 @@ impl AudioThread {
 
             let pts = i64::from_be_bytes(header[0..8].try_into().unwrap());
             let packet_size = u32::from_be_bytes(header[8..12].try_into().unwrap()) as usize;
+
+            if packet_size > crate::constant::MAX_PACKET_SIZE {
+                warn!("Audio packet size {packet_size} exceeds MAX_PACKET_SIZE, skipping");
+                continue;
+            }
 
             let mut payload = vec![0u8; packet_size];
             if let Err(e) = audio_stream.read_exact(&mut payload) {

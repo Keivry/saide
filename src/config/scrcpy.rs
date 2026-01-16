@@ -62,6 +62,11 @@ pub struct AudioConfig {
     /// Default: 64 frames for minimal latency
     #[serde(default = "default_buffer_frames")]
     pub buffer_frames: u32,
+    /// Ring buffer capacity in samples (affects internal audio buffering)
+    /// Higher values = more buffering = higher latency but fewer glitches
+    /// Default: 5760 samples
+    #[serde(default = "default_ring_capacity")]
+    pub ring_capacity: usize,
 }
 
 impl Default for AudioConfig {
@@ -71,6 +76,7 @@ impl Default for AudioConfig {
             codec: default_audio_codec(),
             source: default_audio_source(),
             buffer_frames: default_buffer_frames(),
+            ring_capacity: default_ring_capacity(),
         }
     }
 }
@@ -79,6 +85,7 @@ fn default_audio_enabled() -> bool { true }
 fn default_audio_codec() -> String { "opus".to_string() }
 fn default_audio_source() -> String { "playback".to_string() }
 fn default_buffer_frames() -> u32 { 64 }
+fn default_ring_capacity() -> usize { 5760 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptionsConfig {

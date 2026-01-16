@@ -46,8 +46,10 @@ impl I18nManager {
         for locale in source.available_locales() {
             match source.load_locale(&locale) {
                 Ok(resources) => {
-                    let langid: LanguageIdentifier =
-                        locale.parse().unwrap_or_else(|_| "en-US".parse().unwrap());
+                    let langid: LanguageIdentifier = locale.parse().unwrap_or_else(|e| {
+                        tracing::warn!("Invalid locale '{locale}': {e}, falling back to en-US");
+                        "en-US".parse().expect("en-US is always valid")
+                    });
                     let mut bundle = FluentBundle::new_concurrent(vec![langid]);
 
                     for resource in resources {
@@ -152,8 +154,10 @@ impl I18nManager {
 
         match self.source.load_locale(locale) {
             Ok(resources) => {
-                let langid: LanguageIdentifier =
-                    locale.parse().unwrap_or_else(|_| "en-US".parse().unwrap());
+                let langid: LanguageIdentifier = locale.parse().unwrap_or_else(|e| {
+                    tracing::warn!("Invalid locale '{locale}': {e}, falling back to en-US");
+                    "en-US".parse().expect("en-US is always valid")
+                });
                 let mut bundle = FluentBundle::new_concurrent(vec![langid]);
 
                 for resource in resources {

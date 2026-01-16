@@ -73,6 +73,7 @@ impl SAideApp {
         let indicator_position = config.general.indicator_position;
         let max_fps = config.scrcpy.video.max_fps;
         let audio_buffer_frames = config.scrcpy.audio.buffer_frames;
+        let audio_ring_capacity = config.scrcpy.audio.ring_capacity;
 
         let cancel_token = tokio_util::sync::CancellationToken::new();
 
@@ -84,7 +85,12 @@ impl SAideApp {
             shutdown_requested: false,
             toolbar,
             indicator: Indicator::new(indicator_position, max_fps as f32),
-            player: StreamPlayer::new(cc, cancel_token.clone(), audio_buffer_frames),
+            player: StreamPlayer::new(
+                cc,
+                cancel_token.clone(),
+                audio_buffer_frames,
+                audio_ring_capacity,
+            ),
             mapping_config_window: MappingConfigWindow::new(),
             app_state: AppState::new(serial.to_owned(), cancel_token),
             config_state: ConfigState::new(config_manager),

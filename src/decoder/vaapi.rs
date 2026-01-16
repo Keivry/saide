@@ -166,14 +166,7 @@ impl VaapiDecoder {
     }
 
     fn send_packet(&mut self, data: &[u8], pts: i64) -> Result<()> {
-        let mut packet = ffmpeg::Packet::new(data.len());
-        packet.data_mut().unwrap().copy_from_slice(data);
-        packet.set_pts(Some(pts));
-        packet.set_dts(Some(pts));
-
-        self.decoder.send_packet(&packet)?;
-
-        Ok(())
+        super::packet::send_av_packet(&mut self.decoder, data, pts)
     }
 
     fn receive_frames(&mut self) -> Result<Vec<DecodedFrame>> {
@@ -309,6 +302,10 @@ unsafe extern "C" fn get_vaapi_format(
     pix_fmts: *const ffmpeg::sys::AVPixelFormat,
 ) -> ffmpeg::sys::AVPixelFormat {
     unsafe {
+        if pix_fmts.is_null() {
+            return ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NONE;
+        }
+
         let mut p = pix_fmts;
         while *p != ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NONE {
             if *p == ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_VAAPI {

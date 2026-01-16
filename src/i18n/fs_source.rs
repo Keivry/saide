@@ -36,8 +36,14 @@ impl FsFtlSource {
     }
 
     pub(crate) fn find_i18n_path() -> PathBuf {
-        let current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-        let current_dir = current_exe.parent().unwrap_or(Path::new("."));
+        let current_exe = std::env::current_exe().unwrap_or_else(|e| {
+            tracing::warn!("Failed to get current executable path: {e}, using '.'");
+            PathBuf::from(".")
+        });
+        let current_dir = current_exe.parent().unwrap_or_else(|| {
+            tracing::warn!("Executable has no parent directory, using '.'");
+            Path::new(".")
+        });
 
         let paths = [
             current_dir.join("i18n"),
@@ -51,6 +57,7 @@ impl FsFtlSource {
             }
         }
 
+        tracing::warn!("i18n directory not found, falling back to './i18n'");
         PathBuf::from("i18n")
     }
 }
@@ -124,8 +131,13 @@ impl FsFtlSource {
         let root = self.root.clone();
         let tx_clone = tx.clone();
 
-        let mut watcher = RecommendedWatcher::new(tx, notify::Config::default())
-            .expect("Failed to create file watcher");
+        let mut watcher = match RecommendedWatcher::new(tx, notify::Config::default()) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("i18n hot reload disabled (failed to create watcher): {e}");
+                return;
+            }
+        };
 
         if let Err(e) = watcher.watch(&self.root, RecursiveMode::NonRecursive) {
             tracing::warn!("Failed to start i18n file watcher: {}", e);

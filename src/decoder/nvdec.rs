@@ -121,14 +121,10 @@ impl NvdecDecoder {
         packet.set_pts(Some(pts));
         packet.set_dts(Some(pts));
 
-        // Try to send packet - if it fails due to resolution change, let it through
-        // (will be caught by empty frame detection)
         if let Err(e) = self.decoder.send_packet(&packet) {
-            // EAGAIN is normal (decoder busy), others might indicate resolution change
             let err_str = format!("{:?}", e);
             if !err_str.contains("EAGAIN") {
                 warn!("send_packet failed (possibly resolution change): {e:?}");
-                // Don't fail here - let receive_frames handle it
             }
         }
 
@@ -302,6 +298,10 @@ unsafe extern "C" fn get_cuda_format(
     pix_fmts: *const ffmpeg::sys::AVPixelFormat,
 ) -> ffmpeg::sys::AVPixelFormat {
     unsafe {
+        if pix_fmts.is_null() {
+            return ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NONE;
+        }
+
         let mut p = pix_fmts;
         while *p != ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NONE {
             if *p == ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_CUDA {

@@ -7,6 +7,7 @@ mod h264;
 mod h264_parser;
 mod nv12_render;
 mod nvdec;
+mod packet;
 mod rgba_render;
 mod vaapi;
 

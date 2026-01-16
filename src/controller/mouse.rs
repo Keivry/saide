@@ -6,7 +6,10 @@
 
 use {
     crate::{
-        config::mapping::{MouseButton, WheelDirection},
+        config::{
+            InputConfig,
+            mapping::{MouseButton, WheelDirection},
+        },
         controller::control_sender::ControlSender,
         error::Result,
     },
@@ -14,15 +17,6 @@ use {
     std::time::Instant,
     tracing::{debug, trace},
 };
-
-/// Movement threshold to distinguish drag from click (in pixels)
-const DRAG_THRESHOLD: f32 = 5.0;
-
-/// Long press duration threshold (in milliseconds)
-const LONG_PRESS_DURATION_MS: u128 = 300;
-
-/// Drag update interval (in milliseconds) - send every move event for smooth dragging
-const DRAG_UPDATE_INTERVAL_MS: u128 = 8; // ~120fps, matches typical mouse polling rate
 
 /// Mouse button state for tracking press/drag/long-press
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,14 +44,17 @@ pub struct MouseMapper {
     sender: ControlSender,
     /// Current mouse state for left button
     left_button_state: Mutex<MouseState>,
+    /// Input control configuration
+    config: InputConfig,
 }
 
 impl MouseMapper {
     /// Create a new mouse mapper
-    pub fn new(sender: ControlSender) -> Self {
+    pub fn new(sender: ControlSender, config: InputConfig) -> Self {
         Self {
             sender,
             left_button_state: Mutex::new(MouseState::Idle),
+            config,
         }
     }
 
@@ -74,7 +71,7 @@ impl MouseMapper {
             } => {
                 // Check if long press duration exceeded
                 let elapsed = start_time.elapsed().as_millis();
-                if elapsed >= LONG_PRESS_DURATION_MS {
+                if elapsed >= self.config.long_press_ms {
                     // Long press triggered - don't send any ADB event
                     // Android will detect the sustained touch and trigger long press automatically
                     // The TouchDown is already being held, so Android knows it's a long press
@@ -92,7 +89,7 @@ impl MouseMapper {
             } => {
                 // Only send update if enough time passed
                 let elapsed = last_update.elapsed().as_millis();
-                if elapsed >= DRAG_UPDATE_INTERVAL_MS {
+                if elapsed >= self.config.drag_interval_ms {
                     // Send TouchMove event for drag updates
                     self.sender.send_touch_move(current_x, current_y)?;
                     debug!(
@@ -198,13 +195,13 @@ impl MouseMapper {
                 // Send TouchUp to complete the touch sequence
                 self.sender.send_touch_up(x, y)?;
 
-                if distance >= DRAG_THRESHOLD {
+                if distance >= self.config.drag_threshold_px {
                     // Fast drag that didn't trigger Dragging state transition
                     debug!(
                         "ACTION: Fast drag/flick from ({}, {}) to ({}, {}), distance={:.1}px",
                         start_x, start_y, x, y, distance
                     );
-                } else if elapsed >= LONG_PRESS_DURATION_MS {
+                } else if elapsed >= self.config.long_press_ms {
                     // Long press was already handled in update()
                     debug!(
                         "ACTION: Long press completed at ({}, {}) after {}ms",
@@ -264,7 +261,7 @@ impl MouseMapper {
                     start_x, start_y, x, y, distance
                 );
 
-                if distance >= DRAG_THRESHOLD {
+                if distance >= self.config.drag_threshold_px {
                     // Transition to dragging state
                     // Don't send initial swipe here - let update() handle it
                     self.update_button_state(MouseState::Dragging {
@@ -276,7 +273,7 @@ impl MouseMapper {
                     });
                     debug!(
                         "STATE TRANSITION: Pressed -> Dragging (distance={:.1}px >= {}px)",
-                        distance, DRAG_THRESHOLD
+                        distance, self.config.drag_threshold_px
                     );
                 }
                 // Note: Long press is now checked in update() method
@@ -289,7 +286,7 @@ impl MouseMapper {
             } => {
                 // Send MOVE event immediately if enough time passed (throttling)
                 let elapsed = last_update.elapsed().as_millis();
-                if elapsed >= DRAG_UPDATE_INTERVAL_MS {
+                if elapsed >= self.config.drag_interval_ms {
                     self.sender.send_touch_move(x, y)?;
                     trace!("Drag move to ({}, {}) [elapsed={}ms]", x, y, elapsed);
 

@@ -3,7 +3,10 @@
 /// Reference: scrcpy/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
 /// Protocol version: 3.3.3
 use {
-    crate::error::Result,
+    crate::{
+        constant::MAX_PACKET_SIZE,
+        error::{Result, SAideError},
+    },
     byteorder::{BigEndian, ReadBytesExt},
     std::io::Read,
 };
@@ -48,6 +51,14 @@ impl VideoPacket {
         // This allows proper detection of connection loss
         let pts_and_flags = reader.read_u64::<BigEndian>()?;
         let packet_size = reader.read_u32::<BigEndian>()? as usize;
+
+        // Validate packet size to prevent DoS via memory exhaustion
+        if packet_size > MAX_PACKET_SIZE {
+            return Err(SAideError::ProtocolError(format!(
+                "Video packet size {} exceeds maximum allowed {} (10MB)",
+                packet_size, MAX_PACKET_SIZE
+            )));
+        }
 
         // Read payload
         let mut data = vec![0u8; packet_size];
