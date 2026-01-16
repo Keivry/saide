@@ -103,23 +103,37 @@ src/
 ├── main.rs                 # Application entry point
 ├── lib.rs                 # Library root
 ├── error.rs               # Unified error types
-├── logging.rs             # Logging configuration
+├── constant.rs            # Constants and default values
 │
-├── app/                   # Application layer
+├── saide/                 # Application layer
 │   ├── mod.rs
 │   ├── init.rs            # Initialization logic
-│   ├── config.rs          # Configuration management
 │   ├── coords.rs          # Coordinate system management
+│   ├── connection_service.rs # Connection management service
+│   ├── device_monitor.rs  # Device monitoring service
+│   ├── utils.rs           # Utility functions
 │   └── ui/                # UI components
 │       ├── mod.rs
 │       ├── saide.rs       # Main application state
-│       ├── stream_player.rs # Video/audio rendering
+│       ├── state.rs       # UI state structures
+│       ├── player.rs      # Video/audio rendering
 │       ├── toolbar.rs     # Toolbar controls
 │       ├── indicator.rs   # Status indicators
-│       └── mapping.rs     # Key mapping configuration
+│       ├── mapping.rs     # Key mapping configuration
+│       ├── settings.rs    # Settings UI (placeholder)
+│       ├── log.rs         # Log viewer (placeholder)
+│       ├── overlay.rs     # Key overlay (placeholder)
+│       └── dialog.rs      # Dialog components
+│
+├── config/                # Configuration management
+│   ├── mod.rs
+│   ├── log.rs             # Logging configuration
+│   ├── scrcpy.rs          # Scrcpy-specific config
+│   └── mapping.rs         # Key mapping configuration
 │
 ├── controller/            # Input control layer
 │   ├── mod.rs
+│   ├── adb.rs             # ADB shell interface
 │   ├── control_sender.rs  # Control message sending
 │   ├── keyboard.rs        # Keyboard mapping
 │   └── mouse.rs           # Mouse input handling
@@ -128,30 +142,47 @@ src/
 │   ├── mod.rs
 │   ├── connection.rs      # Connection management
 │   ├── server.rs          # Server startup
+│   ├── codec_probe.rs     # Codec detection
+│   ├── hwcodec.rs         # Hardware codec support
 │   └── protocol/          # Protocol message handling
 │       ├── mod.rs
 │       ├── control.rs     # Control messages (PC→Device)
-│       ├── device.rs      # Device messages (Device→PC)
 │       ├── video.rs       # Video packet parsing
 │       └── audio.rs       # Audio packet parsing
 │
 ├── decoder/               # Media decoding
 │   ├── mod.rs
-│   ├── video/             # Video decoders
-│   │   ├── mod.rs
-│   │   ├── h264.rs        # Software H.264 decoder
-│   │   ├── nvdec.rs       # NVIDIA NVDEC decoder
-│   │   └── vaapi.rs       # Intel VAAPI decoder
+│   ├── auto.rs            # Auto decoder selection
+│   ├── error.rs           # Decoder error types
+│   ├── h264.rs            # Software H.264 decoder
+│   ├── h264_parser.rs     # H.264 NAL parser
+│   ├── nvdec.rs           # NVIDIA NVDEC decoder
+│   ├── vaapi.rs           # Intel VAAPI decoder
+│   ├── nv12_render.rs     # NV12 rendering pipeline
+│   ├── rgba_render.rs     # RGBA rendering pipeline
 │   └── audio/             # Audio decoders
 │       ├── mod.rs
+│       ├── error.rs       # Audio error types
 │       ├── opus.rs        # Opus decoder
 │       └── player.rs      # Audio playback (cpal)
 │
-├── sync/                  # Synchronization
+├── avsync/                # Audio-video synchronization
+│   ├── mod.rs
 │   └── clock.rs           # AV sync clock (lock-free)
 │
-└── utils/                 # Utilities
-    └── ...
+├── profiler/              # Performance profiling
+│   ├── mod.rs
+│   └── latency.rs         # Latency profiler
+│
+├── i18n/                  # Internationalization
+│   ├── mod.rs
+│   ├── manager.rs         # i18n manager
+│   ├── source.rs          # i18n source trait
+│   ├── embedded.rs        # Embedded resources
+│   └── fs_source.rs       # Filesystem source
+│
+└── gpu/                   # GPU detection
+    └── mod.rs             # GPU type detection
 ```
 
 ---
@@ -355,14 +386,19 @@ Keyboard mappings organized by device orientation:
 
 ### Core Dependencies
 
-| Dependency  | Version | Purpose                       |
-| ----------- | ------- | ----------------------------- |
-| tokio       | 1.x     | Async runtime for network I/O |
-| egui        | 0.x     | UI framework                  |
-| capnp       | 3.x     | Message serialization         |
-| ffmpeg-next | 5.x     | Media decoding                |
-| cpal        | 0.15    | Audio playback                |
-| rustyline   | 10.x    | CLI interface                 |
+| Dependency      | Version | Purpose                           |
+| --------------- | ------- | --------------------------------- |
+| eframe          | 0.33    | UI framework (egui + wgpu)        |
+| egui            | 0.33    | Immediate mode GUI                |
+| wgpu            | 27      | GPU abstraction                   |
+| tokio           | 1.x     | Async runtime for network I/O     |
+| ffmpeg-next     | 7.1     | Media decoding (FFmpeg bindings)  |
+| cpal            | 0.17    | Audio playback                    |
+| opus            | 0.3     | Opus codec (direct libopus)       |
+| fluent-bundle   | 0.16    | i18n localization (Fluent)        |
+| tracing         | 0.1     | Structured logging                |
+| serde           | 1.0     | Serialization/deserialization     |
+| toml            | 0.9     | Configuration file format         |
 
 ### Build Dependencies
 

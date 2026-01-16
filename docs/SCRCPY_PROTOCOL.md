@@ -3,7 +3,7 @@
 ## Document Information
 
 - **Protocol Version**: 3.3.3 (based on scrcpy source code analysis)
-- **Analysis Date**: 2025-12-17
+- **Analysis Date**: 2024-12-17
 - **Source Location**: `3rd-party/scrcpy/`
 - **Reference Implementation**: `src/scrcpy/protocol/`
 
