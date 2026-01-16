@@ -324,7 +324,7 @@ mod tests {
         }
 
         let p95 = stats.p95();
-        assert!(p95 >= 94.0 && p95 <= 96.0);
+        assert!((94.0..=96.0).contains(&p95));
     }
 
     #[test]

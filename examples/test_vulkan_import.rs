@@ -5,8 +5,6 @@
 //!
 //! Run with: cargo run --example test_vulkan_import
 
-use wgpu;
-
 #[tokio::main]
 async fn main() {
     println!("=== wgpu-hal External Memory Import Prototype ===\n");
