@@ -285,7 +285,7 @@ impl MappingConfigWindow {
             return None;
         }
 
-        let mut shoudl_close = false;
+        let mut should_close = false;
         let mut result = None;
 
         match self
@@ -295,16 +295,16 @@ impl MappingConfigWindow {
         {
             ModalDialogResult::Confirmed => {
                 result = Some(true);
-                shoudl_close = true;
+                should_close = true;
             }
             ModalDialogResult::Canceled => {
                 result = Some(false);
-                shoudl_close = true;
+                should_close = true;
             }
             _ => {}
         }
 
-        if shoudl_close {
+        if should_close {
             self.delete_mapping_dialog.reset();
         }
         result
