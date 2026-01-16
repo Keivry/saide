@@ -11,7 +11,7 @@ use {
     crate::{
         config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
         constant::{self, SCRCPY_SERVER_VERSION_STRING},
-        error::Result,
+        error::{Result, SAideError},
     },
     directories::ProjectDirs,
     serde::{Deserialize, Serialize},
@@ -182,11 +182,17 @@ fn default_scrcpy_server_path() -> String {
 /// Main configuration structure
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SAideConfig {
+    #[serde(default)]
     pub general: GeneralConfig,
+    #[serde(default)]
     pub scrcpy: Arc<ScrcpyConfig>,
+    #[serde(default)]
     pub gpu: GPUConfig,
+    #[serde(default)]
     pub input: InputConfig,
+    #[serde(default)]
     pub mappings: Arc<Mappings>,
+    #[serde(default)]
     pub logging: LogConfig,
 }
 
@@ -196,8 +202,10 @@ impl SAideConfig {
     where
         P: AsRef<Path>,
     {
-        let content = fs::read_to_string(path)?;
-        let config: SAideConfig = toml::from_str(&content)?;
+        let content = fs::read_to_string(path)
+            .map_err(|e| SAideError::ConfigError(format!("Failed to read config file: {}", e)))?;
+        let config: SAideConfig = toml::from_str(&content)
+            .map_err(|e| SAideError::ConfigError(format!("Failed to parse config file: {}", e)))?;
         config.validate()?;
         Ok(config)
     }
@@ -205,70 +213,70 @@ impl SAideConfig {
     /// Validate configuration values are within acceptable ranges
     pub fn validate(&self) -> Result<()> {
         if !(1..=300).contains(&self.general.init_timeout) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "general.init_timeout ({}) must be 1-300 seconds",
                 self.general.init_timeout
             )));
         }
 
         if !(320..=7680).contains(&self.general.window_width) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "general.window_width ({}) must be 320-7680 pixels",
                 self.general.window_width
             )));
         }
 
         if !(240..=4320).contains(&self.general.window_height) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "general.window_height ({}) must be 240-4320 pixels",
                 self.general.window_height
             )));
         }
 
         if !(1..=240).contains(&self.scrcpy.video.max_fps) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "scrcpy.video.max_fps ({}) must be 1-240",
                 self.scrcpy.video.max_fps
             )));
         }
 
         if !(100..=4096).contains(&self.scrcpy.video.max_size) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "scrcpy.video.max_size ({}) must be 100-4096 pixels",
                 self.scrcpy.video.max_size
             )));
         }
 
         if !(50..=2000).contains(&self.input.long_press_ms) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "input.long_press_ms ({}) must be 50-2000ms",
                 self.input.long_press_ms
             )));
         }
 
         if !(1.0..=50.0).contains(&self.input.drag_threshold_px) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "input.drag_threshold_px ({}) must be 1.0-50.0px",
                 self.input.drag_threshold_px
             )));
         }
 
         if !(1..=100).contains(&self.input.drag_interval_ms) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "input.drag_interval_ms ({}) must be 1-100ms",
                 self.input.drag_interval_ms
             )));
         }
 
         if !(32..=16384).contains(&self.scrcpy.audio.buffer_frames) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "scrcpy.audio.buffer_frames ({}) must be 32-16384",
                 self.scrcpy.audio.buffer_frames
             )));
         }
 
         if !(1024..=65536).contains(&self.scrcpy.audio.ring_capacity) {
-            return Err(crate::error::SAideError::ConfigError(format!(
+            return Err(SAideError::ConfigError(format!(
                 "scrcpy.audio.ring_capacity ({}) must be 1024-65536",
                 self.scrcpy.audio.ring_capacity
             )));
