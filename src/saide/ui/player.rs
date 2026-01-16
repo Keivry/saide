@@ -639,7 +639,7 @@ impl AudioThread {
     fn spawn(
         mut audio_stream: TcpStream,
         mut audio_decoder: OpusDecoder,
-        audio_player: AudioPlayer,
+        mut audio_player: AudioPlayer,
         mut av_sync: AVSync,
         stats: Arc<Mutex<StreamStats>>,
         token: CancellationToken,
@@ -648,7 +648,7 @@ impl AudioThread {
             match Self::run_audio_loop(
                 &mut audio_stream,
                 &mut audio_decoder,
-                &audio_player,
+                &mut audio_player,
                 &mut av_sync,
                 &stats,
                 &token,
@@ -662,7 +662,7 @@ impl AudioThread {
     fn run_audio_loop(
         audio_stream: &mut TcpStream,
         audio_decoder: &mut OpusDecoder,
-        audio_player: &AudioPlayer,
+        audio_player: &mut AudioPlayer,
         av_sync: &mut AVSync,
         stats: &Arc<Mutex<StreamStats>>,
         token: &CancellationToken,

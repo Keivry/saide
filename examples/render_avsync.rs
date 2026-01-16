@@ -246,7 +246,7 @@ fn av_worker(
         info!("Audio thread spawned, entering read loop...");
         match (|| -> Result<()> {
             let mut audio_decoder = OpusDecoder::new(48000, 2)?;
-            let audio_player = AudioPlayer::new(48000, 2, 64, 5760)?;
+            let mut audio_player = AudioPlayer::new(48000, 2, 64, 5760)?;
             info!("Audio thread started (Opus)");
 
             loop {

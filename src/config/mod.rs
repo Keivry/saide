@@ -408,15 +408,16 @@ mod tests {
 
     #[test]
     fn test_video_config_validation() {
-        let mut config = SAideConfig::default();
-
-        config.scrcpy = Arc::new(ScrcpyConfig {
-            video: VideoConfig {
-                max_fps: 0,
+        let mut config = SAideConfig {
+            scrcpy: Arc::new(ScrcpyConfig {
+                video: VideoConfig {
+                    max_fps: 0,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
+            }),
             ..Default::default()
-        });
+        };
         assert!(config.validate().is_err());
 
         config.scrcpy = Arc::new(ScrcpyConfig {
@@ -532,15 +533,16 @@ mod tests {
 
     #[test]
     fn test_audio_config_validation() {
-        let mut config = SAideConfig::default();
-
-        config.scrcpy = Arc::new(ScrcpyConfig {
-            audio: AudioConfig {
-                buffer_frames: 31,
+        let mut config = SAideConfig {
+            scrcpy: Arc::new(ScrcpyConfig {
+                audio: AudioConfig {
+                    buffer_frames: 31,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
+            }),
             ..Default::default()
-        });
+        };
         assert!(config.validate().is_err());
 
         config.scrcpy = Arc::new(ScrcpyConfig {

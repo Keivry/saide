@@ -21,7 +21,6 @@ use {
     std::{
         sync::{
             Arc,
-            Mutex,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread,
@@ -35,8 +34,8 @@ pub struct AudioPlayer {
     /// Audio output stream
     _stream: Stream,
 
-    /// Ring buffer producer (thread-safe access via Mutex)
-    producer: Arc<Mutex<Producer<f32>>>,
+    /// Ring buffer producer
+    producer: Producer<f32>,
 
     /// Player running flag
     running: Arc<AtomicBool>,
@@ -122,7 +121,7 @@ impl AudioPlayer {
 
         Ok(Self {
             _stream: stream,
-            producer: Arc::new(Mutex::new(producer)),
+            producer,
             running,
             underruns,
             sample_rate,
@@ -131,7 +130,7 @@ impl AudioPlayer {
     }
 
     /// Play decoded audio frame
-    pub fn play(&self, audio: &DecodedAudio) -> Result<()> {
+    pub fn play(&mut self, audio: &DecodedAudio) -> Result<()> {
         // Validate sample rate and channels match
         if audio.sample_rate != self.sample_rate {
             return Err(AudioError::PlaybackError(format!(
@@ -148,12 +147,7 @@ impl AudioPlayer {
         }
 
         // Write samples to ring buffer (sample-by-sample, lock-free ring)
-        let written = match self
-            .producer
-            .lock()
-            .expect("Mutex poisoned")
-            .write_chunk_uninit(audio.samples.len())
-        {
+        let written = match self.producer.write_chunk_uninit(audio.samples.len()) {
             Ok(chunk) => {
                 // fill_from_iter() consumes chunk and commits automatically
                 let len = chunk.len();
