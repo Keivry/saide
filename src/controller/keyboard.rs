@@ -5,7 +5,10 @@
 use {
     crate::{
         config::mapping::{KeyMapping, MappingAction, Mappings, Modifiers, Profile, ScrcpyAction},
-        controller::control_sender::ControlSender,
+        controller::{
+            android_keycode::{keycode as kc, metastate},
+            control_sender::ControlSender,
+        },
         error::Result,
         saide::coords::{MappingCoordSys, ScrcpyCoordSys},
     },
@@ -17,72 +20,64 @@ use {
 };
 
 lazy_static::lazy_static! {
-    /// Mapping from egui Key to Android keycode
     pub static ref EGUI_TO_ANDROID_KEY: HashMap<Key, u8> = {
         let mut m = HashMap::new();
 
-        // Arrow keys
-        m.insert(Key::ArrowUp,      19);   // KEYCODE_DPAD_UP
-        m.insert(Key::ArrowDown,    20);   // KEYCODE_DPAD_DOWN
-        m.insert(Key::ArrowLeft,    21);   // KEYCODE_DPAD_LEFT
-        m.insert(Key::ArrowRight,   22);   // KEYCODE_DPAD_RIGHT
+        m.insert(Key::ArrowUp, kc::DPAD_UP);
+        m.insert(Key::ArrowDown, kc::DPAD_DOWN);
+        m.insert(Key::ArrowLeft, kc::DPAD_LEFT);
+        m.insert(Key::ArrowRight, kc::DPAD_RIGHT);
 
-        // Common control keys
-        m.insert(Key::Escape,       4);    // Map to KEYCODE_BACK
-        m.insert(Key::Tab,          61);   // KEYCODE_TAB
-        m.insert(Key::Space,        62);   // KEYCODE_SPACE
-        m.insert(Key::Enter,        66);   // KEYCODE_ENTER
-        m.insert(Key::Backspace,    67);   // KEYCODE_DEL
+        m.insert(Key::Escape, kc::BACK);
+        m.insert(Key::Tab, kc::TAB);
+        m.insert(Key::Space, kc::SPACE);
+        m.insert(Key::Enter, kc::ENTER);
+        m.insert(Key::Backspace, kc::DEL);
 
-        // Editing/navigation keys
-        m.insert(Key::Insert,       110);  // KEYCODE_INSERT
-        m.insert(Key::Delete,       112);  // KEYCODE_FORWARD_DEL
-        m.insert(Key::Home,         122);  // KEYCODE_MOVE_HOME
-        m.insert(Key::End,          123);  // KEYCODE_MOVE_END
-        m.insert(Key::PageUp,       92);   // KEYCODE_PAGE_UP
-        m.insert(Key::PageDown,     93);   // KEYCODE_PAGE_DOWN
+        m.insert(Key::Insert, kc::INSERT);
+        m.insert(Key::Delete, kc::FORWARD_DEL);
+        m.insert(Key::Home, kc::MOVE_HOME);
+        m.insert(Key::End, kc::MOVE_END);
+        m.insert(Key::PageUp, kc::PAGE_UP);
+        m.insert(Key::PageDown, kc::PAGE_DOWN);
 
-        // Letters A-Z
-        m.insert(Key::A, 29); m.insert(Key::B, 30); m.insert(Key::C, 31);
-        m.insert(Key::D, 32); m.insert(Key::E, 33); m.insert(Key::F, 34);
-        m.insert(Key::G, 35); m.insert(Key::H, 36); m.insert(Key::I, 37);
-        m.insert(Key::J, 38); m.insert(Key::K, 39); m.insert(Key::L, 40);
-        m.insert(Key::M, 41); m.insert(Key::N, 42); m.insert(Key::O, 43);
-        m.insert(Key::P, 44); m.insert(Key::Q, 45); m.insert(Key::R, 46);
-        m.insert(Key::S, 47); m.insert(Key::T, 48); m.insert(Key::U, 49);
-        m.insert(Key::V, 50); m.insert(Key::W, 51); m.insert(Key::X, 52);
-        m.insert(Key::Y, 53); m.insert(Key::Z, 54);
+        m.insert(Key::A, kc::A); m.insert(Key::B, kc::B); m.insert(Key::C, kc::C);
+        m.insert(Key::D, kc::D); m.insert(Key::E, kc::E); m.insert(Key::F, kc::F);
+        m.insert(Key::G, kc::G); m.insert(Key::H, kc::H); m.insert(Key::I, kc::I);
+        m.insert(Key::J, kc::J); m.insert(Key::K, kc::K); m.insert(Key::L, kc::L);
+        m.insert(Key::M, kc::M); m.insert(Key::N, kc::N); m.insert(Key::O, kc::O);
+        m.insert(Key::P, kc::P); m.insert(Key::Q, kc::Q); m.insert(Key::R, kc::R);
+        m.insert(Key::S, kc::S); m.insert(Key::T, kc::T); m.insert(Key::U, kc::U);
+        m.insert(Key::V, kc::V); m.insert(Key::W, kc::W); m.insert(Key::X, kc::X);
+        m.insert(Key::Y, kc::Y); m.insert(Key::Z, kc::Z);
 
-        // Numbers 0-9
-        m.insert(Key::Num0, 7);  m.insert(Key::Num1, 8);  m.insert(Key::Num2, 9);
-        m.insert(Key::Num3,10);  m.insert(Key::Num4,11);  m.insert(Key::Num5,12);
-        m.insert(Key::Num6,13);  m.insert(Key::Num7,14);  m.insert(Key::Num8,15);
-        m.insert(Key::Num9,16);
+        m.insert(Key::Num0, kc::NUM_0); m.insert(Key::Num1, kc::NUM_1); m.insert(Key::Num2, kc::NUM_2);
+        m.insert(Key::Num3, kc::NUM_3); m.insert(Key::Num4, kc::NUM_4); m.insert(Key::Num5, kc::NUM_5);
+        m.insert(Key::Num6, kc::NUM_6); m.insert(Key::Num7, kc::NUM_7); m.insert(Key::Num8, kc::NUM_8);
+        m.insert(Key::Num9, kc::NUM_9);
 
-        // Other common symbols
-        m.insert(Key::Comma,            55);  // KEYCODE_COMMA
-        m.insert(Key::Period,           56);  // KEYCODE_PERIOD
-        m.insert(Key::Slash,            76);  // KEYCODE_SLASH
-        m.insert(Key::Backslash,        73);  // KEYCODE_BACKSLASH
-        m.insert(Key::Semicolon,        74);  // KEYCODE_SEMICOLON
-        m.insert(Key::Quote,            75);  // KEYCODE_APOSTROPHE
-        m.insert(Key::OpenBracket,      71);  // KEYCODE_LEFT_BRACKET  [
-        m.insert(Key::CloseBracket,     72);  // KEYCODE_RIGHT_BRACKET ]
-        m.insert(Key::Minus,            69);  // KEYCODE_MINUS
-        m.insert(Key::Equals,           70);  // KEYCODE_EQUALS
+        m.insert(Key::Comma, kc::COMMA);
+        m.insert(Key::Period, kc::PERIOD);
+        m.insert(Key::Slash, kc::SLASH);
+        m.insert(Key::Backslash, kc::BACKSLASH);
+        m.insert(Key::Semicolon, kc::SEMICOLON);
+        m.insert(Key::Quote, kc::APOSTROPHE);
+        m.insert(Key::OpenBracket, kc::LEFT_BRACKET);
+        m.insert(Key::CloseBracket, kc::RIGHT_BRACKET);
+        m.insert(Key::Minus, kc::MINUS);
+        m.insert(Key::Equals, kc::EQUALS);
 
-        // Function keys F1-F12
         for i in 1..=12 {
             if let Some(key) = Key::from_name(&format!("F{i}")) {
-                m.insert(key, 130 + i);
+                m.insert(key, kc::F1 + i - 1);
             }
         }
 
         m
     };
+}
 
-    /// Mapping from egui Key to Android shifted keycode
-    /// These keys in Android require SHIFT to produce the desired character
+lazy_static::lazy_static! {
     pub static ref EGUI_TO_ANDROID_SHIFT_KEY: HashMap<Key, u8> = {
         let mut m = HashMap::new();
         m.insert(Key::Exclamationmark,   8);        // KEYCODE_1
@@ -232,17 +227,15 @@ impl KeyboardMapper {
         if let Some(&keycode) = EGUI_TO_ANDROID_KEY.get(key) {
             trace!("Handling key combo event: {:?} + {:?}", modifiers, key);
 
-            // Convert modifiers to Android metastate
-            // AMETA_SHIFT_ON = 1, AMETA_ALT_ON = 2, AMETA_CTRL_ON = 4096, AMETA_META_ON = 65536
             let mut metastate = 0u32;
             if modifiers.shift {
-                metastate |= 1;
+                metastate |= metastate::SHIFT_ON;
             }
             if modifiers.alt {
-                metastate |= 2;
+                metastate |= metastate::ALT_ON;
             }
             if modifiers.ctrl || modifiers.command {
-                metastate |= 4096;
+                metastate |= metastate::CTRL_ON;
             }
 
             self.sender.send_key_press(keycode as u32, metastate)?;
@@ -274,13 +267,13 @@ impl KeyboardMapper {
             ScrcpyAction::KeyCombo { modifiers, keycode } => {
                 let mut metastate = 0u32;
                 if modifiers.shift {
-                    metastate |= 1;
+                    metastate |= metastate::SHIFT_ON;
                 }
                 if modifiers.alt {
-                    metastate |= 2;
+                    metastate |= metastate::ALT_ON;
                 }
                 if modifiers.ctrl || modifiers.command {
-                    metastate |= 4096;
+                    metastate |= metastate::CTRL_ON;
                 }
                 self.sender.send_key_press(*keycode as u32, metastate)?;
             }
@@ -288,16 +281,16 @@ impl KeyboardMapper {
                 self.sender.send_text(text)?;
             }
             ScrcpyAction::Back => {
-                self.sender.send_key_press(4, 0)?; // KEYCODE_BACK
+                self.sender.send_key_press(kc::BACK as u32, 0)?;
             }
             ScrcpyAction::Home => {
-                self.sender.send_key_press(3, 0)?; // KEYCODE_HOME
+                self.sender.send_key_press(kc::HOME as u32, 0)?;
             }
             ScrcpyAction::Menu => {
-                self.sender.send_key_press(82, 0)?; // KEYCODE_MENU
+                self.sender.send_key_press(kc::MENU as u32, 0)?;
             }
             ScrcpyAction::Power => {
-                self.sender.send_key_press(26, 0)?; // KEYCODE_POWER
+                self.sender.send_key_press(kc::POWER as u32, 0)?;
             }
             ScrcpyAction::Tap { pos } => {
                 self.sender.send_touch_down(pos.x, pos.y)?;
