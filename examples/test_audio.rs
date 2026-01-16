@@ -49,22 +49,17 @@ fn main() -> Result<()> {
     println!("  Video: disabled");
 
     println!("\n🔌 Establishing connection...");
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let _rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
 
     println!("✅ Connection established!");
 
-    // Check if audio is actually available
-    if conn.audio_stream.is_none() {
-        println!("\n⚠️  Audio not available:");
-        println!("   - Device requires Android 11+ (API 30+)");
-        println!("   - Or audio was explicitly disabled");
-        println!("\n💡 Tip: Use a device with Android 11+ to test audio streaming");
-        return Ok(());
-    }
+    let _audio_stream = conn
+        .take_audio_stream()
+        .ok_or_else(|| anyhow::anyhow!("Audio not available - requires Android 11+ (API 30+)"))?;
 
     // Initialize Opus decoder and audio player
     println!("\n🎧 Initializing audio...");

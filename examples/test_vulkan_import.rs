@@ -77,6 +77,7 @@ async fn main() {
     println!("\nPhase 2 implementation can proceed.");
 }
 
+#[allow(unexpected_cfgs)]
 fn test_hal_access(_device: &wgpu::Device) -> bool {
     println!("⚠️  Checking wgpu-hal module availability...\n");
 
@@ -98,9 +99,9 @@ fn test_hal_access(_device: &wgpu::Device) -> bool {
         println!("\n   Checking wgpu features:");
         let features = wgpu::Features::all();
         println!("   Available features: {:?}", features);
-
-        return false;
     }
+
+    false
 }
 
 fn check_vulkan_extensions() {

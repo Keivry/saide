@@ -213,11 +213,11 @@ fn av_worker(
 
     info!("params.control = {}", params.control); // DEBUG
 
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let _rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
 
     // Get resolution before extracting streams
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
@@ -225,12 +225,10 @@ fn av_worker(
 
     // Extract streams from connection
     let mut video_stream = conn
-        .video_stream
-        .take()
+        .take_video_stream()
         .context("Video stream not available")?;
     let mut audio_stream = conn
-        .audio_stream
-        .take()
+        .take_audio_stream()
         .context("Audio stream not available")?;
 
     info!("Streams extracted: video + audio ready");

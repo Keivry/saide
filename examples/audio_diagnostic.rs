@@ -38,13 +38,14 @@ fn main() -> Result<()> {
     };
 
     println!("\n🔌 Connecting...");
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let _rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
 
-    if conn.audio_stream.is_none() {
+    let _audio_stream = conn.take_audio_stream();
+    if _audio_stream.is_none() {
         println!("⚠️  Audio not available");
         return Ok(());
     }

@@ -29,11 +29,11 @@ fn main() -> Result<()> {
     let params = ServerParams::default();
 
     info!("Connecting to device...");
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let _rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
 
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
     info!("Video resolution: {}x{}", width, height);

@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     println!("  send_codec_meta: {}", params.send_codec_meta);
 
     println!("\n🔌 建立连接中...");
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
 
     println!("✅ 连接成功!");
     println!(
