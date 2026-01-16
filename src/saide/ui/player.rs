@@ -28,7 +28,7 @@ use {
         io::Read,
         net::TcpStream,
         sync::Arc,
-        thread,
+        thread::{self, JoinHandle},
         time::{Duration, Instant},
     },
     tokio_util::sync::CancellationToken,
@@ -485,7 +485,6 @@ impl Drop for StreamPlayer {
 }
 
 /// Stream worker thread
-/// Worker function that uses already-established streams (new implementation)
 fn stream_worker(
     mut video_stream: TcpStream,
     audio_stream: Option<TcpStream>,
@@ -498,11 +497,9 @@ fn stream_worker(
     let (width, height) = video_resolution;
     info!("Video resolution: {}x{}", width, height);
 
-    // Setup channels
     let (frame_tx, frame_rx) = bounded(FRAME_BUFFER_SIZE);
     let (stats_tx, stats_rx) = bounded(STATS_BUFFER_SIZE);
 
-    // Notify ready
     event_tx.send(PlayerEvent::Ready {
         frame_rx,
         stats_rx,
@@ -510,127 +507,212 @@ fn stream_worker(
         height,
     })?;
 
-    // Initialize decoders (use Option for clean drop/rebuild lifecycle)
-    let mut video_decoder = AutoDecoder::new(width, height)?;
-    let mut audio_decoder = OpusDecoder::new(48000, 2)?;
-    let audio_player = AudioPlayer::new(48000, 2, audio_buffer_frames)?;
-
-    // Track last resolution for change detection
+    let mut decoder_mgr = DecoderManager::init(width, height, audio_buffer_frames)?;
     let mut last_resolution = (width, height);
 
-    info!(
-        "Decoders initialized: {} + Opus",
-        video_decoder.decoder_type()
+    let stats = Arc::new(Mutex::new(StreamStats::default()));
+    let av_snapshot = decoder_mgr.av_sync.snapshot();
+
+    let _audio_thread = audio_stream.map(|audio_stream| {
+        AudioThread::spawn(
+            audio_stream,
+            decoder_mgr.audio_decoder,
+            decoder_mgr.audio_player,
+            decoder_mgr.av_sync,
+            stats.clone(),
+            token.clone(),
+        )
+    });
+
+    debug!("Starting video decode loop...");
+    let decode_result = VideoLoop::run(
+        &mut video_stream,
+        &mut decoder_mgr.video_decoder,
+        &frame_tx,
+        &stats_tx,
+        &event_tx,
+        &stats,
+        &av_snapshot,
+        &latency_stats,
+        &mut last_resolution,
+        &token,
     );
 
-    // Create AVSync (audio = master clock)
-    let mut av_sync = AVSync::new(20);
-    let av_snapshot = av_sync.snapshot(); // For video thread
+    match decode_result {
+        Ok(_) => {
+            info!("Video decode loop completed normally");
+            Ok(())
+        }
+        Err(e) => {
+            let is_cancelled = e.is_cancelled();
+            if !is_cancelled {
+                error!("Connection error: {e}");
+            }
+            event_tx
+                .send(PlayerEvent::Failed {
+                    error: e.to_string(),
+                    is_cancelled,
+                })
+                .unwrap_or_else(|err| {
+                    error!("Failed to send PlayerEvent::Failed: {err}");
+                });
+            Err(e)
+        }
+    }
+}
 
-    let stats = Arc::new(Mutex::new(StreamStats::default()));
+struct DecoderManager {
+    video_decoder: AutoDecoder,
+    audio_decoder: OpusDecoder,
+    audio_player: AudioPlayer,
+    av_sync: AVSync,
+}
 
-    // Spawn audio thread (if audio stream available) - holds mutable AVSync
-    let audio_token = token.clone();
-    let _audio_thread = if let Some(mut audio_stream) = audio_stream {
-        let stats_audio = stats.clone();
-        Some(thread::spawn(move || {
-            match (|| -> Result<()> {
-                let mut consecutive_read_errors = 0u32;
+impl DecoderManager {
+    fn init(width: u32, height: u32, audio_buffer_frames: u32) -> Result<Self> {
+        let video_decoder = AutoDecoder::new(width, height)?;
+        let audio_decoder = OpusDecoder::new(48000, 2)?;
+        let audio_player = AudioPlayer::new(48000, 2, audio_buffer_frames)?;
+        let av_sync = AVSync::new(20);
 
-                loop {
-                    if audio_token.is_cancelled() {
-                        debug!("Audio thread exiting due to cancellation");
-                        return Ok(());
-                    }
+        info!(
+            "Decoders initialized: {} + Opus",
+            video_decoder.decoder_type()
+        );
 
-                    // Read header with error tolerance
-                    let mut header = [0u8; 12];
-                    if let Err(e) = audio_stream.read_exact(&mut header) {
-                        if audio_token.is_cancelled() {
-                            debug!("Audio thread exiting due to cancellation");
+        Ok(Self {
+            video_decoder,
+            audio_decoder,
+            audio_player,
+            av_sync,
+        })
+    }
+}
 
-                            // Graceful exit
-                            return Ok(());
-                        }
+struct AudioThread;
 
-                        consecutive_read_errors += 1;
-                        if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                            warn!(
-                                "Failed to read audio header {consecutive_read_errors} times consecutively",
-                            );
-                            return Err(e.into());
-                        }
-
-                        warn!(
-                            "Audio header read error ({consecutive_read_errors}/{MAX_CONSECUTIVE_READ_ERRORS}): {e} - skipping"
-                        );
-
-                        thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
-                        continue;
-                    }
-
-                    consecutive_read_errors = 0; // Reset on success
-
-                    let pts = i64::from_be_bytes(header[0..8].try_into().unwrap());
-                    let packet_size =
-                        u32::from_be_bytes(header[8..12].try_into().unwrap()) as usize;
-
-                    // Read payload with error tolerance
-                    let mut payload = vec![0u8; packet_size];
-                    if let Err(e) = audio_stream.read_exact(&mut payload) {
-                        if audio_token.is_cancelled() {
-                            debug!("Audio thread exiting due to cancellation");
-
-                            // Graceful exit
-                            return Ok(());
-                        }
-
-                        consecutive_read_errors += 1;
-
-                        if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
-                            warn!(
-                                "Failed to read audio payload {consecutive_read_errors} times consecutively"
-                            );
-                            return Err(e.into());
-                        }
-
-                        warn!(
-                            "Audio payload read error ({consecutive_read_errors}/{MAX_CONSECUTIVE_READ_ERRORS}): {e} - skipping",
-                        );
-
-                        thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
-                        continue;
-                    }
-
-                    consecutive_read_errors = 0; // Reset on success
-
-                    // Update AVSync (audio = master clock)
-                    av_sync.update_audio_pts(pts);
-
-                    {
-                        let mut s = stats_audio.lock();
-                        s.audio_frames += 1;
-                        s.last_audio_pts = pts;
-                    }
-
-                    // Decode and play audio frame
-                    // Audio = master clock, always play immediately (no PTS check needed)
-                    if let Ok(Some(decoded)) = audio_decoder.decode(&payload, pts) {
-                        let _ = audio_player.play(&decoded);
-                    }
-                }
-            })() {
+impl AudioThread {
+    fn spawn(
+        mut audio_stream: TcpStream,
+        mut audio_decoder: OpusDecoder,
+        audio_player: AudioPlayer,
+        mut av_sync: AVSync,
+        stats: Arc<Mutex<StreamStats>>,
+        token: CancellationToken,
+    ) -> JoinHandle<()> {
+        thread::spawn(move || {
+            match Self::run_audio_loop(
+                &mut audio_stream,
+                &mut audio_decoder,
+                &audio_player,
+                &mut av_sync,
+                &stats,
+                &token,
+            ) {
                 Ok(_) => {}
                 Err(e) => debug!("Audio thread terminated: {e}"),
             }
-        }))
-    } else {
-        None
-    };
+        })
+    }
 
-    // Video decode loop (main thread)
-    debug!("Starting video decode loop...");
-    let decode_result = (|| -> Result<()> {
+    fn run_audio_loop(
+        audio_stream: &mut TcpStream,
+        audio_decoder: &mut OpusDecoder,
+        audio_player: &AudioPlayer,
+        av_sync: &mut AVSync,
+        stats: &Arc<Mutex<StreamStats>>,
+        token: &CancellationToken,
+    ) -> Result<()> {
+        let mut consecutive_read_errors = 0u32;
+
+        loop {
+            if token.is_cancelled() {
+                debug!("Audio thread exiting due to cancellation");
+                return Ok(());
+            }
+
+            let mut header = [0u8; 12];
+            if let Err(e) = audio_stream.read_exact(&mut header) {
+                if token.is_cancelled() {
+                    debug!("Audio thread exiting due to cancellation");
+                    return Ok(());
+                }
+
+                consecutive_read_errors += 1;
+                if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
+                    warn!(
+                        "Failed to read audio header {consecutive_read_errors} times consecutively"
+                    );
+                    return Err(e.into());
+                }
+
+                warn!(
+                    "Audio header read error ({consecutive_read_errors}/{MAX_CONSECUTIVE_READ_ERRORS}): {e} - skipping"
+                );
+                thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+                continue;
+            }
+
+            consecutive_read_errors = 0;
+
+            let pts = i64::from_be_bytes(header[0..8].try_into().unwrap());
+            let packet_size = u32::from_be_bytes(header[8..12].try_into().unwrap()) as usize;
+
+            let mut payload = vec![0u8; packet_size];
+            if let Err(e) = audio_stream.read_exact(&mut payload) {
+                if token.is_cancelled() {
+                    debug!("Audio thread exiting due to cancellation");
+                    return Ok(());
+                }
+
+                consecutive_read_errors += 1;
+                if consecutive_read_errors >= MAX_CONSECUTIVE_READ_ERRORS {
+                    warn!(
+                        "Failed to read audio payload {consecutive_read_errors} times consecutively"
+                    );
+                    return Err(e.into());
+                }
+
+                warn!(
+                    "Audio payload read error ({consecutive_read_errors}/{MAX_CONSECUTIVE_READ_ERRORS}): {e} - skipping"
+                );
+                thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+                continue;
+            }
+
+            consecutive_read_errors = 0;
+
+            av_sync.update_audio_pts(pts);
+
+            {
+                let mut s = stats.lock();
+                s.audio_frames += 1;
+                s.last_audio_pts = pts;
+            }
+
+            if let Ok(Some(decoded)) = audio_decoder.decode(&payload, pts) {
+                let _ = audio_player.play(&decoded);
+            }
+        }
+    }
+}
+
+struct VideoLoop;
+
+impl VideoLoop {
+    #[allow(clippy::too_many_arguments)]
+    fn run(
+        video_stream: &mut TcpStream,
+        video_decoder: &mut AutoDecoder,
+        frame_tx: &Sender<Arc<DecodedFrame>>,
+        stats_tx: &Sender<StreamStats>,
+        event_tx: &Sender<PlayerEvent>,
+        stats: &Arc<Mutex<StreamStats>>,
+        av_snapshot: &crate::avsync::AVSyncSnapshot,
+        latency_stats: &Arc<Mutex<LatencyStats>>,
+        last_resolution: &mut (u32, u32),
+        token: &CancellationToken,
+    ) -> Result<()> {
         let mut consecutive_read_errors = 0u32;
 
         loop {
@@ -641,8 +723,7 @@ fn stream_worker(
 
             let mut profiler = LatencyProfiler::new();
 
-            // Read video packet with error tolerance
-            let video_packet = match VideoPacket::read_from(&mut video_stream) {
+            let video_packet = match VideoPacket::read_from(video_stream) {
                 Ok(packet) => {
                     profiler.mark_receive();
                     consecutive_read_errors = 0;
@@ -651,14 +732,10 @@ fn stream_worker(
                 Err(e) => {
                     if token.is_cancelled() {
                         debug!("Video decode loop exiting due to cancellation");
-
-                        // Graceful exit
                         return Ok(());
                     }
 
                     if e.is_timeout() {
-                        // Ignore timeouts, continue reading
-                        // For example, no video packets will be sent while the device is locked
                         continue;
                     }
 
@@ -679,19 +756,15 @@ fn stream_worker(
             };
 
             let pts = video_packet.pts_us as i64;
-
-            // Estimate capture time from PTS (assume ~30ms network latency)
             let estimated_capture = Instant::now() - Duration::from_millis(30);
             profiler.mark_capture(estimated_capture);
 
-            // Check for resolution change in keyframes (SPS embedded)
             if video_packet.is_keyframe
                 && let Some((width_sps, height_sps)) =
                     extract_resolution_from_stream(&video_packet.data)
             {
                 let new_res = (width_sps, height_sps);
-                // Ignore obviously invalid resolutions (Android encoder init artifacts)
-                if new_res != last_resolution && new_res.0 > 32 && new_res.1 > 32 {
+                if new_res != *last_resolution && new_res.0 > 32 && new_res.1 > 32 {
                     info!(
                         "Resolution change detected in SPS: {}x{} -> {}x{}",
                         last_resolution.0, last_resolution.1, new_res.0, new_res.1
@@ -700,12 +773,10 @@ fn stream_worker(
                         width: new_res.0,
                         height: new_res.1,
                     });
-
-                    last_resolution = new_res;
+                    *last_resolution = new_res;
                 }
             }
 
-            // Decode frame
             let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
                 Ok(frame) => {
                     profiler.mark_decode();
@@ -716,17 +787,12 @@ fn stream_worker(
                         debug!("Video decode loop exiting due to cancellation");
                         return Ok(());
                     }
-
                     warn!("Video decode error: {e} - skipping frame");
                     continue;
                 }
             };
 
             if let Some(frame) = frame_opt {
-                // NOTE: mark_upload() is approximate - actual GPU upload happens in UI render
-                // thread (Nv12RenderCallback::prepare in
-                // src/decoder/nv12_render.rs) For precise upload timing, need to
-                // instrument render callback (Phase 2 work)
                 profiler.mark_upload();
 
                 let current_stats = {
@@ -736,7 +802,6 @@ fn stream_worker(
                     *s
                 };
 
-                // Check sync and update stats (lock-free read from snapshot)
                 if av_snapshot.should_drop_video(frame.pts) {
                     let mut s = stats.lock();
                     s.dropped_frames += 1;
@@ -753,46 +818,20 @@ fn stream_worker(
                     s.last_upload_ms = breakdown.upload_ms();
                 }
 
-                // Send frame - if channel is closed, receiver dropped, exit gracefully
                 if frame_tx.try_send(Arc::new(frame)).is_err() {
                     if frame_tx.is_full() {
                         let mut s = stats.lock();
                         s.dropped_frames += 1;
                     } else {
-                        // Channel disconnected, exit gracefully
                         debug!("Frame channel disconnected, stopping decode loop");
                         return Ok(());
                     }
                 }
 
-                // Send stats periodically (every 30 frames to reduce overhead)
                 if current_stats.video_frames % 30 == 0 {
                     let _ = stats_tx.try_send(current_stats);
                 }
             }
-        }
-    })();
-
-    match decode_result {
-        Ok(_) => {
-            info!("Video decode loop completed normally");
-            Ok(())
-        }
-        Err(e) => {
-            let is_cancelled = e.is_cancelled();
-            if !is_cancelled {
-                error!("Connection error: {e}");
-            }
-            event_tx
-                .send(PlayerEvent::Failed {
-                    error: e.to_string(),
-                    is_cancelled,
-                })
-                .unwrap_or_else(|err| {
-                    error!("Failed to send PlayerEvent::Failed: {err}");
-                });
-
-            Err(e)
         }
     }
 }

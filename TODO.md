@@ -56,8 +56,8 @@
   ✅ **已修复**: 拆分为 `ConnectionService` (230行), `DeviceMonitor` (215行), init.rs 简化为协调器 (155行, -67%)
 
 
-- [ ] **[coupling]** `src/saide/ui/player.rs:453-728`: `stream_worker` 275 行单体函数，混合解码器初始化、音频线程、视频循环  
-  **解法**: 拆分为 `DecoderManager::init()`, `AudioThread::spawn()`, `VideoLoop::run()`
+- [x] **[coupling]** `src/saide/ui/player.rs:453-728`: `stream_worker` 275 行单体函数，混合解码器初始化、音频线程、视频循环  
+  ✅ **已修复**: 拆分为 `DecoderManager::init()`, `AudioThread::spawn()`, `VideoLoop::run()`, stream_worker 简化为协调器 (310行→74行, -76%)
 
 - [x] **[abstraction]** `src/scrcpy/connection.rs:46-76`: `ScrcpyConnection` 公开原始 `TcpStream`  
   ✅ **已修复** (commit f41bcbd): 字段改为私有，仅暴露 `take_video_stream()`, `set_control_stream()` 等方法
