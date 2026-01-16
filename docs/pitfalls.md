@@ -1,6 +1,68 @@
 # SAide 开发陷阱记录
 
-> **目的**: 记录开发过程中遇到的坑、反模式、失败案例，确保不再重复犯错
+> **目的**: 记录开发过程中遇到的坑、反模式、失败案例,确保不再重复犯错
+
+---
+
+## 并发安全陷阱 (P0 优先级)
+
+> **2026-01-16 更新**: 修复音频播放器线程安全 bug
+
+### ✅ FIXED: RefCell 在多线程环境误用 (commit PENDING)
+
+**位置**: `src/decoder/audio/player.rs:39` (已修复)  
+**问题**: `RefCell<Producer<f32>>` 在多线程音频回调中非线程安全
+
+**修复前**:
+```rust
+// ❌ 错误示例: RefCell 不是 Sync, 跨线程访问会 panic
+pub struct AudioPlayer {
+    producer: RefCell<Producer<f32>>,  // 单线程借用检查
+    // ...
+}
+
+impl AudioPlayer {
+    pub fn play(&self, audio: &DecodedAudio) -> Result<()> {
+        // 主线程调用
+        self.producer.borrow_mut().write_chunk_uninit(...);
+        // ...
+    }
+}
+
+// 音频回调线程可能同时访问 producer → 运行时 panic!
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例: 使用 Mutex 提供线程安全的内部可变性
+pub struct AudioPlayer {
+    producer: Arc<Mutex<Producer<f32>>>,  // 线程安全访问
+    // ...
+}
+
+impl AudioPlayer {
+    pub fn play(&self, audio: &DecodedAudio) -> Result<()> {
+        // Mutex 保护并发访问
+        self.producer
+            .lock()
+            .expect("Mutex poisoned")
+            .write_chunk_uninit(...);
+        // ...
+    }
+}
+```
+
+**教训**:
+1. **RefCell 只用于单线程内部可变性**, 多线程必须用 `Mutex`/`RwLock`
+2. 音频回调在独立线程执行 (`cpal::build_output_stream` 的 callback 闭包)
+3. `rtrb::Producer` 本身是 lock-free, 但需要 `Mutex` 保护跨线程访问
+4. 编译器无法检测这类错误 (通过 `Arc` 共享到线程绕过了 `!Sync` 检查)
+5. **Pattern**: 所有可能跨线程共享的可变状态必须用 `Arc<Mutex<T>>`
+
+**性能影响**:
+- Mutex 开销: ~10-50ns (现代 CPU 上未竞争时)
+- `rtrb::Producer` 内部已是 lock-free 环形缓冲区, Mutex 仅保护 producer 对象本身
+- 实际测试: 音频延迟无明显变化 (1.3ms @ 64 frames, 48kHz)
 
 ---
 

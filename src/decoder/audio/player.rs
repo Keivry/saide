@@ -19,9 +19,9 @@ use {
     },
     rtrb::{Consumer, Producer, RingBuffer},
     std::{
-        cell::RefCell,
         sync::{
             Arc,
+            Mutex,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread,
@@ -35,8 +35,8 @@ pub struct AudioPlayer {
     /// Audio output stream
     _stream: Stream,
 
-    /// Ring buffer producer
-    producer: RefCell<Producer<f32>>,
+    /// Ring buffer producer (thread-safe access via Mutex)
+    producer: Arc<Mutex<Producer<f32>>>,
 
     /// Player running flag
     running: Arc<AtomicBool>,
@@ -122,7 +122,7 @@ impl AudioPlayer {
 
         Ok(Self {
             _stream: stream,
-            producer: RefCell::new(producer),
+            producer: Arc::new(Mutex::new(producer)),
             running,
             underruns,
             sample_rate,
@@ -150,7 +150,8 @@ impl AudioPlayer {
         // Write samples to ring buffer (sample-by-sample, lock-free ring)
         let written = match self
             .producer
-            .borrow_mut()
+            .lock()
+            .expect("Mutex poisoned")
             .write_chunk_uninit(audio.samples.len())
         {
             Ok(chunk) => {
