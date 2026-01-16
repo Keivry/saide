@@ -204,6 +204,41 @@ impl SAideConfig {
 
     /// Validate configuration values are within acceptable ranges
     pub fn validate(&self) -> Result<()> {
+        if !(1..=300).contains(&self.general.init_timeout) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "general.init_timeout ({}) must be 1-300 seconds",
+                self.general.init_timeout
+            )));
+        }
+
+        if !(320..=7680).contains(&self.general.window_width) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "general.window_width ({}) must be 320-7680 pixels",
+                self.general.window_width
+            )));
+        }
+
+        if !(240..=4320).contains(&self.general.window_height) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "general.window_height ({}) must be 240-4320 pixels",
+                self.general.window_height
+            )));
+        }
+
+        if !(1..=240).contains(&self.scrcpy.video.max_fps) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "scrcpy.video.max_fps ({}) must be 1-240",
+                self.scrcpy.video.max_fps
+            )));
+        }
+
+        if !(100..=4096).contains(&self.scrcpy.video.max_size) {
+            return Err(crate::error::SAideError::ConfigError(format!(
+                "scrcpy.video.max_size ({}) must be 100-4096 pixels",
+                self.scrcpy.video.max_size
+            )));
+        }
+
         if !(50..=2000).contains(&self.input.long_press_ms) {
             return Err(crate::error::SAideError::ConfigError(format!(
                 "input.long_press_ms ({}) must be 50-2000ms",
@@ -309,4 +344,266 @@ impl ConfigManager {
 
     /// Save configuration
     pub fn save(&self) -> Result<()> { self.config.save(&self.path) }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::config::scrcpy::{AudioConfig, VideoConfig},
+    };
+
+    #[test]
+    fn test_default_config_validates() {
+        let config = SAideConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_init_timeout_validation() {
+        let mut config = SAideConfig::default();
+
+        config.general.init_timeout = 0;
+        assert!(config.validate().is_err());
+
+        config.general.init_timeout = 1;
+        assert!(config.validate().is_ok());
+
+        config.general.init_timeout = 300;
+        assert!(config.validate().is_ok());
+
+        config.general.init_timeout = 301;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_window_size_validation() {
+        let mut config = SAideConfig::default();
+
+        config.general.window_width = 319;
+        assert!(config.validate().is_err());
+
+        config.general.window_width = 320;
+        assert!(config.validate().is_ok());
+
+        config.general.window_width = 7680;
+        assert!(config.validate().is_ok());
+
+        config.general.window_width = 7681;
+        assert!(config.validate().is_err());
+
+        config.general.window_width = 1280;
+        config.general.window_height = 239;
+        assert!(config.validate().is_err());
+
+        config.general.window_height = 240;
+        assert!(config.validate().is_ok());
+
+        config.general.window_height = 4320;
+        assert!(config.validate().is_ok());
+
+        config.general.window_height = 4321;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_video_config_validation() {
+        let mut config = SAideConfig::default();
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                max_fps: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                max_fps: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_ok());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                max_fps: 240,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_ok());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                max_fps: 241,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                max_fps: 60,
+                max_size: 99,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                max_fps: 60,
+                max_size: 100,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_ok());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                max_fps: 60,
+                max_size: 4096,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_ok());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                max_fps: 60,
+                max_size: 4097,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_input_config_validation() {
+        let mut config = SAideConfig::default();
+
+        config.input.long_press_ms = 49;
+        assert!(config.validate().is_err());
+
+        config.input.long_press_ms = 50;
+        assert!(config.validate().is_ok());
+
+        config.input.long_press_ms = 2000;
+        assert!(config.validate().is_ok());
+
+        config.input.long_press_ms = 2001;
+        assert!(config.validate().is_err());
+
+        config.input.long_press_ms = 300;
+        config.input.drag_threshold_px = 0.9;
+        assert!(config.validate().is_err());
+
+        config.input.drag_threshold_px = 1.0;
+        assert!(config.validate().is_ok());
+
+        config.input.drag_threshold_px = 50.0;
+        assert!(config.validate().is_ok());
+
+        config.input.drag_threshold_px = 50.1;
+        assert!(config.validate().is_err());
+
+        config.input.drag_threshold_px = 5.0;
+        config.input.drag_interval_ms = 0;
+        assert!(config.validate().is_err());
+
+        config.input.drag_interval_ms = 1;
+        assert!(config.validate().is_ok());
+
+        config.input.drag_interval_ms = 100;
+        assert!(config.validate().is_ok());
+
+        config.input.drag_interval_ms = 101;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_audio_config_validation() {
+        let mut config = SAideConfig::default();
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            audio: AudioConfig {
+                buffer_frames: 31,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            audio: AudioConfig {
+                buffer_frames: 32,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_ok());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            audio: AudioConfig {
+                buffer_frames: 16384,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_ok());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            audio: AudioConfig {
+                buffer_frames: 16385,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            audio: AudioConfig {
+                enabled: true,
+                codec: "opus".to_string(),
+                source: "playback".to_string(),
+                buffer_frames: 64,
+                ring_capacity: 1023,
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            audio: AudioConfig {
+                enabled: true,
+                codec: "opus".to_string(),
+                source: "playback".to_string(),
+                buffer_frames: 64,
+                ring_capacity: 1024,
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_ok());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            audio: AudioConfig {
+                enabled: true,
+                codec: "opus".to_string(),
+                source: "playback".to_string(),
+                buffer_frames: 31,
+                ring_capacity: 5760,
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+    }
 }
