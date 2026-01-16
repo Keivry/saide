@@ -181,6 +181,7 @@ ring_capacity = 5760     # 如遇音频丢帧请增大此值
 ```
 
 **故障排除**:
+
 - **音频爆音/丢帧**: 将 `buffer_frames` 增大到 128 或 256
 - **延迟过高**: 将 `buffer_frames` 减小到 32 或 64 (弱硬件可能导致欠载)
 
@@ -198,14 +199,14 @@ SAide 使用 TOML 配置文件,位置:
 
 ### 主要配置节
 
-| 配置节 | 用途 | 文档 |
-|--------|------|------|
-| `[general]` | 窗口大小、超时、绑定地址 | [docs/configuration.md](docs/configuration.md#general---general-settings) |
-| `[scrcpy.video]` | 比特率、FPS、分辨率、编解码器 | [docs/configuration.md](docs/configuration.md#scrcpyvideo---video-stream-settings) |
+| 配置节           | 用途                                 | 文档                                                                               |
+| ---------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `[general]`      | 窗口大小、超时、绑定地址             | [docs/configuration.md](docs/configuration.md#general---general-settings)          |
+| `[scrcpy.video]` | 比特率、FPS、分辨率、编解码器        | [docs/configuration.md](docs/configuration.md#scrcpyvideo---video-stream-settings) |
 | `[scrcpy.audio]` | 缓冲区大小、环形缓冲区容量、编解码器 | [docs/configuration.md](docs/configuration.md#scrcpyaudio---audio-stream-settings) |
-| `[gpu]` | 后端 (Vulkan/OpenGL)、垂直同步 | [docs/configuration.md](docs/configuration.md#gpu---gpu-rendering) |
-| `[input]` | 长按、拖拽阈值、更新间隔 | [docs/configuration.md](docs/configuration.md#input---input-control-settings) |
-| `[mappings]` | 键盘/鼠标映射 | [docs/configuration.md](docs/configuration.md#mappings---keyboard-mapping) |
+| `[gpu]`          | 后端 (Vulkan/OpenGL)、垂直同步       | [docs/configuration.md](docs/configuration.md#gpu---gpu-rendering)                 |
+| `[input]`        | 长按、拖拽阈值、更新间隔             | [docs/configuration.md](docs/configuration.md#input---input-control-settings)      |
+| `[mappings]`     | 键盘/鼠标映射                        | [docs/configuration.md](docs/configuration.md#mappings---keyboard-mapping)         |
 
 **配置示例**: [config.toml](config.toml)
 
@@ -301,14 +302,14 @@ cargo run --example render_avsync
 
 ### 延迟分解 (Phase 3 优化)
 
-| 阶段 | 优化前 | 优化后 | 优化手段 |
-|------|--------|--------|----------|
-| **网络** | 15-25ms | 10-15ms | TCP_QUICKACK、移除 flush |
-| **解码** | 10-15ms | 8-12ms | FFmpeg 标志 (FAST + EXPERIMENTAL) |
-| **音频缓冲** | 2.7ms | 1.3ms | 128→64 帧 @ 48kHz |
-| **GPU 上传** | 8-12ms | 8-12ms | (Phase 2 延后 - wgpu 限制) |
-| **显示** | 5-10ms | 5-10ms | 默认禁用垂直同步 |
-| **总计** | 50-70ms | **20-35ms** | ✅ 目标达成 |
+| 阶段         | 优化前  | 优化后      | 优化手段                          |
+| ------------ | ------- | ----------- | --------------------------------- |
+| **网络**     | 15-25ms | 10-15ms     | TCP_QUICKACK、移除 flush          |
+| **解码**     | 10-15ms | 8-12ms      | FFmpeg 标志 (FAST + EXPERIMENTAL) |
+| **音频缓冲** | 2.7ms   | 1.3ms       | 128→64 帧 @ 48kHz                 |
+| **GPU 上传** | 8-12ms  | 8-12ms      | (Phase 2 延后 - wgpu 限制)        |
+| **显示**     | 5-10ms  | 5-10ms      | 默认禁用垂直同步                  |
+| **总计**     | 50-70ms | **20-35ms** | ✅ 目标达成                       |
 
 **性能分析**: 内置延迟分析器追踪所有 5 个阶段,提供 P50/P95 统计。启用方法:
 
@@ -366,6 +367,7 @@ level = "debug"  # 显示每帧延迟统计
 #### 1. **"ADB not found in PATH"**
 
 **解决方案**: 安装 Android SDK Platform-Tools:
+
 ```bash
 # Debian/Ubuntu
 sudo apt install android-tools-adb
@@ -383,17 +385,20 @@ brew install android-platform-tools
 #### 3. **黑屏 / 无视频**
 
 **可能原因**:
+
 - 设备屏幕已关闭 (检查配置中的 `turn_screen_off`)
 - 编解码器不匹配 (设备不支持 H.264)
 - 未安装 FFmpeg
 
 **解决方案**:
+
 ```toml
 [scrcpy.options]
 turn_screen_off = false  # 保持设备屏幕开启
 ```
 
 检查设备支持的编解码器:
+
 ```bash
 cargo run --example probe_codec
 ```
@@ -401,6 +406,7 @@ cargo run --example probe_codec
 #### 4. **音频爆音 / 丢帧**
 
 **解决方案**: 增大音频缓冲区:
+
 ```toml
 [scrcpy.audio]
 buffer_frames = 128      # 或 256 (弱硬件)
@@ -410,10 +416,12 @@ ring_capacity = 11520    # 双倍默认值
 #### 5. **CPU 占用过高**
 
 **可能原因**:
+
 - 软件解码 (无 GPU 加速)
 - 高 FPS/分辨率
 
 **解决方案**:
+
 ```toml
 [scrcpy.video]
 max_fps = 30            # 从 60 降低
@@ -424,6 +432,7 @@ backend = "VULKAN"      # 确保硬件加速
 ```
 
 检查 GPU 检测:
+
 ```bash
 cargo run 2>&1 | grep "Video backend"
 # 应显示: "Video backend: VULKAN"
@@ -432,6 +441,7 @@ cargo run 2>&1 | grep "Video backend"
 #### 6. **输入延迟 / 控制卡顿**
 
 **解决方案**: 降低输入阈值:
+
 ```toml
 [input]
 long_press_ms = 200      # 更快长按检测
@@ -448,6 +458,7 @@ RUST_LOG=debug cargo run
 ```
 
 或在 `config.toml` 中:
+
 ```toml
 [logging]
 level = "debug"
@@ -490,8 +501,6 @@ git commit -m "feat: 描述你的修改"
 # 5. 推送并创建 PR
 git push origin feature/my-feature
 ```
-
-详细贡献规则请参阅 [.github/copilot-instructions.md](.github/copilot-instructions.md)。
 
 ---
 

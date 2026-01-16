@@ -181,6 +181,7 @@ ring_capacity = 5760     # Increase if experiencing audio dropouts
 ```
 
 **Troubleshooting**:
+
 - **Audio crackling/dropouts**: Increase `buffer_frames` to 128 or 256
 - **High latency**: Decrease `buffer_frames` to 32 or 64 (may cause underruns on weak hardware)
 
@@ -198,14 +199,14 @@ SAide uses a TOML configuration file located at:
 
 ### Key Configuration Sections
 
-| Section | Purpose | Documentation |
-|---------|---------|---------------|
-| `[general]` | Window size, timeouts, bind address | [docs/configuration.md](docs/configuration.md#general---general-settings) |
-| `[scrcpy.video]` | Bitrate, FPS, resolution, codec | [docs/configuration.md](docs/configuration.md#scrcpyvideo---video-stream-settings) |
-| `[scrcpy.audio]` | Buffer sizes, ring capacity, codec | [docs/configuration.md](docs/configuration.md#scrcpyaudio---audio-stream-settings) |
-| `[gpu]` | Backend (Vulkan/OpenGL), VSync | [docs/configuration.md](docs/configuration.md#gpu---gpu-rendering) |
-| `[input]` | Long-press, drag thresholds, intervals | [docs/configuration.md](docs/configuration.md#input---input-control-settings) |
-| `[mappings]` | Keyboard/mouse mappings | [docs/configuration.md](docs/configuration.md#mappings---keyboard-mapping) |
+| Section          | Purpose                                | Documentation                                                                      |
+| ---------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
+| `[general]`      | Window size, timeouts, bind address    | [docs/configuration.md](docs/configuration.md#general---general-settings)          |
+| `[scrcpy.video]` | Bitrate, FPS, resolution, codec        | [docs/configuration.md](docs/configuration.md#scrcpyvideo---video-stream-settings) |
+| `[scrcpy.audio]` | Buffer sizes, ring capacity, codec     | [docs/configuration.md](docs/configuration.md#scrcpyaudio---audio-stream-settings) |
+| `[gpu]`          | Backend (Vulkan/OpenGL), VSync         | [docs/configuration.md](docs/configuration.md#gpu---gpu-rendering)                 |
+| `[input]`        | Long-press, drag thresholds, intervals | [docs/configuration.md](docs/configuration.md#input---input-control-settings)      |
+| `[mappings]`     | Keyboard/mouse mappings                | [docs/configuration.md](docs/configuration.md#mappings---keyboard-mapping)         |
 
 **Example `config.toml`**: [config.toml](config.toml)
 
@@ -301,14 +302,14 @@ See [examples/](examples/) for full list.
 
 ### Latency Breakdown (Phase 3 Optimizations)
 
-| Stage | Before | After | Optimization |
-|-------|--------|-------|--------------|
-| **Network** | 15-25ms | 10-15ms | TCP_QUICKACK, remove flush |
-| **Decoding** | 10-15ms | 8-12ms | FFmpeg flags (FAST + EXPERIMENTAL) |
-| **Audio Buffer** | 2.7ms | 1.3ms | 128→64 frames @ 48kHz |
-| **GPU Upload** | 8-12ms | 8-12ms | (Phase 2 deferred - wgpu limitations) |
-| **Display** | 5-10ms | 5-10ms | VSync disabled by default |
-| **Total** | 50-70ms | **20-35ms** | ✅ Target achieved |
+| Stage            | Before  | After       | Optimization                          |
+| ---------------- | ------- | ----------- | ------------------------------------- |
+| **Network**      | 15-25ms | 10-15ms     | TCP_QUICKACK, remove flush            |
+| **Decoding**     | 10-15ms | 8-12ms      | FFmpeg flags (FAST + EXPERIMENTAL)    |
+| **Audio Buffer** | 2.7ms   | 1.3ms       | 128→64 frames @ 48kHz                 |
+| **GPU Upload**   | 8-12ms  | 8-12ms      | (Phase 2 deferred - wgpu limitations) |
+| **Display**      | 5-10ms  | 5-10ms      | VSync disabled by default             |
+| **Total**        | 50-70ms | **20-35ms** | ✅ Target achieved                    |
 
 **Profiling**: Built-in latency profiler tracks all 5 stages with P50/P95 statistics. Enable with:
 
@@ -366,6 +367,7 @@ See [TODO.md](TODO.md) for detailed task breakdown.
 #### 1. **"ADB not found in PATH"**
 
 **Solution**: Install Android SDK Platform-Tools:
+
 ```bash
 # Debian/Ubuntu
 sudo apt install android-tools-adb
@@ -383,17 +385,20 @@ brew install android-platform-tools
 #### 3. **Black screen / no video**
 
 **Causes**:
+
 - Device screen is off (check `turn_screen_off` in config)
 - Codec mismatch (device doesn't support H.264)
 - FFmpeg not installed
 
 **Solution**:
+
 ```toml
 [scrcpy.options]
 turn_screen_off = false  # Keep device screen on
 ```
 
 Check device supported codecs:
+
 ```bash
 cargo run --example probe_codec
 ```
@@ -401,6 +406,7 @@ cargo run --example probe_codec
 #### 4. **Audio crackling / dropouts**
 
 **Solution**: Increase audio buffer size:
+
 ```toml
 [scrcpy.audio]
 buffer_frames = 128      # Or 256 for weak hardware
@@ -410,10 +416,12 @@ ring_capacity = 11520    # Double the default
 #### 5. **High CPU usage**
 
 **Causes**:
+
 - Software decoding (no GPU acceleration)
 - High FPS/resolution
 
 **Solution**:
+
 ```toml
 [scrcpy.video]
 max_fps = 30            # Lower from 60
@@ -424,6 +432,7 @@ backend = "VULKAN"      # Ensure hardware acceleration
 ```
 
 Check GPU detection:
+
 ```bash
 cargo run 2>&1 | grep "Video backend"
 # Should show: "Video backend: VULKAN"
@@ -432,6 +441,7 @@ cargo run 2>&1 | grep "Video backend"
 #### 6. **Input lag / sluggish controls**
 
 **Solution**: Reduce input thresholds:
+
 ```toml
 [input]
 long_press_ms = 200      # Faster long-press detection
@@ -448,6 +458,7 @@ RUST_LOG=debug cargo run
 ```
 
 Or in `config.toml`:
+
 ```toml
 [logging]
 level = "debug"
@@ -490,8 +501,6 @@ git commit -m "feat: describe your changes"
 # 5. Push and create PR
 git push origin feature/my-feature
 ```
-
-See [.github/copilot-instructions.md](.github/copilot-instructions.md) for detailed contribution rules.
 
 ---
 
