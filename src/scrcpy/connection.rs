@@ -43,6 +43,25 @@ impl fmt::Display for Channel {
 }
 
 /// Scrcpy connection with video, audio, and control channels
+///
+/// Manages the lifecycle of a scrcpy server instance and its associated streams.
+/// Encapsulates the connection state including TCP streams for video, audio, and control,
+/// as well as the server process handle.
+///
+/// # Thread Safety
+/// This struct is NOT `Send` or `Sync` due to internal `Child` process handle.
+/// Stream ownership can be transferred via `take_*` methods.
+///
+/// # Lifecycle
+/// 1. Create connection via [`ScrcpyConnection::connect()`]
+/// 2. Extract streams with `take_video_stream()`, `take_audio_stream()`
+/// 3. Use `set_control_stream()` to register control channel
+/// 4. Automatic cleanup on `Drop` (kills server process, removes tunnels)
+///
+/// # Errors
+/// - Connection failures return [`SAideError::ConnectionFailed`]
+/// - Server startup failures return [`SAideError::ServerStartFailed`]
+/// - Audio unavailable (Android < 11) sets `audio_disabled_reason`
 pub struct ScrcpyConnection {
     /// Session ID
     pub scid: u32,

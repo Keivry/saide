@@ -93,8 +93,8 @@
 
 ### 文档缺失
 
-- [ ] **[api-docs]** 公开 API 缺少文档：`ScrcpyConnection`, `StreamPlayer`, `VideoDecoder` trait  
-  **解法**: 为所有 `pub struct/trait/enum` 添加文档注释（行为、错误条件、线程安全性）
+- [x] **[api-docs]** 公开 API 缺少文档：`ScrcpyConnection`, `StreamPlayer`, `VideoDecoder` trait  
+  ✅ **已修复**: 为核心公开 API 添加完整 rustdoc 文档（行为、错误条件、线程安全性、生命周期）
 
 ---
 

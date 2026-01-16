@@ -91,8 +91,31 @@ pub enum PlayerState {
     Failed(String),
 }
 
-/// Stream Player
-/// Handles video/audio decoding and rendering in the UI
+/// Stream Player - Decodes and renders video/audio streams
+///
+/// Orchestrates the video/audio decoding pipeline in a background thread and renders
+/// decoded frames to the UI. Supports dynamic resolution changes, AV sync, and graceful shutdown.
+///
+/// # Architecture
+/// - **Background thread**: Runs `stream_worker` for decoding (video + audio)
+/// - **Main thread**: Polls for frames and renders via egui callbacks
+/// - **AV Sync**: Audio is master clock, video drops frames if behind
+///
+/// # Thread Safety
+/// - NOT `Send` or `Sync` (contains egui resources)
+/// - Internal channels are thread-safe (`crossbeam_channel`)
+/// - Cancellation via shared `CancellationToken`
+///
+/// # Lifecycle
+/// 1. Create via [`StreamPlayer::new()`]
+/// 2. Start decoding with [`start()`](StreamPlayer::start)
+/// 3. Call [`update()`](StreamPlayer::update) every frame to poll events
+/// 4. Call [`draw()`](StreamPlayer::draw) to render video
+/// 5. Stop via [`stop()`](StreamPlayer::stop) or automatic on `Drop`
+///
+/// # Errors
+/// - Decoder failures emit [`PlayerEvent::Failed`] via event channel
+/// - Network errors trigger graceful shutdown with error message
 pub struct StreamPlayer {
     /// Video frame receiver
     frame_rx: Option<Receiver<Arc<DecodedFrame>>>,
