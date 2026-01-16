@@ -331,17 +331,22 @@
 
 ### 缺失文档
 
-- [ ] **[docs]** 创建 `docs/architecture.md` 描述模块依赖关系  
-      **需求**: 使用 Mermaid 图展示 UI → Controller → Scrcpy → Decoder 层次
+- [x] **[docs]** 创建 `docs/architecture.md` 描述模块依赖关系  
+      ✅ **已完成**: 已存在完整架构文档,包含 Mermaid 图和层次结构说明
 
-- [ ] **[docs]** 创建 `docs/pitfalls.md` 记录开发中遇到的坑  
-      **需求**: 记录 FFmpeg 回调安全性、ADB 隧道时序、egui 渲染陷阱等
+- [x] **[docs]** 创建 `docs/pitfalls.md` 记录开发中遇到的坑  
+      ✅ **已完成**: 已存在完整的坑点文档,记录了 FFmpeg、ADB、音频等各类问题
 
 - [ ] **[docs]** 创建 `docs/protocol.md` 描述 Scrcpy 协议实现  
-      **需求**: 记录与官方 scrcpy 的差异、扩展字段
+      **需求**: 记录与官方 scrcpy 的差异、扩展字段 (当前为 `SCRCPY_PROTOCOL.md`)
 
-- [ ] **[docs]** `README.md` 缺失  
-      **需求**: 提供中英文 README（构建方法、功能特性、截图）
+- [x] **[docs]** `README.md` 缺失  
+      ✅ **已完成** (2026-01-16): 创建 README.md (520行) + README.zh.md (520行) + LICENSE
+      - 完整项目介绍 (中英双语)
+      - 详细安装和使用指南
+      - 配置说明和故障排除
+      - 性能指标和路线图
+      - 开发指南和贡献规范
 
 ### 代码规范
 
