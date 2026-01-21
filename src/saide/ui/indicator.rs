@@ -5,7 +5,7 @@
 
 use {
     super::VideoStats,
-    crate::config::IndicatorPosition,
+    crate::{config::IndicatorPosition, t},
     std::time::{Duration, Instant},
 };
 
@@ -255,60 +255,60 @@ impl Indicator {
                             .spacing([16.0, 8.0])
                             .striped(true)
                             .show(ui, |ui| {
-                                ui.label("Resolution:");
+                                ui.label(t!("indicator-panel-resolution"));
                                 ui.label(format!(
                                     "{} x {}",
                                     self.video_original_width, self.video_original_height
                                 ));
                                 ui.end_row();
 
-                                ui.label("Capture Orientation:");
+                                ui.label(t!("indicator-panel-capture-orientation"));
                                 ui.label(format!("{}°", self.capture_orientation * 90));
                                 ui.end_row();
 
-                                ui.label("Video Rotation:");
+                                ui.label(t!("indicator-panel-video-rotation"));
                                 ui.label(format!("{}°", self.video_rotation * 90));
                                 ui.end_row();
 
-                                ui.label("Device Rotation:");
+                                ui.label(t!("indicator-panel-device-rotation"));
                                 ui.label(format!("{}°", self.device_orientation * 90));
                                 ui.end_row();
 
-                                ui.label("FPS:");
+                                ui.label(t!("indicator-panel-fps"));
                                 ui.label(format!(
                                     "{}",
                                     self.video_stats.fps.min(self.max_fps) as u32
                                 ));
                                 ui.end_row();
 
-                                ui.label("Frames (Dropped/Total):");
+                                ui.label(t!("indicator-panel-frames"));
                                 ui.label(format!(
                                     "{}/{}",
                                     self.video_stats.dropped_frames, self.video_stats.total_frames
                                 ));
                                 ui.end_row();
 
-                                ui.label("Latency (avg):");
+                                ui.label(t!("indicator-panel-latency-avg"));
                                 ui.label(format!("{:.1}ms", self.video_stats.latency_ms));
                                 ui.end_row();
 
-                                ui.label("Latency (p95):");
+                                ui.label(t!("indicator-panel-latency-p95"));
                                 ui.label(format!("{:.1}ms", self.video_stats.latency_p95_ms));
                                 ui.end_row();
 
-                                ui.label("Decode:");
+                                ui.label(t!("indicator-panel-decode"));
                                 ui.label(format!("{:.1}ms", self.video_stats.latency_decode_ms));
                                 ui.end_row();
 
-                                ui.label("GPU Upload:");
+                                ui.label(t!("indicator-panel-gpu-upload"));
                                 ui.label(format!("{:.1}ms", self.video_stats.latency_upload_ms));
                                 ui.end_row();
 
-                                ui.label("Profile:");
+                                ui.label(t!("indicator-panel-profile"));
                                 ui.label(
                                     self.active_profile_name
                                         .as_deref()
-                                        .unwrap_or("Not Available"),
+                                        .unwrap_or(&t!("indicator-panel-profile-none")),
                                 );
                                 ui.end_row();
                             });

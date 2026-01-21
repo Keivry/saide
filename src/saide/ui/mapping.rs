@@ -14,6 +14,8 @@ use {
     crate::{
         config::mapping::{Key, KeyMapping},
         saide::coords::MappingPos,
+        t,
+        tf,
     },
     eframe::egui::{self, Color32, FontId, Pos2, Stroke},
     egui::Modifiers,
@@ -59,17 +61,17 @@ impl MappingConfigWindow {
             pos: None,
 
             key_input_dialog: ModalDialog::new("key_input_dialog")
-                .with_title("Create Mapping")
+                .with_title(&t!("mapping-config-dialog-create-title"))
                 .with_key_capture(true),
             key: None,
 
             delete_mapping_dialog: ModalDialog::new("delete_mapping_dialog")
-                .with_title("Delete Mapping"),
+                .with_title(&t!("mapping-config-dialog-delete-title")),
             delete_target_key: None,
             delete_target_pos: None,
 
             override_mapping_dialog: ModalDialog::new("override_mapping_dialog")
-                .with_title("Override Mapping"),
+                .with_title(&t!("mapping-config-dialog-override-title")),
             override_key: None,
             override_pos: None,
             override_new_pos: None,
@@ -141,16 +143,16 @@ impl MappingConfigWindow {
                 painter.text(
                     Pos2::new(video_rect.center().x, video_rect.top() + 20.0),
                     egui::Align2::CENTER_TOP,
-                    "Mapping Configuration Mode",
+                    t!("mapping-config-title"),
                     FontId::proportional(20.0),
                     Color32::WHITE,
                 );
 
                 // Draw instructions
                 let instructions = [
-                    "Left Click: Add key mapping",
-                    "Right Click: Delete nearest mapping",
-                    "Press ESC to exit",
+                    t!("mapping-config-instruction-add"),
+                    t!("mapping-config-instruction-delete"),
+                    t!("mapping-config-instruction-exit"),
                 ];
                 instructions.iter().enumerate().for_each(|(i, text)| {
                     painter.text(
@@ -159,7 +161,7 @@ impl MappingConfigWindow {
                             video_rect.top() + 50.0 + i as f32 * 20.0,
                         ),
                         egui::Align2::CENTER_TOP,
-                        *text,
+                        text,
                         FontId::proportional(14.0),
                         Color32::LIGHT_GRAY,
                     );
@@ -252,9 +254,10 @@ impl MappingConfigWindow {
 
         match self
             .key_input_dialog
-            .set_message(&format!(
-                "\nPosition: ({}, {})\n\nPress a key or ESC to cancel...\n",
-                pos.x, pos.y
+            .set_message(&tf!(
+                "mapping-config-dialog-create-message",
+                "x" => pos.x,
+                "y" => pos.y
             ))
             .show(ctx)
         {
@@ -290,7 +293,12 @@ impl MappingConfigWindow {
 
         match self
             .delete_mapping_dialog
-            .set_message(&format!("\n{:?}: ({}, {})?\n", key, pos.x, pos.y))
+            .set_message(&tf!(
+                "mapping-config-dialog-delete-message",
+                "key" => format!("{:?}", key),
+                "x" => pos.x,
+                "y" => pos.y
+            ))
             .show(ctx)
         {
             ModalDialogResult::Confirmed => {
@@ -327,9 +335,13 @@ impl MappingConfigWindow {
 
         match self
             .override_mapping_dialog
-            .set_message(&format!(
-                "\n{:?}: ({}, {}) is already mapped.\n\nOverride to new position ({}, {})?\n",
-                key, pos.x, pos.y, new_pos.x, new_pos.y
+            .set_message(&tf!(
+                "mapping-config-dialog-override-message",
+                "key" => format!("{:?}", key),
+                "old_x" => pos.x,
+                "old_y" => pos.y,
+                "new_x" => new_pos.x,
+                "new_y" => new_pos.y
             ))
             .show(ctx)
         {

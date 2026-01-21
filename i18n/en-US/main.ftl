@@ -20,3 +20,35 @@ indicator-dropped = Dropped: {$dropped}
 indicator-profile = Profile: {$profile}
 indicator-orientation = Orientation: {$orientation}°
 indicator-resolution = Resolution: {$width}x{$height}
+
+## UI - Indicator Floating Panel
+indicator-panel-resolution = Resolution:
+indicator-panel-capture-orientation = Capture Orientation:
+indicator-panel-video-rotation = Video Rotation:
+indicator-panel-device-rotation = Device Rotation:
+indicator-panel-fps = FPS:
+indicator-panel-frames = Frames (Dropped/Total):
+indicator-panel-latency-avg = Latency (avg):
+indicator-panel-latency-p95 = Latency (p95):
+indicator-panel-decode = Decode:
+indicator-panel-gpu-upload = GPU Upload:
+indicator-panel-profile = Profile:
+indicator-panel-profile-none = Not Available
+
+## UI - Mapping Configuration
+mapping-config-title = Mapping Configuration Mode
+mapping-config-instruction-add = Left Click: Add key mapping
+mapping-config-instruction-delete = Right Click: Delete nearest mapping
+mapping-config-instruction-exit = Press ESC to exit
+mapping-config-dialog-create-title = Create Mapping
+mapping-config-dialog-create-message =
+    Position: ({$x}, {$y})
+    
+    Press a key or ESC to cancel...
+mapping-config-dialog-delete-title = Delete Mapping
+mapping-config-dialog-delete-message = {$key}: ({$x}, {$y})?
+mapping-config-dialog-override-title = Override Mapping
+mapping-config-dialog-override-message =
+    {$key}: ({$old_x}, {$old_y}) is already mapped.
+    
+    Override to new position ({$new_x}, {$new_y})?
