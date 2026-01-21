@@ -362,8 +362,8 @@ pub fn spawn_raw_input_thread(sender: ControlSender) -> JoinHandle<()> {
 **方案**:
 ```rust
 // 位置: src/controller/mouse.rs:95
-const MIN_DRAG_INTERVAL_MS: u128 = 4;  // 快速移动
-const MAX_DRAG_INTERVAL_MS: u128 = 16; // 慢速移动
+const MIN_DRAG_INTERVAL_MS: u64 = 4;  // 快速移动
+const MAX_DRAG_INTERVAL_MS: u64 = 16; // 慢速移动
 
 impl MouseMapper {
     fn update(&self) -> Result<()> {

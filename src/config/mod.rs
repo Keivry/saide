@@ -72,7 +72,7 @@ pub struct InputConfig {
     /// Long press duration threshold in milliseconds (default: 300ms)
     /// Time the mouse button must be held before triggering long-press
     #[serde(default = "default_long_press_ms")]
-    pub long_press_ms: u128,
+    pub long_press_ms: u64,
 
     /// Drag threshold in pixels (default: 5.0px)
     /// Minimum movement distance to distinguish drag from click
@@ -82,7 +82,7 @@ pub struct InputConfig {
     /// Drag update interval in milliseconds (default: 8ms ≈ 120fps)
     /// Interval for sending touch move events during dragging
     #[serde(default = "default_drag_interval_ms")]
-    pub drag_interval_ms: u128,
+    pub drag_interval_ms: u64,
 }
 
 impl Default for InputConfig {
@@ -95,9 +95,9 @@ impl Default for InputConfig {
     }
 }
 
-fn default_long_press_ms() -> u128 { 300 }
+fn default_long_press_ms() -> u64 { 300 }
 fn default_drag_threshold() -> f32 { 5.0 }
-fn default_drag_interval_ms() -> u128 { 8 }
+fn default_drag_interval_ms() -> u64 { 8 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GPUConfig {

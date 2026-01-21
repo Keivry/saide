@@ -71,7 +71,7 @@ impl MouseMapper {
             } => {
                 // Check if long press duration exceeded
                 let elapsed = start_time.elapsed().as_millis();
-                if elapsed >= self.config.long_press_ms {
+                if elapsed >= self.config.long_press_ms as u128 {
                     // Long press triggered - don't send any ADB event
                     // Android will detect the sustained touch and trigger long press automatically
                     // The TouchDown is already being held, so Android knows it's a long press
@@ -89,7 +89,7 @@ impl MouseMapper {
             } => {
                 // Only send update if enough time passed
                 let elapsed = last_update.elapsed().as_millis();
-                if elapsed >= self.config.drag_interval_ms {
+                if elapsed >= self.config.drag_interval_ms as u128 {
                     // Send TouchMove event for drag updates
                     self.sender.send_touch_move(current_x, current_y)?;
                     debug!(
@@ -201,7 +201,7 @@ impl MouseMapper {
                         "ACTION: Fast drag/flick from ({}, {}) to ({}, {}), distance={:.1}px",
                         start_x, start_y, x, y, distance
                     );
-                } else if elapsed >= self.config.long_press_ms {
+                } else if elapsed >= self.config.long_press_ms as u128 {
                     // Long press was already handled in update()
                     debug!(
                         "ACTION: Long press completed at ({}, {}) after {}ms",
@@ -286,7 +286,7 @@ impl MouseMapper {
             } => {
                 // Send MOVE event immediately if enough time passed (throttling)
                 let elapsed = last_update.elapsed().as_millis();
-                if elapsed >= self.config.drag_interval_ms {
+                if elapsed >= self.config.drag_interval_ms as u128 {
                     self.sender.send_touch_move(x, y)?;
                     trace!("Drag move to ({}, {}) [elapsed={}ms]", x, y, elapsed);
 
