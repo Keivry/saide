@@ -5,6 +5,7 @@ app-title = SAide
 toolbar-rotate = 旋转视频
 toolbar-configure = 配置映射
 toolbar-keyboard-mapping = 切换键盘映射
+toolbar-mapping-visualization = 显示映射可视化
 toolbar-screen-off = 关闭屏幕
 toolbar-screen-off-hint = （按物理电源键唤醒）
 

@@ -159,6 +159,9 @@ pub struct UIState {
     /// Ui initialization state, to trigger first-time setups
     /// (e.g. window resize)
     pub ui_initialized: bool,
+
+    /// Mapping visualization enabled state
+    pub mapping_visualization_enabled: bool,
 }
 
 impl UIState {
@@ -169,6 +172,7 @@ impl UIState {
             mapping_coords: MappingCoordSys::new(0),
             visual_coords: VisualCoordSys::new(0),
             ui_initialized: false,
+            mapping_visualization_enabled: false,
         }
     }
 
@@ -195,6 +199,12 @@ impl UIState {
 
     #[allow(dead_code)]
     pub fn set_audio_warning(&mut self, warning: Option<String>) { self.audio_warning = warning; }
+
+    pub fn mapping_visualization_enabled(&self) -> bool { self.mapping_visualization_enabled }
+
+    pub fn toggle_mapping_visualization(&mut self) {
+        self.mapping_visualization_enabled = !self.mapping_visualization_enabled;
+    }
 }
 
 impl Default for UIState {

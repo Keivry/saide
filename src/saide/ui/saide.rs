@@ -281,6 +281,20 @@ impl SAideApp {
         );
     }
 
+    /// Toggle mapping visualization
+    fn toggle_mapping_visualization(&mut self) {
+        self.ui_state.toggle_mapping_visualization();
+
+        // Update toolbar button state
+        self.toolbar
+            .set_mapping_visualization_enabled(self.ui_state.mapping_visualization_enabled());
+
+        info!(
+            "Mapping visualization toggled: {}",
+            self.ui_state.mapping_visualization_enabled()
+        );
+    }
+
     // Check if position is within video rectangle
     fn is_in_video_rect(&self, pos: &VisualPos) -> bool {
         let video_rect = self.player.video_rect();
@@ -858,6 +872,9 @@ impl SAideApp {
                 ToolbarEvent::ToggleKeyboardMapping => {
                     self.toggle_keyboard_mapping();
                 }
+                ToolbarEvent::ToggleMappingVisualization => {
+                    self.toggle_mapping_visualization();
+                }
                 ToolbarEvent::None => {}
             });
     }
@@ -873,6 +890,73 @@ impl SAideApp {
                 .interactable(false)
                 .show(ctx, |ui| self.indicator.draw_indicator(ui, video_rect));
         }
+    }
+
+    /// Draw mapping visualization overlay on video
+    fn draw_mapping_overlay(&mut self, ctx: &egui::Context) {
+        if !self.ui_state.mapping_visualization_enabled() {
+            return;
+        }
+
+        let video_rect = self.player.video_rect();
+        if video_rect.width() <= 0.0 || video_rect.height() <= 0.0 || video_rect.min.x.is_nan() {
+            return;
+        }
+
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
+            return;
+        };
+
+        let Some(mappings) = keyboard_mapper.get_active_mappings() else {
+            return;
+        };
+
+        egui::Area::new(egui::Id::new("mapping_overlay"))
+            .fixed_pos(video_rect.min)
+            .interactable(false)
+            .show(ctx, |ui| {
+                let painter = ui.painter();
+                let mappings_read = mappings.read();
+
+                for (key, action) in mappings_read.iter() {
+                    use crate::config::mapping::MappingAction;
+
+                    let pos = match action {
+                        MappingAction::Tap { pos }
+                        | MappingAction::TouchDown { pos }
+                        | MappingAction::TouchMove { pos }
+                        | MappingAction::TouchUp { pos }
+                        | MappingAction::Scroll { pos, .. } => Some(pos),
+                        MappingAction::Swipe { path, .. } => Some(&path[0]),
+                        _ => None,
+                    };
+
+                    if let Some(mapping_pos) = pos {
+                        let screen_pos = self.ui_state.visual_coords().from_mapping(
+                            mapping_pos,
+                            &video_rect,
+                            self.app_state.scrcpy_coords(),
+                            self.ui_state.mapping_coords(),
+                        );
+
+                        let key_text = format!("{:?}", key);
+
+                        painter.circle_filled(
+                            screen_pos,
+                            12.0,
+                            egui::Color32::from_rgba_unmultiplied(0, 255, 0, 60),
+                        );
+
+                        painter.text(
+                            screen_pos,
+                            egui::Align2::CENTER_CENTER,
+                            &key_text,
+                            egui::FontId::proportional(10.0),
+                            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+                        );
+                    }
+                }
+            });
     }
 }
 
@@ -997,6 +1081,10 @@ impl eframe::App for SAideApp {
         if self.init_state == InitState::Ready && self.config().general.indicator {
             self.indicator.update_video_stats(self.player.video_stats());
             self.draw_indicator(ctx);
+        }
+
+        if self.init_state == InitState::Ready {
+            self.draw_mapping_overlay(ctx);
         }
 
         // Show audio warning if present (overlay at top)

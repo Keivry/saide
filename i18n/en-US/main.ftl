@@ -5,6 +5,7 @@ app-title = SAide
 toolbar-rotate = Rotate Video
 toolbar-configure = Configure Mappings
 toolbar-keyboard-mapping = Toggle Keyboard Mapping
+toolbar-mapping-visualization = Show Mapping Visualization
 toolbar-screen-off = Turn Off Screen
 toolbar-screen-off-hint = (Press physical power button to wake up)
 

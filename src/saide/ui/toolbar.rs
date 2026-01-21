@@ -19,6 +19,7 @@ const TOOLBAR_BTN_SPACING: f32 = 2.0;
 pub enum ToolbarEvent {
     None,
     ToggleKeyboardMapping,
+    ToggleMappingVisualization,
     RotateVideo,
     ConfigureMappings,
     ToggleScreenPower,
@@ -37,12 +38,18 @@ struct ToolbarButton {
 }
 
 lazy_static! {
-    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 4] = [
+    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 5] = [
         ToolbarButton {
             btn_type: ButtonType::Selectable(Toolbar::is_keyboard_mapping_enabled),
             lable: "⌨",
             tooltip_key: "toolbar-keyboard-mapping",
             event: ToolbarEvent::ToggleKeyboardMapping,
+        },
+        ToolbarButton {
+            btn_type: ButtonType::Selectable(Toolbar::is_mapping_visualization_enabled),
+            lable: "👁",
+            tooltip_key: "toolbar-mapping-visualization",
+            event: ToolbarEvent::ToggleMappingVisualization,
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,
@@ -67,6 +74,7 @@ lazy_static! {
 
 pub struct Toolbar {
     keyboard_mapping_enabled: bool,
+    mapping_visualization_enabled: bool,
 }
 
 impl Default for Toolbar {
@@ -77,6 +85,7 @@ impl Toolbar {
     pub fn new() -> Self {
         Self {
             keyboard_mapping_enabled: false,
+            mapping_visualization_enabled: false,
         }
     }
 
@@ -84,9 +93,16 @@ impl Toolbar {
 
     fn is_keyboard_mapping_enabled(&self) -> bool { self.keyboard_mapping_enabled }
 
+    fn is_mapping_visualization_enabled(&self) -> bool { self.mapping_visualization_enabled }
+
     /// Set keyboard mapping enabled state
     pub fn set_keyboard_mapping_enabled(&mut self, enabled: bool) {
         self.keyboard_mapping_enabled = enabled;
+    }
+
+    /// Set mapping visualization enabled state
+    pub fn set_mapping_visualization_enabled(&mut self, enabled: bool) {
+        self.mapping_visualization_enabled = enabled;
     }
 
     /// Draw the toolbar, return the event if any button is clicked
