@@ -14,7 +14,7 @@
 //! The cache is automatically invalidated when the locale changes.
 
 use {
-    fluent_bundle::{bundle::FluentBundle, FluentArgs, FluentResource},
+    fluent_bundle::{FluentArgs, FluentResource, bundle::FluentBundle},
     intl_memoizer::concurrent::IntlLangMemoizer,
     lru::LruCache,
     once_cell::sync::Lazy,
@@ -24,8 +24,8 @@ use {
         collections::HashMap,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc,
+            atomic::{AtomicU64, Ordering},
         },
     },
     unic_langid::LanguageIdentifier,
@@ -35,6 +35,9 @@ type ThreadSafeFluentBundle = FluentBundle<FluentResource, IntlLangMemoizer>;
 
 /// Maximum number of cached translations per thread
 const CACHE_CAPACITY: usize = 256;
+
+/// Global generation counter for cache invalidation
+static CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 // Thread-local cache for translation results
 thread_local! {
@@ -77,7 +80,6 @@ pub struct I18nManager {
     source: Box<dyn super::FtlSource + Send + Sync>,
     bundles: HashMap<String, ThreadSafeFluentBundle>,
     current_locale: String,
-    generation: Arc<AtomicU64>,
 }
 
 impl I18nManager {
@@ -129,7 +131,6 @@ impl I18nManager {
             source,
             bundles,
             current_locale,
-            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -240,9 +241,9 @@ impl I18nManager {
         self.bundles.keys().map(|s| s.as_str()).collect()
     }
 
-    fn invalidate_cache(&self) { self.generation.fetch_add(1, Ordering::Relaxed); }
+    fn invalidate_cache(&self) { CACHE_GENERATION.fetch_add(1, Ordering::Relaxed); }
 
-    fn current_generation(&self) -> u64 { self.generation.load(Ordering::Relaxed) }
+    fn current_generation(&self) -> u64 { CACHE_GENERATION.load(Ordering::Relaxed) }
 
     pub fn get(&self, key: &str) -> String { self.get_with_fluent_args(key, None) }
 
@@ -288,6 +289,20 @@ impl I18nManager {
     }
 
     pub fn is_chinese(&self) -> bool { self.current_locale.starts_with("zh") }
+}
+
+pub fn current_generation() -> u64 { CACHE_GENERATION.load(Ordering::Relaxed) }
+
+pub fn get_cached(key: &str) -> Option<String> {
+    let generation = current_generation();
+    TRANSLATION_CACHE.with(|cache| cache.borrow_mut().get(key, generation))
+}
+
+pub fn set_cached(key: String, value: String) {
+    let generation = current_generation();
+    TRANSLATION_CACHE.with(|cache| {
+        cache.borrow_mut().insert(key, value, generation);
+    });
 }
 
 impl Default for I18nManager {

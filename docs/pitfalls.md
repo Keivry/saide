@@ -916,6 +916,143 @@ fn update(&mut self, ctx: &egui::Context) {
 
 ---
 
+## i18n 性能陷阱
+
+> **2026-01-21 更新**: 修复 i18n 宏在 60fps UI 中的 RwLock 竞争
+
+### ✅ FIXED: t!/tf! 宏在每帧获取锁 (commit PENDING)
+
+**位置**: `src/i18n/mod.rs:41-71` (已修复)  
+**问题**: egui 60fps 渲染时,每个 UI 文本每帧调用 `RwLock.read()`,导致严重锁竞争
+
+**修复前**:
+```rust
+// ❌ 错误示例: 每帧每个 UI 文本都获取锁
+macro_rules! t {
+    ($key:expr) => {
+        $crate::i18n::L10N.read().get($key)  // 60fps × 20 texts = 1200 locks/sec
+    };
+}
+
+// UI 代码 (每秒重绘 60 次):
+fn update(&mut self, ctx: &egui::Context) {
+    ui.label(t!("indicator-panel-fps"));      // Lock 1
+    ui.label(t!("indicator-panel-resolution")); // Lock 2
+    ui.label(t!("mapping-config-title"));      // Lock 3
+    // ... 17 more locks per frame
+}
+```
+
+**性能影响**:
+```
+20 个 UI 文本 × 60fps = 1200 次 RwLock.read()/秒
+├─ RwLock 开销: ~50-100ns (无竞争时)
+├─ HashMap 查找: ~20-50ns
+├─ Fluent 格式化: ~500-1000ns (带参数时)
+└─ 总计: ~60-120μs/帧 → 可能达到 1ms (1.67% CPU @ 60fps)
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例: 检查缓存后再获取锁
+macro_rules! t {
+    ($key:expr) => {{
+        if let Some(cached) = $crate::i18n::get_cached($key) {
+            cached  // ✅ 缓存命中 - 无锁访问
+        } else {
+            let result = $crate::i18n::L10N.read().get($key);  // 缓存未命中 - 获取锁
+            $crate::i18n::set_cached($key.to_string(), result.clone());
+            result
+        }
+    }};
+}
+
+// 支持代码: thread-local LRU 缓存
+thread_local! {
+    static TRANSLATION_CACHE: RefCell<TranslationCache> = 
+        RefCell::new(TranslationCache::new(256));  // 256 条缓存
+}
+
+struct TranslationCache {
+    cache: lru::LruCache<String, String>,
+    generation: u64,  // 检测 locale 切换
+}
+
+impl TranslationCache {
+    fn get(&mut self, key: &str, current_gen: u64) -> Option<String> {
+        if self.generation != current_gen {
+            self.cache.clear();  // Locale 切换,清空缓存
+            self.generation = current_gen;
+            return None;
+        }
+        self.cache.get(key).cloned()
+    }
+}
+
+// 全局 generation 计数器 (无锁检查)
+static CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn set_locale(locale: &str) {
+    // ... 切换 locale ...
+    CACHE_GENERATION.fetch_add(1, Ordering::Relaxed);  // 失效所有缓存
+}
+```
+
+**性能改进**:
+```
+首次调用 t!("key"):
+├─ get_cached("key") → None (缓存未命中)
+├─ L10N.read().get("key") → "Translation" (获取锁)
+└─ set_cached("key", "Translation") → 写入缓存
+
+后续调用 (同一帧/后续帧):
+├─ get_cached("key") → Some("Translation") (缓存命中)
+└─ 直接返回 → **无锁访问**
+
+性能对比:
+- 修复前: 1200 locks/sec (60fps × 20 texts)
+- 修复后: ~60 locks/sec (仅缓存未命中时)
+- **改进**: 20× 减少锁竞争
+```
+
+**教训**:
+1. **高频调用路径必须避免不必要的锁** - 60fps UI 每秒执行数千次
+2. **thread-local 缓存 > 全局缓存** - 避免多线程竞争 (egui 单线程渲染)
+3. **LRU 缓存自动淘汰** - 避免内存泄漏 (限制 256 条)
+4. **generation 计数器实现缓存失效** - locale 切换时清空缓存
+5. **缓存键设计**: 
+   - `t!("key")` → cache key = `"key"` (简单)
+   - `tf!("key", "arg" => val)` → cache key = `"key:{:?}args"` (包含参数)
+6. **避免在宏展开前获取锁** - 必须先检查缓存再决定是否锁
+
+**Pattern**: 高频 API = 检查缓存 → (未命中) → 获取锁 → 更新缓存
+
+**相关优化**:
+- LRU 缓存容量: 256 条 (足够覆盖所有 UI 文本)
+- `AtomicU64` generation: Relaxed ordering (无需强一致性)
+- `RefCell` 缓存: 单线程渲染无需 `Mutex`
+
+**潜在问题**:
+1. ⚠️ `tf!()` 缓存键生成开销: `format!("{}:{:?}", key, args)` 可能较慢
+   - 解决: 参数较少时可接受,复杂参数考虑禁用缓存
+2. ⚠️ 缓存内存占用: 256 × 平均 50 字节 = ~12KB/线程
+   - 解决: LRU 自动淘汰,影响可忽略
+
+**调试验证**:
+```bash
+# 编译检查
+cargo clippy -- -D warnings
+
+# 运行测试
+cargo test --lib i18n
+
+# 性能测试 (可选):
+# 在 update() 中添加 eprintln!("Lock count: {}", lock_count);
+# 预期: 首次渲染 ~20 locks, 后续 ~0-2 locks/frame
+```
+
+---
+
 ## 音频延迟优化陷阱 (Phase 3)
 
 ### ❌ cpal 独占模式限制

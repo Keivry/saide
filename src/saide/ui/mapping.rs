@@ -296,8 +296,8 @@ impl MappingConfigWindow {
             .set_message(&tf!(
                 "mapping-config-dialog-delete-message",
                 "key" => format!("{:?}", key),
-                "x" => pos.x,
-                "y" => pos.y
+                "x" => pos.x.to_string(),
+                "y" => pos.y.to_string()
             ))
             .show(ctx)
         {
@@ -338,10 +338,10 @@ impl MappingConfigWindow {
             .set_message(&tf!(
                 "mapping-config-dialog-override-message",
                 "key" => format!("{:?}", key),
-                "old_x" => pos.x,
-                "old_y" => pos.y,
-                "new_x" => new_pos.x,
-                "new_y" => new_pos.y
+                "old_x" => pos.x.to_string(),
+                "old_y" => pos.y.to_string(),
+                "new_x" => new_pos.x.to_string(),
+                "new_y" => new_pos.y.to_string()
             ))
             .show(ctx)
         {

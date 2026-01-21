@@ -30,7 +30,7 @@ mod embedded;
 #[cfg(debug_assertions)]
 pub use fs_source::FtlWatcherSource;
 pub use {
-    manager::{I18nManager, L10N},
+    manager::{I18nManager, L10N, current_generation, get_cached, set_cached},
     source::FtlSource,
 };
 
@@ -38,9 +38,15 @@ pub use {
 /// Usage: `t!("message-key")`
 #[macro_export]
 macro_rules! t {
-    ($key:expr) => {
-        $crate::i18n::L10N.read().get($key)
-    };
+    ($key:expr) => {{
+        if let Some(cached) = $crate::i18n::get_cached($key) {
+            cached
+        } else {
+            let result = $crate::i18n::L10N.read().get($key);
+            $crate::i18n::set_cached($key.to_string(), result.clone());
+            result
+        }
+    }};
 }
 
 /// Shorthand macro to get a localized message with arguments.
@@ -48,11 +54,19 @@ macro_rules! t {
 #[macro_export]
 macro_rules! tf {
     ($key:expr, $($arg_key:expr => $arg_val:expr),+ $(,)?) => {{
-        let mut args = fluent_bundle::FluentArgs::new();
-        $(
-            args.set($arg_key, $arg_val);
-        )+
-        $crate::i18n::L10N.read().get_with_fluent_args($key, Some(&args))
+        let cache_key = format!("{}:{:?}", $key, (&[$($arg_key),+], &[$($arg_val),+]));
+
+        if let Some(cached) = $crate::i18n::get_cached(&cache_key) {
+            cached
+        } else {
+            let mut args = fluent_bundle::FluentArgs::new();
+            $(
+                args.set($arg_key, $arg_val);
+            )+
+            let result = $crate::i18n::L10N.read().get_with_fluent_args($key, Some(&args));
+            $crate::i18n::set_cached(cache_key, result.clone());
+            result
+        }
     }};
 }
 
