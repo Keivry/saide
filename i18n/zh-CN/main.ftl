@@ -52,3 +52,7 @@ mapping-config-dialog-override-message =
     {$key}：({$old_x}, {$old_y}) 已映射。
     
     覆盖到新位置（{$new_x}, {$new_y}）？
+
+## UI - 通用对话框按钮
+dialog-button-confirm = 确认
+dialog-button-cancel = 取消

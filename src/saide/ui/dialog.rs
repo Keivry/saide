@@ -3,7 +3,10 @@
 //! Provides a reusable modal dialog component with customizable title, message,
 //! confirm and cancel buttons, and optional key capture functionality.
 
-use egui::{Key, Modal, Modifiers};
+use {
+    crate::t,
+    egui::{Key, Modal, Modifiers},
+};
 
 const BUTTON_SIZE: (f32, f32) = (80.0, 30.0);
 
@@ -36,8 +39,8 @@ impl ModalDialog {
             id: id.into(),
             title: String::new(),
             message: String::new(),
-            confirm: Some("Confirm".into()),
-            cancel: Some("Cancel".into()),
+            confirm: Some(t!("dialog-button-confirm")),
+            cancel: Some(t!("dialog-button-cancel")),
 
             capture: false,
         }

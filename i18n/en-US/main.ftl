@@ -52,3 +52,7 @@ mapping-config-dialog-override-message =
     {$key}: ({$old_x}, {$old_y}) is already mapped.
     
     Override to new position ({$new_x}, {$new_y})?
+
+## UI - Common Dialog Buttons
+dialog-button-confirm = Confirm
+dialog-button-cancel = Cancel
