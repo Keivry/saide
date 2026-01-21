@@ -35,6 +35,8 @@ fn get_profile_for_gpu(gpu_type: GpuType) -> (&'static str, &'static str) {
     match gpu_type {
         GpuType::Nvidia => ("profile", "65536"), // NVDEC enum value
         GpuType::Intel | GpuType::Amd => ("profile", "66"), // Baseline Profile (VAAPI)
+        GpuType::Apple => ("profile", "66"),     // VideoToolbox uses Baseline
+        GpuType::Software => ("profile", "66"),  // Software decoder uses Baseline
         GpuType::Unknown => ("profile", "66"),   // Fallback to standard Baseline
     }
 }

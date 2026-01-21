@@ -43,6 +43,17 @@ impl AutoDecoder {
                     }
                 }
             }
+            GpuType::Apple => {
+                info!(
+                    "Using software decoder (Apple Silicon - VideoToolbox decoder not yet implemented)"
+                );
+                // TODO: Implement VideoToolbox decoder for macOS
+                Ok(Self::Software(H264Decoder::new(width, height)?))
+            }
+            GpuType::Software => {
+                info!("Using software decoder (explicit)");
+                Ok(Self::Software(H264Decoder::new(width, height)?))
+            }
             GpuType::Unknown => {
                 info!("Unknown GPU, using software decoder");
                 Ok(Self::Software(H264Decoder::new(width, height)?))

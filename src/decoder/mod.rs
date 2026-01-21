@@ -11,6 +11,16 @@ mod packet;
 mod rgba_render;
 mod vaapi;
 
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "macos")]
+pub use macos::VtDecoder;
+#[cfg(target_os = "windows")]
+pub use windows::MfDecoder;
 pub use {
     audio::{AudioDecoder, AudioPlayer, DecodedAudio, OpusDecoder},
     auto::AutoDecoder,

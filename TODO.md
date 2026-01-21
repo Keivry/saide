@@ -1,10 +1,11 @@
 # SAide 任务清单
 
-> **最后更新**: 2026-01-15  
-> **当前状态**: 🚀 Phase 3 延迟优化进行中 (音频 + 输入优化)  
+> **最后更新**: 2026-01-21  
+> **当前状态**: 🚀 Phase 3 延迟优化 + 跨平台支持规划  
 > **Phase 1**: ✅ 完成 (13-25ms 降低, 目标 20-35ms 已达成)  
 > **Phase 2**: ❌ 终止 (wgpu v28 无外部内存 API, 详见 `docs/PHASE2_ZEROCOPY_FEASIBILITY.md`)  
-> **Phase 3**: 🔄 进行中 (目标额外降低 8-18ms)
+> **Phase 3**: 🔄 进行中 (目标额外降低 8-18ms)  
+> **跨平台支持**: 📋 规划完成 (见 [CROSS_PLATFORM_ROADMAP.md](docs/CROSS_PLATFORM_ROADMAP.md))
 
 ---
 
@@ -281,6 +282,179 @@
 
 - [ ] **[platform]** `src/gpu/mod.rs`: 仅支持 Linux DRM 设备检测  
       **需求**: 增加 macOS（IOKit）、Windows（DXGI）GPU 检测支持
+
+---
+
+## 跨平台支持 (P0 - v0.3 核心功能)
+
+> **目标**: 支持 Linux 跨桌面环境 + Windows + macOS  
+> **文档**: [CROSS_PLATFORM_ROADMAP.md](docs/CROSS_PLATFORM_ROADMAP.md)  
+> **当前状态**: 仅在 Gentoo Linux + KDE Plasma 6 Wayland 测试
+
+### 阶段 1: Windows 支持 (3-4 周)
+
+#### Week 1-2: Media Foundation 解码器
+
+- [ ] **[decoder]** 创建 `src/decoder/windows/mf.rs`  
+      **需求**: Windows Media Foundation H.264 解码器，支持 D3D11VA 硬件加速  
+      **依赖**: `windows-sys 0.52`, `winapi 0.3`  
+      **参考**: [FFmpeg HWAccel](https://trac.ffmpeg.org/wiki/HWAccelIntro)
+
+- [ ] **[decoder]** 实现 `WindowsMfDecoder::new()`  
+      **需求**: 初始化 COM, 创建 Media Session, 配置源读取器
+
+- [ ] **[decoder]** 实现 `WindowsMfDecoder::decode_packet()`  
+      **需求**: 发送 H.264 帧到 Media Foundation, 输出 NV12/RGBA 帧
+
+- [ ] **[decoder]** 实现软件解码回退  
+      **需求**: Media Foundation 失败时自动回退到软件解码
+
+#### Week 2-3: GPU 后端 + 进程管理
+
+- [ ] **[gpu]** 修改 `Cargo.toml` 添加 Windows 依赖  
+      **需求**: `windows-sys`, `winapi` (dxgi, d3d11, mfapi)
+
+- [ ] **[gpu]** 创建 `src/gpu/windows.rs`  
+      **需求**: 使用 DXGI 枚举 GPU (NVIDIA/Intel/AMD), 返回 GpuType
+
+- [ ] **[controller]** 修改 ADB 进程管理  
+      **需求**: 使用 `windows-sys` 替代 `nix` crate 处理 Windows 进程
+
+- [ ] **[wgpu]** 配置 wgpu DirectX12 后端  
+      **需求**: `wgpu = { features = ["dx12"] }` for Windows
+
+#### Week 4: 测试 + Bug 修复
+
+- [ ] **[test]** Windows 集成测试矩阵  
+      **平台**: Windows 10 22H2, Windows 11 22H2  
+      **GPU**: NVIDIA RTX, Intel Xe, AMD RX
+
+- [ ] **[test]** 硬件加速兼容性测试  
+      **需求**: 测试 D3D11VA 硬件解码是否正常工作
+
+- [ ] **[test]** 软件解码回退测试  
+      **需求**: 无 GPU 时是否正确回退
+
+### 阶段 2: macOS 支持 (2-3 周)
+
+#### Week 1-2: VideoToolbox 解码器
+
+- [ ] **[decoder]** 创建 `src/decoder/macos/vt.rs`  
+      **需求**: macOS VideoToolbox H.264 解码器，支持硬件加速  
+      **依赖**: `core-foundation 0.10`, `core-graphics 0.24`  
+      **参考**: [Apple VideoToolbox](https://developer.apple.com/documentation/videotoolbox)
+
+- [ ] **[decoder]** 实现 `MacosVtDecoder::new()`  
+      **需求**: 创建 VTDecompressionSession, 配置格式描述
+
+- [ ] **[decoder]** 实现 `MacosVtDecoder::decode_packet()`  
+      **需求**: 发送 H.264 NALU, 输出 CVPixelBuffer
+
+- [ ] **[gpu]** 创建 `src/gpu/macos.rs`  
+      **需求**: 使用 `sysctl` 检测 Apple Silicon/Intel GPU
+
+- [ ] **[wgpu]** 配置 wgpu Metal 后端  
+      **需求**: `wgpu = { features = ["metal"] }` for macOS
+
+#### Week 3: 测试
+
+- [ ] **[test]** macOS 集成测试矩阵  
+      **平台**: macOS 12 Monterey, macOS 13 Ventura, macOS 14 Sonoma  
+      **GPU**: Apple M1/M2/M3, Intel i7
+
+- [ ] **[test]** Apple Silicon 原生测试  
+      **需求**: 测试 Metal 硬件加速
+
+### 阶段 3: 跨桌面环境支持 (1-2 周)
+
+#### Linux 桌面环境兼容性
+
+- [ ] **[decoder]** 动态枚举 VAAPI 设备路径  
+      **需求**: 从 `/dev/dri/renderD128` 改为动态搜索 `/dev/dri/renderD*`  
+      **位置**: `src/decoder/vaapi.rs:50`
+
+- [ ] **[decoder]** 添加 VAAPI 设备发现日志  
+      **需求**: 记录找到的 DRM 设备路径
+
+- [ ] **[test]** GNOME Wayland/X11 测试  
+      **需求**: 测试 `Ubuntu 23.10 + GNOME 45`
+
+- [ ] **[test]** Xfce X11 测试  
+      **需求**: 测试 `Xubuntu 23.10 + Xfce 4.18`
+
+- [ ] **[test]** Sway Wayland 测试  
+      **需求**: 测试 `Arch Linux + Sway 1.9`
+
+#### 输入兼容性
+
+- [ ] **[input]** Wayland 输入事件测试  
+      **需求**: 确保 egui 正确处理 Wayland 键盘/鼠标事件
+
+- [ ] **[input]** X11 输入事件测试  
+      **需求**: 确保 egui 正确处理 X11 键盘/鼠标事件
+
+### 依赖管理
+
+#### Cargo.toml 修改
+
+```toml
+[target.'cfg(windows)'.dependencies]
+windows-sys = "0.52"
+winapi = { version = "0.3", features = [
+    "dxgi", "d3d11", "mfapi", "mfobjects", "mmdeviceapi", "audioclient"
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.24"
+objc2 = "0.5"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["process", "signal"] }
+
+[target.'cfg(target_os = "linux")'.dependencies.wgpu]
+version = "27"
+features = ["vulkan"]
+
+[target.'cfg(target_os = "windows")'.dependencies.wgpu]
+version = "27"
+features = ["dx12"]
+
+[target.'cfg(target_os = "macos")'.dependencies.wgpu]
+version = "27"
+features = ["metal"]
+```
+
+### 已知问题与解决方案
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| `/dev/dri/renderD128` 硬编码 | VAAPI 设备路径固定 | 动态枚举 `/dev/dri/renderD*` |
+| `TCP_QUICKACK` Linux only | Windows/macOS 无此 socket 选项 | 使用 `TCP_NODELAY` (已有) + 接受性能损失 |
+| `nix` crate Unix only | POSIX 信号处理 | 条件编译: `nix` on Unix, `windows-sys` on Windows |
+
+### 测试矩阵
+
+| 平台 | 版本 | 桌面环境 | 硬件加速 | 状态 |
+|------|------|----------|----------|------|
+| Windows | 10 22H2 | N/A | D3D11VA | ⏳ 待实现 |
+| Windows | 11 22H2 | N/A | D3D11VA | ⏳ 待实现 |
+| macOS | 13 Ventura | N/A | VideoToolbox | ⏳ 待实现 |
+| macOS | 14 Sonoma | N/A | VideoToolbox | ⏳ 待实现 |
+| Linux | Ubuntu 23.10 | GNOME 45 Wayland | VAAPI | ⚠️ 待测试 |
+| Linux | Ubuntu 23.10 | GNOME 45 X11 | VAAPI | ⚠️ 待测试 |
+| Linux | Xubuntu 23.10 | Xfce 4.18 | VAAPI | ⚠️ 待测试 |
+| Linux | Arch Linux | Sway 1.9 | VAAPI | ⚠️ 待测试 |
+| Linux | Gentoo | KDE Plasma 6 | VAAPI/NVDEC | ✅ 已测试 |
+
+### 里程碑
+
+| 目标 | 日期 | 交付物 |
+|------|------|--------|
+| Windows Alpha | Week 2 末 | Windows 64-bit 构建 |
+| macOS Alpha | Week 4 末 | macOS x86_64/arm64 构建 |
+| 多平台 Beta | Week 5 末 | 跨平台 Beta 发布 |
+| v0.3 正式版 | Week 6 末 | 完整跨平台支持 |
 
 ---
 

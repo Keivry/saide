@@ -1,19 +1,37 @@
 //! System-related utilities for GPU detection
+//!
+//! Cross-platform GPU detection supporting:
+//! - Linux: DRM sysfs, nvidia-smi, /proc/driver/nvidia
+//! - macOS: system_profiler, sysctl
+//! - Windows: DXGI (placeholder, needs windows-sys dependency)
 
-use {
-    std::{fs, path::Path, process::Command},
-    tracing::debug,
-};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuType {
     Nvidia,
     Intel,
     Amd,
+    Apple,    // Apple Silicon (macOS)
+    Software, // Software rendering fallback
     Unknown,
 }
 
-/// Detect current GPU type
+impl fmt::Display for GpuType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GpuType::Nvidia => write!(f, "NVIDIA"),
+            GpuType::Intel => write!(f, "Intel"),
+            GpuType::Amd => write!(f, "AMD"),
+            GpuType::Apple => write!(f, "Apple"),
+            GpuType::Software => write!(f, "Software"),
+            GpuType::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// Detect current GPU type (cross-platform)
+#[cfg(target_os = "linux")]
 pub fn detect_gpu() -> GpuType {
     // 1. Check for NVIDIA GPU
     if is_nvidia_gpu_available() {
@@ -25,12 +43,16 @@ pub fn detect_gpu() -> GpuType {
         return gpu;
     }
 
-    // 3. Unknown
     GpuType::Unknown
 }
 
-/// Check if NVIDIA GPU is available and being used
+#[cfg(target_os = "linux")]
 fn is_nvidia_gpu_available() -> bool {
+    use {
+        std::{fs, path::Path, process::Command},
+        tracing::debug,
+    };
+
     // Method 1: Check NVIDIA driver
     if Path::new("/proc/driver/nvidia/version").exists() {
         debug!("Detected NVIDIA driver via /proc");
@@ -50,19 +72,13 @@ fn is_nvidia_gpu_available() -> bool {
     }
 
     // Method 3: Check for NVIDIA render devices
-    for entry in fs::read_dir("/dev/dri")
-        .ok()
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with("renderD") {
-            // Check if this is NVIDIA device
-            if let Some(vendor) = get_device_vendor(&entry.path())
+    if let Ok(entries) = fs::read_dir("/dev/dri") {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with("renderD")
+                && let Some(vendor) = get_device_vendor(&entry.path())
                 && vendor == 0x10de
             {
-                // NVIDIA vendor ID
                 debug!("Detected NVIDIA GPU via DRM device");
                 return true;
             }
@@ -72,45 +88,43 @@ fn is_nvidia_gpu_available() -> bool {
     false
 }
 
-/// Detect Intel/AMD GPU via DRM
+#[cfg(target_os = "linux")]
 fn detect_drm_gpu() -> Option<GpuType> {
-    // Check all card devices
-    for entry in fs::read_dir("/sys/class/drm").ok()?.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
+    use {std::fs, tracing::debug};
 
-        // Skip non-card devices
-        if !name.to_string_lossy().starts_with("card") {
-            continue;
-        }
+    if let Ok(entries) = fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
 
-        // Skip card devices that are not physical GPU cards.
-        // The intent: only accept cardN where N starts with a digit (e.g. "card0",
-        // "card1-HDMI-A-1"). If the suffix after "card" is empty or starts with a
-        // non-digit, skip it.
-        if let Some(card_name) = name.to_string_lossy().strip_prefix("card") {
-            // Check first character exists and is a digit; if not, skip.
-            if !card_name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            if !name.to_string_lossy().starts_with("card") {
                 continue;
             }
-        }
 
-        let vendor_path = path.join("device/vendor");
-        if let Ok(vendor_str) = fs::read_to_string(&vendor_path)
-            && let Ok(vendor) = u32::from_str_radix(vendor_str.trim().trim_start_matches("0x"), 16)
-        {
-            debug!("Found GPU vendor: 0x{:04x} at {:?}", vendor, path);
+            if let Some(card_name) = name.to_string_lossy().strip_prefix("card")
+                && !card_name.chars().next().is_some_and(|c| c.is_ascii_digit())
+            {
+                continue;
+            }
 
-            match vendor {
-                0x8086 => {
-                    debug!("Detected Intel GPU");
-                    return Some(GpuType::Intel);
+            let vendor_path = path.join("device/vendor");
+            if let Ok(vendor_str) = fs::read_to_string(&vendor_path)
+                && let Ok(vendor) =
+                    u32::from_str_radix(vendor_str.trim().trim_start_matches("0x"), 16)
+            {
+                debug!("Found GPU vendor: 0x{:04x} at {:?}", vendor, path);
+
+                match vendor {
+                    0x8086 => {
+                        debug!("Detected Intel GPU");
+                        return Some(GpuType::Intel);
+                    }
+                    0x1002 => {
+                        debug!("Detected AMD GPU");
+                        return Some(GpuType::Amd);
+                    }
+                    _ => {}
                 }
-                0x1002 => {
-                    debug!("Detected AMD GPU");
-                    return Some(GpuType::Amd);
-                }
-                _ => {}
             }
         }
     }
@@ -118,30 +132,96 @@ fn detect_drm_gpu() -> Option<GpuType> {
     None
 }
 
-/// Get device vendor ID from render device
-fn get_device_vendor(device_path: &Path) -> Option<u32> {
-    // Extract device number from renderDXXX
+#[cfg(target_os = "linux")]
+fn get_device_vendor(device_path: &std::path::Path) -> Option<u32> {
+    use std::fs;
+
     let name = device_path.file_name()?.to_string_lossy();
     let num_str = name.strip_prefix("renderD")?;
     let device_num: u32 = num_str.parse().ok()?;
 
-    // Map renderDXXX to cardY
-    let card_num = device_num - 128; // renderD128 -> card0
-
+    let card_num = device_num - 128;
     let vendor_path = format!("/sys/class/drm/card{}/device/vendor", card_num);
     let vendor_str = fs::read_to_string(&vendor_path).ok()?;
 
     u32::from_str_radix(vendor_str.trim().trim_start_matches("0x"), 16).ok()
 }
 
+/// macOS GPU detection using system_profiler and sysctl
+#[cfg(target_os = "macos")]
+pub fn detect_gpu() -> GpuType {
+    use std::process::Command;
+
+    // Method 1: Check for Apple Silicon via sysctl
+    if let Ok(output) = Command::new("sysctl")
+        .arg("machdep.cpu.brand_string")
+        .output()
+    {
+        let brand = String::from_utf8_lossy(&output.stdout);
+        if brand.contains("Apple")
+            || brand.contains("M1")
+            || brand.contains("M2")
+            || brand.contains("M3")
+        {
+            return GpuType::Apple;
+        }
+    }
+
+    // Method 2: Check for Intel/AMD GPU via system_profiler
+    if let Ok(output) = Command::new("system_profiler")
+        .arg("SPDisplaysDataType")
+        .output()
+    {
+        let info = String::from_utf8_lossy(&output.stdout);
+        if info.contains("Intel") {
+            return GpuType::Intel;
+        }
+        if info.contains("AMD") || info.contains("NVIDIA") {
+            return GpuType::Amd;
+        }
+    }
+
+    GpuType::Unknown
+}
+
+/// Windows GPU detection (placeholder - requires windows-sys dependency)
+#[cfg(target_os = "windows")]
+pub fn detect_gpu() -> GpuType {
+    // TODO: Implement proper DXGI detection when windows-sys is added
+    // For now, return Unknown as placeholder
+    GpuType::Unknown
+}
+
+/// Get GPU display name for UI
+pub fn gpu_display_name() -> String { detect_gpu().to_string() }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_detect_gpu() {
+    fn test_gpu_type_display() {
+        assert_eq!(format!("{}", GpuType::Nvidia), "NVIDIA");
+        assert_eq!(format!("{}", GpuType::Intel), "Intel");
+        assert_eq!(format!("{}", GpuType::Apple), "Apple");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_detect_gpu_linux() {
         let gpu = detect_gpu();
-        println!("Detected GPU: {:?}", gpu);
+        println!("Detected GPU on Linux: {:?}", gpu);
         assert_ne!(gpu, GpuType::Unknown);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_detect_gpu_macos() {
+        let gpu = detect_gpu();
+        println!("Detected GPU on macOS: {:?}", gpu);
+        assert!(matches!(
+            gpu,
+            GpuType::Apple | GpuType::Intel | GpuType::Amd | GpuType::Unknown
+        ));
     }
 }

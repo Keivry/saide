@@ -13,9 +13,49 @@ use {
         util::frame::video::Video as VideoFrame,
     },
     ffmpeg_next as ffmpeg,
-    std::ptr,
+    std::{fs, path::PathBuf, ptr},
     tracing::{debug, info, trace, warn},
 };
+
+/// Find VAAPI-compatible DRM device path
+/// Dynamically enumerates /dev/dri to find a render node
+fn find_vaapi_device() -> Option<PathBuf> {
+    // Standard render device paths
+    let standard_paths = [
+        PathBuf::from("/dev/dri/renderD128"),
+        PathBuf::from("/dev/dri/renderD129"),
+        PathBuf::from("/dev/dri/renderD130"),
+        PathBuf::from("/dev/dri/renderD131"),
+    ];
+
+    // Check standard paths first (fast path)
+    for path in &standard_paths {
+        if path.exists() {
+            debug!("Found VAAPI device at standard path: {}", path.display());
+            return Some(path.to_path_buf());
+        }
+    }
+
+    // Fallback: dynamically enumerate /dev/dri
+    if let Ok(entries) = fs::read_dir("/dev/dri") {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+
+            // Look for renderD* devices
+            if name_str.starts_with("renderD") {
+                let path = entry.path();
+                if path.exists() {
+                    debug!("Found VAAPI device via enumeration: {}", path.display());
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    debug!("No VAAPI device found in /dev/dri");
+    None
+}
 
 pub struct VaapiDecoder {
     decoder: ffmpeg::decoder::Video,
@@ -47,13 +87,34 @@ impl VaapiDecoder {
 
         // Create VAAPI device context
         let mut hw_device_ctx: *mut ffmpeg::sys::AVBufferRef = ptr::null_mut();
-        let device_path = c"/dev/dri/renderD128".as_ptr();
+
+        // Dynamically find VAAPI device path
+        let device_path = match find_vaapi_device() {
+            Some(path) => path,
+            None => {
+                return Err(VideoError::InitializationError(
+                    "No VAAPI device found in /dev/dri. Ensure DRM drivers are loaded.".to_string(),
+                ));
+            }
+        };
+
+        let device_path_cstr = match device_path.to_str() {
+            Some(s) => s,
+            None => {
+                return Err(VideoError::InitializationError(
+                    "VAAPI device path contains invalid UTF-8".to_string(),
+                ));
+            }
+        };
+
+        info!("Using VAAPI device: {}", device_path.display());
 
         unsafe {
+            // FFmpeg expects a null-terminated C string
             let ret = ffmpeg::sys::av_hwdevice_ctx_create(
                 &mut hw_device_ctx,
                 ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
-                device_path,
+                device_path_cstr.as_ptr() as *const std::os::raw::c_char,
                 ptr::null_mut(),
                 0,
             );
@@ -64,7 +125,7 @@ impl VaapiDecoder {
             }
         }
 
-        info!("VAAPI device context created: /dev/dri/renderD128");
+        info!("VAAPI device context created successfully");
 
         // Find H.264 decoder
         let codec = ffmpeg::decoder::find(codec::Id::H264).ok_or_else(|| {
