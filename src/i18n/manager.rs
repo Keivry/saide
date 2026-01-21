@@ -6,22 +6,78 @@
 //! (in release mode). The manager automatically detects the system locale,
 //! allows switching between available locales, and provides methods to retrieve
 //! localized messages with optional Fluent arguments.
+//!
+//! ## Performance Optimization
+//!
+//! To avoid repeated lookups and formatting during egui's frequent redraws,
+//! this module implements a thread-local LRU cache for translation results.
+//! The cache is automatically invalidated when the locale changes.
 
 use {
-    fluent_bundle::{FluentArgs, FluentResource, bundle::FluentBundle},
+    fluent_bundle::{bundle::FluentBundle, FluentArgs, FluentResource},
     intl_memoizer::concurrent::IntlLangMemoizer,
+    lru::LruCache,
     once_cell::sync::Lazy,
     parking_lot::RwLock,
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        cell::RefCell,
+        collections::HashMap,
+        num::NonZeroUsize,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
+    },
     unic_langid::LanguageIdentifier,
 };
 
 type ThreadSafeFluentBundle = FluentBundle<FluentResource, IntlLangMemoizer>;
 
+/// Maximum number of cached translations per thread
+const CACHE_CAPACITY: usize = 256;
+
+// Thread-local cache for translation results
+thread_local! {
+    static TRANSLATION_CACHE: RefCell<TranslationCache> = RefCell::new(TranslationCache::new());
+}
+
+/// Translation cache with generation counter for invalidation
+struct TranslationCache {
+    cache: LruCache<String, String>,
+    generation: u64,
+}
+
+impl TranslationCache {
+    fn new() -> Self {
+        Self {
+            cache: LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap()),
+            generation: 0,
+        }
+    }
+
+    fn get(&mut self, key: &str, current_gen: u64) -> Option<String> {
+        if self.generation != current_gen {
+            self.cache.clear();
+            self.generation = current_gen;
+            return None;
+        }
+        self.cache.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: String, value: String, current_gen: u64) {
+        if self.generation != current_gen {
+            self.cache.clear();
+            self.generation = current_gen;
+        }
+        self.cache.put(key, value);
+    }
+}
+
 pub struct I18nManager {
     source: Box<dyn super::FtlSource + Send + Sync>,
     bundles: HashMap<String, ThreadSafeFluentBundle>,
     current_locale: String,
+    generation: Arc<AtomicU64>,
 }
 
 impl I18nManager {
@@ -73,6 +129,7 @@ impl I18nManager {
             source,
             bundles,
             current_locale,
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -127,12 +184,14 @@ impl I18nManager {
 
         if self.bundles.contains_key(&normalized) {
             self.current_locale = normalized;
+            self.invalidate_cache();
             return;
         }
 
         for key in self.bundles.keys() {
             if key.starts_with(&normalized[..2]) {
                 self.current_locale = key.clone();
+                self.invalidate_cache();
                 return;
             }
         }
@@ -141,6 +200,7 @@ impl I18nManager {
         for key in self.bundles.keys() {
             if key.starts_with(prefix) {
                 self.current_locale = key.clone();
+                self.invalidate_cache();
                 return;
             }
         }
@@ -167,6 +227,7 @@ impl I18nManager {
                 }
 
                 self.bundles.insert(locale.to_string(), bundle);
+                self.invalidate_cache();
                 tracing::info!("Reloaded locale: {}", locale);
             }
             Err(e) => {
@@ -179,13 +240,31 @@ impl I18nManager {
         self.bundles.keys().map(|s| s.as_str()).collect()
     }
 
+    fn invalidate_cache(&self) { self.generation.fetch_add(1, Ordering::Relaxed); }
+
+    fn current_generation(&self) -> u64 { self.generation.load(Ordering::Relaxed) }
+
     pub fn get(&self, key: &str) -> String { self.get_with_fluent_args(key, None) }
 
     pub fn get_with_fluent_args(&self, key: &str, args: Option<&FluentArgs>) -> String {
+        let cache_key = if let Some(args) = args {
+            format!("{}:{:?}", key, args)
+        } else {
+            key.to_string()
+        };
+
+        let current_gen = self.current_generation();
+
+        if let Some(cached) =
+            TRANSLATION_CACHE.with(|cache| cache.borrow_mut().get(&cache_key, current_gen))
+        {
+            return cached;
+        }
+
         let bundle = self.current_bundle();
         let mut errors = vec![];
 
-        bundle
+        let result = bundle
             .get_message(key)
             .and_then(|msg| msg.value())
             .map(|pattern| {
@@ -197,7 +276,15 @@ impl I18nManager {
 
                 result.into_owned()
             })
-            .unwrap_or_else(|| key.to_string())
+            .unwrap_or_else(|| key.to_string());
+
+        TRANSLATION_CACHE.with(|cache| {
+            cache
+                .borrow_mut()
+                .insert(cache_key, result.clone(), current_gen);
+        });
+
+        result
     }
 
     pub fn is_chinese(&self) -> bool { self.current_locale.starts_with("zh") }
