@@ -1051,6 +1051,22 @@ impl eframe::App for SAideApp {
                         .scrcpy_coords_mut()
                         .update_video_size(new_dimensions.0 as u16, new_dimensions.1 as u16);
 
+                    if let Some(sender) = &self.app_state.control_sender {
+                        sender.update_screen_size(new_dimensions.0 as u16, new_dimensions.1 as u16);
+                        debug!(
+                            "Updated ControlSender screen size to {}x{}",
+                            new_dimensions.0, new_dimensions.1
+                        );
+                    }
+
+                    if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper {
+                        keyboard_mapper.apply_active_profile();
+                        debug!(
+                            "Reapplied keyboard mappings for new video resolution: {}x{}",
+                            new_dimensions.0, new_dimensions.1
+                        );
+                    }
+
                     // Mark UI as initialized
                     self.ui_state.set_ui_initialized();
                 }

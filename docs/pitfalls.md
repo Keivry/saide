@@ -4,6 +4,84 @@
 
 ---
 
+## 坐标系统陷阱 (P1 优先级)
+
+> **2026-01-22 更新**: 修复按键映射在设备旋转后坐标错误的 bug
+
+### ✅ FIXED: ControlSender 分辨率未同步导致按键坐标错误
+
+**位置**: `src/saide/ui/saide.rs:1049-1070` (已修复)  
+**问题**: 设备旋转导致视频分辨率变化,但 `ControlSender` 的 `screen_size` 未更新,导致按键映射坐标计算错误
+
+**症状**:
+- Gentoo + KDE Plasma 6: 正常工作
+- Ubuntu 22.04 + GNOME 42: 按键发送但设备无响应
+- 日志显示坐标错误:
+  - 正常: `ScrcpyPos(1186, 528)` (对应横屏 1280x576)
+  - 异常: `ScrcpyPos(534, 1173)` (使用竖屏 576x1280 计算)
+
+**根本原因**:
+```rust
+// KeyboardMapper.apply_active_profile() 使用 ControlSender 的 screen_size
+let (video_width, video_height) = self.sender.get_screen_size();  // ← 旧分辨率!
+
+// 坐标计算
+x = 0.9275 * video_width   // 0.9275 * 576 = 534  (错误!)
+y = 0.654 * video_height   // 0.654 * 1280 = 837  (错误!)
+
+// 正确应该是:
+// x = 0.9275 * 1280 = 1187
+// y = 0.654 * 576 = 377
+```
+
+**为什么 Gentoo 正常,Ubuntu 异常?**
+
+`ControlSender.update_screen_size()` 只在**鼠标事件处理时**被调用:
+```rust
+// src/saide/ui/saide.rs:597-600, 638-641
+fn process_mouse_button_event(...) {
+    sender.update_screen_size(...);  // ✅ 鼠标事件触发频繁
+}
+```
+
+- **Gentoo**: 用户可能移动了鼠标 → 触发 `update_screen_size()` → 按键坐标正确
+- **Ubuntu**: 未移动鼠标 → `ControlSender` 仍使用旧分辨率 → 按键坐标错误
+
+**修复后**:
+```rust
+// src/saide/ui/saide.rs:1049-1070
+// 视频分辨率变化时
+self.app_state.scrcpy_coords_mut()
+    .update_video_size(new_dimensions.0 as u16, new_dimensions.1 as u16);
+
+// ✅ 同步更新 ControlSender 的 screen_size
+if let Some(sender) = &self.app_state.control_sender {
+    sender.update_screen_size(new_dimensions.0 as u16, new_dimensions.1 as u16);
+}
+
+// ✅ 重新应用按键映射,使用新分辨率计算坐标
+if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper {
+    keyboard_mapper.apply_active_profile();
+}
+```
+
+**教训**:
+1. **状态同步陷阱**: 同一信息(视频分辨率)存储在多处时,必须确保所有副本同步更新
+   - `ScrcpyCoordSys.video_width/height`
+   - `ControlSender.screen_size`
+   - `KeyboardMapper.scrcpy_mappings` (依赖前两者)
+2. **隐式依赖**: `update_screen_size()` 在鼠标事件中调用,隐式假设"用户会移动鼠标",纯键盘操作时失效
+3. **跨平台差异**: 用户行为习惯(Gentoo 用户可能更常用鼠标)导致 bug 在不同环境下表现不同
+4. **调试技巧**: 当坐标值明显错误时,反推分辨率可快速定位问题根源
+   - `534 / 0.9275 = 576` → 立即发现使用了竖屏宽度
+
+**相关代码**:
+- 坐标计算: `src/controller/keyboard.rs:362-366`
+- ControlSender: `src/controller/control_sender.rs:27-41`
+- 分辨率更新: `src/saide/ui/saide.rs:1036-1070`
+
+---
+
 ## 并发安全陷阱 (P0 优先级)
 
 > **2026-01-16 更新**: 修复音频播放器线程安全 bug
