@@ -106,6 +106,12 @@ pub struct GPUConfig {
 
     #[serde(default)]
     pub backend: GpuBackend,
+
+    /// Enable hardware decoding (VAAPI/NVDEC)
+    /// true: auto-detect and use hardware decoder (default)
+    /// false: force software decoder
+    #[serde(default = "default_true")]
+    pub hwdecode: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

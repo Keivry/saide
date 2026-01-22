@@ -39,7 +39,7 @@ fn main() -> Result<()> {
     info!("Video resolution: {}x{}", width, height);
 
     info!("Initializing decoder with auto-detection...");
-    let mut decoder = AutoDecoder::new(width, height)?;
+    let mut decoder = AutoDecoder::new(width, height, true)?;
     info!("Using {} decoder", decoder.decoder_type());
 
     let mut count = 0;

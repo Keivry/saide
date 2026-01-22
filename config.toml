@@ -28,6 +28,10 @@ stay_awake = true
 [gpu]
 vsync = false
 backend = "VULKAN"
+# Enable hardware decoding (VAAPI/NVDEC)
+# true: auto-detect and use hardware decoder (default)
+# false: force software decoder
+hwdecode = true
 
 [input]
 # Long press duration in milliseconds (default: 300ms)

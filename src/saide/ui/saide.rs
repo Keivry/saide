@@ -74,6 +74,7 @@ impl SAideApp {
         let max_fps = config.scrcpy.video.max_fps;
         let audio_buffer_frames = config.scrcpy.audio.buffer_frames;
         let audio_ring_capacity = config.scrcpy.audio.ring_capacity;
+        let hwdecode = config.gpu.hwdecode;
 
         let cancel_token = tokio_util::sync::CancellationToken::new();
 
@@ -90,6 +91,7 @@ impl SAideApp {
                 cancel_token.clone(),
                 audio_buffer_frames,
                 audio_ring_capacity,
+                hwdecode,
             ),
             mapping_config_window: MappingConfigWindow::new(),
             app_state: AppState::new(serial.to_owned(), cancel_token),

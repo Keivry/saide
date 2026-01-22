@@ -18,7 +18,17 @@ pub enum AutoDecoder {
 
 impl AutoDecoder {
     /// Create decoder with automatic GPU detection
-    pub fn new(width: u32, height: u32) -> Result<Self> {
+    ///
+    /// # Arguments
+    /// * `width` - Video width
+    /// * `height` - Video height
+    /// * `hwdecode` - Enable hardware decoding (VAAPI/NVDEC). If false, force software decoder
+    pub fn new(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
+        if !hwdecode {
+            info!("Hardware decoding disabled by config, using software decoder");
+            return Ok(Self::Software(H264Decoder::new(width, height)?));
+        }
+
         let gpu_type = detect_gpu();
         info!("Detected GPU type: {gpu_type:?}");
 
@@ -47,7 +57,6 @@ impl AutoDecoder {
                 info!(
                     "Using software decoder (Apple Silicon - VideoToolbox decoder not yet implemented)"
                 );
-                // TODO: Implement VideoToolbox decoder for macOS
                 Ok(Self::Software(H264Decoder::new(width, height)?))
             }
             GpuType::Software => {

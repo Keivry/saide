@@ -13,9 +13,12 @@ use {
             DecodedFrame,
             Nv12RenderResources,
             OpusDecoder,
+            Pixel,
+            RgbaRenderResources,
             VideoDecoder,
             extract_resolution_from_stream,
             new_nv12_render_callback,
+            new_rgba_render_callback,
         },
         error::Result,
         profiler::{LatencyProfiler, LatencyStats},
@@ -166,6 +169,9 @@ pub struct StreamPlayer {
 
     /// Audio ring buffer capacity in samples (configurable)
     audio_ring_capacity: usize,
+
+    /// Hardware decoding enabled
+    hwdecode: bool,
 }
 
 impl StreamPlayer {
@@ -174,15 +180,25 @@ impl StreamPlayer {
         cancel_token: CancellationToken,
         audio_buffer_frames: u32,
         audio_ring_capacity: usize,
+        hwdecode: bool,
     ) -> Self {
-        // Register NV12 render resources
+        // Register render resources (both NV12 and RGBA)
         if let Some(wgpu_state) = cc.wgpu_render_state.as_ref() {
-            let resources = Nv12RenderResources::new(&wgpu_state.device, wgpu_state.target_format);
+            let nv12_resources =
+                Nv12RenderResources::new(&wgpu_state.device, wgpu_state.target_format);
             wgpu_state
                 .renderer
                 .write()
                 .callback_resources
-                .insert(resources);
+                .insert(nv12_resources);
+
+            let rgba_resources =
+                RgbaRenderResources::new(&wgpu_state.device, wgpu_state.target_format);
+            wgpu_state
+                .renderer
+                .write()
+                .callback_resources
+                .insert(rgba_resources);
         }
 
         let (event_tx, event_rx) = bounded(PLAYER_EVENT_BUFFER_SIZE);
@@ -207,6 +223,7 @@ impl StreamPlayer {
             cancel_token,
             audio_buffer_frames,
             audio_ring_capacity,
+            hwdecode,
         }
     }
 
@@ -229,6 +246,7 @@ impl StreamPlayer {
         let latency_stats = self.latency_stats.clone();
         let audio_buffer_frames = self.audio_buffer_frames;
         let audio_ring_capacity = self.audio_ring_capacity;
+        let hwdecode = self.hwdecode;
         let event_tx_clone = event_tx.clone();
         self.stream_thread = Some(thread::spawn(move || {
             if cancel_token.is_cancelled() {
@@ -246,6 +264,7 @@ impl StreamPlayer {
                 StreamWorkerConfig {
                     audio_buffer_frames,
                     audio_ring_capacity,
+                    hwdecode,
                 },
             ) {
                 let is_cancelled = e.is_cancelled();
@@ -379,11 +398,28 @@ impl StreamPlayer {
 
             self.video_rect = rect;
 
-            // Create NV12 render callback with rotation
-            let callback = new_nv12_render_callback(frame.clone(), self.video_rotation);
-
-            ui.painter()
-                .add(egui_wgpu::Callback::new_paint_callback(rect, callback));
+            // Create render callback based on pixel format
+            match frame.format {
+                Pixel::NV12 => {
+                    let callback = new_nv12_render_callback(frame.clone(), self.video_rotation);
+                    ui.painter()
+                        .add(egui_wgpu::Callback::new_paint_callback(rect, callback));
+                }
+                Pixel::RGBA => {
+                    let callback = new_rgba_render_callback(frame.clone(), self.video_rotation);
+                    ui.painter()
+                        .add(egui_wgpu::Callback::new_paint_callback(rect, callback));
+                }
+                _ => {
+                    warn!(
+                        "Unsupported pixel format: {:?}, falling back to NV12",
+                        frame.format
+                    );
+                    let callback = new_nv12_render_callback(frame.clone(), self.video_rotation);
+                    ui.painter()
+                        .add(egui_wgpu::Callback::new_paint_callback(rect, callback));
+                }
+            }
 
             ui.allocate_rect(rect, egui::Sense::click())
         } else {
@@ -516,6 +552,7 @@ impl Drop for StreamPlayer {
 struct StreamWorkerConfig {
     audio_buffer_frames: u32,
     audio_ring_capacity: usize,
+    hwdecode: bool,
 }
 
 /// Stream worker thread
@@ -546,6 +583,7 @@ fn stream_worker(
         height,
         config.audio_buffer_frames,
         config.audio_ring_capacity,
+        config.hwdecode,
     )?;
     let mut last_resolution = (width, height);
 
@@ -613,8 +651,9 @@ impl DecoderManager {
         height: u32,
         audio_buffer_frames: u32,
         audio_ring_capacity: usize,
+        hwdecode: bool,
     ) -> Result<Self> {
-        let video_decoder = AutoDecoder::new(width, height)?;
+        let video_decoder = AutoDecoder::new(width, height, hwdecode)?;
         let audio_decoder = OpusDecoder::new(48000, 2)?;
         let audio_player = AudioPlayer::new(48000, 2, audio_buffer_frames, audio_ring_capacity)?;
         let av_sync = AVSync::new(20);
