@@ -17,6 +17,7 @@ mod windows;
 #[cfg(target_os = "macos")]
 mod macos;
 
+use error::Result;
 #[cfg(target_os = "macos")]
 pub use macos::VtDecoder;
 #[cfg(target_os = "windows")]
@@ -25,6 +26,7 @@ pub use {
     audio::{AudioDecoder, AudioPlayer, DecodedAudio, OpusDecoder},
     auto::AutoDecoder,
     error::VideoError,
+    ffmpeg_next::format::Pixel,
     h264::H264Decoder,
     h264_parser::extract_resolution_from_stream,
     nv12_render::{Nv12RenderResources, new_nv12_render_callback},
@@ -32,7 +34,6 @@ pub use {
     rgba_render::{RgbaRenderResources, new_rgba_render_callback},
     vaapi::VaapiDecoder,
 };
-use {error::Result, ffmpeg_next::format::Pixel};
 
 /// Decoded video frame
 #[derive(Debug)]
@@ -75,7 +76,7 @@ pub struct DecodedFrame {
 ///
 /// # Example
 /// ```ignore
-/// let mut decoder = AutoDecoder::new(1920, 1080)?;
+/// let mut decoder = AutoDecoder::new(1920, 1080, true)?;
 /// let frame = decoder.decode(&packet_data, pts)?;
 /// if let Some(frame) = frame {
 ///     // Render frame
