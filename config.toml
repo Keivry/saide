@@ -4,6 +4,10 @@ mouse_enabled = true
 init_timeout = 15
 indicator = true
 indicator_position = "bottom-left"
+# Intelligent window resizing: automatically scales down when video exceeds screen bounds
+# true: uses preset resolution tiers to fit window within screen (recommended for GNOME/Wayland)
+# false: uses video native resolution (may be constrained by window manager)
+smart_window_resize = true
 
 [scrcpy.video]
 bit_rate = "24M"

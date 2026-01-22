@@ -229,12 +229,93 @@ impl SAideApp {
     }
 
     /// Resize the application window to match video dimensions
+    /// Intelligently scales down when video exceeds screen bounds
     fn resize(&mut self, ctx: &egui::Context) {
-        let (w, h) = self.player.video_dimensions();
+        let (video_w, video_h) = self.player.video_dimensions();
+
+        let config = self.config_state.config();
+        let smart_resize = config.general.smart_window_resize;
+
+        let (window_w, window_h) = if smart_resize {
+            let screen_rect = ctx.input(|i| i.viewport().monitor_size);
+
+            if let Some(monitor_size) = screen_rect {
+                let screen_w = monitor_size.x;
+                let screen_h = monitor_size.y;
+
+                Self::calculate_window_size(video_w, video_h, screen_w, screen_h)
+            } else {
+                (video_w, video_h)
+            }
+        } else {
+            (video_w, video_h)
+        };
+
+        debug!(
+            "Resizing window to {}x{} (video: {}x{}, smart_resize: {})",
+            window_w, window_h, video_w, video_h, smart_resize
+        );
+
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-            w as f32 + Toolbar::width(),
-            h as f32,
+            window_w as f32 + Toolbar::width(),
+            window_h as f32,
         )));
+    }
+
+    /// Calculate appropriate window size based on video and screen dimensions
+    /// Returns (width, height) that fits within screen bounds
+    fn calculate_window_size(
+        video_w: u32,
+        video_h: u32,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> (u32, u32) {
+        const SCREEN_MARGIN_RATIO: f32 = 0.9;
+
+        let usable_w = (screen_w * SCREEN_MARGIN_RATIO) as u32;
+        let usable_h = (screen_h * SCREEN_MARGIN_RATIO) as u32;
+
+        if video_w <= usable_w && video_h <= usable_h {
+            return (video_w, video_h);
+        }
+
+        let video_long = video_w.max(video_h);
+        let video_short = video_w.min(video_h);
+        let is_landscape = video_w >= video_h;
+
+        for &tier in crate::constant::VIDEO_RESOLUTION_TIERS {
+            if tier >= video_long {
+                continue;
+            }
+
+            let scale = tier as f32 / video_long as f32;
+            let scaled_long = tier;
+            let scaled_short = (video_short as f32 * scale) as u32;
+
+            let (candidate_w, candidate_h) = if is_landscape {
+                (scaled_long, scaled_short)
+            } else {
+                (scaled_short, scaled_long)
+            };
+
+            if candidate_w <= usable_w && candidate_h <= usable_h {
+                return (candidate_w, candidate_h);
+            }
+        }
+
+        let smallest_tier = crate::constant::VIDEO_RESOLUTION_TIERS
+            .last()
+            .copied()
+            .unwrap_or(640);
+        let scale = smallest_tier as f32 / video_long as f32;
+        let scaled_long = smallest_tier;
+        let scaled_short = (video_short as f32 * scale) as u32;
+
+        if is_landscape {
+            (scaled_long, scaled_short)
+        } else {
+            (scaled_short, scaled_long)
+        }
     }
 
     /// Rotate video by 90 degrees clockwise

@@ -1489,4 +1489,149 @@ if linesize != expected_stride {
 - [FFmpeg AVFrame linesize 文档](https://ffmpeg.org/doxygen/trunk/structAVFrame.html#a2c5d080a18c4ba0af9c8da4d34f9e3e8)
 - commit `06abfd0`: VAAPI NV12 linesize 修复
 
+---
 
+## 窗口管理陷阱 (P1 优先级)
+
+> **2026-01-22 更新**: 修复 GNOME 等桌面环境窗口大小限制问题
+
+### ✅ FIXED: WM 限制导致窗口无法按视频分辨率调整
+
+**位置**: `src/saide/ui/saide.rs:231-311` (已修复)  
+**问题**: GNOME/Wayland 等 WM 会限制窗口最大尺寸,直接按视频分辨率调整窗口可能失败
+
+**症状**:
+- 视频分辨率 1080×2400 时,窗口无法完全显示
+- WM 强制缩小窗口至屏幕可用范围
+- 视频显示区域被裁剪或压缩变形
+
+**修复前**:
+```rust
+fn resize(&mut self, ctx: &egui::Context) {
+    let (w, h) = self.player.video_dimensions();
+    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+        w as f32 + Toolbar::width(),
+        h as f32,
+    )));
+}
+```
+
+**修复后**:
+```rust
+fn resize(&mut self, ctx: &egui::Context) {
+    let (video_w, video_h) = self.player.video_dimensions();
+    let config = self.config_state.config();
+    let smart_resize = config.general.smart_window_resize;
+    
+    let (window_w, window_h) = if smart_resize {
+        let screen_rect = ctx.input(|i| i.viewport().monitor_size);
+        
+        if let Some(monitor_size) = screen_rect {
+            Self::calculate_window_size(
+                video_w, video_h,
+                monitor_size.x, monitor_size.y
+            )
+        } else {
+            (video_w, video_h)
+        }
+    } else {
+        (video_w, video_h)
+    };
+    
+    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(...));
+}
+
+fn calculate_window_size(
+    video_w: u32, video_h: u32,
+    screen_w: f32, screen_h: f32,
+) -> (u32, u32) {
+    const SCREEN_MARGIN_RATIO: f32 = 0.9;
+    
+    let usable_w = (screen_w * SCREEN_MARGIN_RATIO) as u32;
+    let usable_h = (screen_h * SCREEN_MARGIN_RATIO) as u32;
+    
+    if video_w <= usable_w && video_h <= usable_h {
+        return (video_w, video_h);
+    }
+    
+    let video_long = video_w.max(video_h);
+    
+    for &tier in VIDEO_RESOLUTION_TIERS {
+        if tier >= video_long { continue; }
+        
+        let scale = tier as f32 / video_long as f32;
+        let (scaled_w, scaled_h) = /* 计算缩放后尺寸 */;
+        
+        if scaled_w <= usable_w && scaled_h <= usable_h {
+            return (scaled_w, scaled_h);
+        }
+    }
+    
+    /* 使用最小档位缩放 */
+}
+```
+
+**核心策略**:
+1. **预置分辨率档位** (定义在 `constant.rs`):
+   ```rust
+   pub const VIDEO_RESOLUTION_TIERS: &[u32] = &[
+       3840, // 4K UHD
+       2560, // QHD / 1440p
+       1920, // FHD / 1080p
+       1600, // HD+
+       1280, // HD / 720p
+       960,  // qHD
+       800,  // SVGA
+       640,  // VGA
+       480,  // HVGA
+   ];
+   ```
+
+2. **智能档位选择**:
+   - 视频两个维度都 ≤ 屏幕 90% → 使用原始分辨率
+   - 某维度超出 → 向下查找最近档位,按比例缩放
+   - 保证宽高比不变
+
+3. **配置开关** (`config.toml`):
+   ```toml
+   [general]
+   smart_window_resize = true  # 默认启用
+   ```
+
+**教训**:
+1. **不同桌面环境 WM 行为差异**:
+   - KDE Plasma: 允许窗口超出屏幕,用户自行滚动
+   - GNOME/Wayland: 强制限制窗口最大尺寸
+   - macOS: 限制窗口但允许全屏
+2. **egui 提供屏幕尺寸检测**: `ctx.input(|i| i.viewport().monitor_size)`
+3. **档位设计原则**:
+   - 覆盖常见分辨率(480p-4K)
+   - 降序排列便于搜索
+   - 使用长边值(适配横竖屏)
+4. **用户可控**: 提供配置开关,允许禁用智能缩放
+
+**性能影响**:
+- `calculate_window_size()` 仅在窗口调整时调用(旋转/首帧)
+- 档位查找 O(n),n=9 可忽略
+- 无额外内存开销
+
+**相关代码**:
+- 常量定义: `src/constant.rs:64-76`
+- 窗口调整: `src/saide/ui/saide.rs:231-311`
+- 配置项: `src/config/mod.rs:143-148`
+
+**调试技巧**:
+```bash
+# 查看实际使用的窗口尺寸
+RUST_LOG=debug cargo run 2>&1 | grep "InnerSize"
+
+# 测试不同屏幕尺寸
+# 1. 修改 monitor_size mock (开发环境)
+# 2. 实际在 1080p/4K 显示器测试
+```
+
+**已知限制**:
+- 多显示器环境可能获取到错误的显示器尺寸 (egui 限制)
+- Wayland 某些合成器可能不提供 monitor_size
+
+---

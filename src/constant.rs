@@ -59,3 +59,18 @@ pub const AUDIO_RING_CAPACITY: usize = 5760;
 /// Typical values: H.264 keyframe ~500KB, audio packet ~2KB
 /// This limit allows 4K video keyframes while preventing memory exhaustion
 pub const MAX_PACKET_SIZE: usize = 10 * 1024 * 1024;
+
+/// Preset video resolution tiers (long edge in pixels)
+/// Used for intelligent window resizing when video exceeds screen bounds
+/// Format: sorted descending for efficient downsampling search
+pub const VIDEO_RESOLUTION_TIERS: &[u32] = &[
+    3840, // 4K UHD
+    2560, // QHD / 1440p
+    1920, // FHD / 1080p
+    1600, // HD+
+    1280, // HD / 720p
+    960,  // qHD
+    800,  // SVGA
+    640,  // VGA
+    480,  // HVGA
+];

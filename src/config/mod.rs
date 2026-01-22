@@ -139,6 +139,12 @@ pub struct GeneralConfig {
     #[serde(default = "default_window_height")]
     pub window_height: u32,
 
+    /// Enable intelligent window resizing when video exceeds screen bounds
+    /// If true, automatically scales down window size using preset resolution tiers
+    /// If false, uses video native resolution (may be constrained by WM)
+    #[serde(default = "default_true")]
+    pub smart_window_resize: bool,
+
     /// Network bind address for scrcpy server connection
     /// "127.0.0.1" for IPv4 localhost, "[::1]" for IPv6 localhost
     #[serde(default = "default_bind_address")]
@@ -161,6 +167,7 @@ impl Default for GeneralConfig {
             indicator_position: IndicatorPosition::default(),
             window_width: default_window_width(),
             window_height: default_window_height(),
+            smart_window_resize: default_true(),
             bind_address: default_bind_address(),
             scrcpy_server: default_scrcpy_server_path(),
         }
