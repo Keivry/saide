@@ -159,8 +159,41 @@ impl H264Decoder {
                             VideoError::DecodingError(format!("Failed to scale frame: {e:?}"))
                         })?;
 
-                        // Extract frame data
-                        let data = rgb_frame.data(0).to_vec();
+                        // RGBA data extraction with proper linesize handling
+                        let linesize = rgb_frame.stride(0);
+                        let width = self.width as usize;
+                        let height = self.height as usize;
+                        let bytes_per_pixel = 4;
+
+                        // Log linesize info (only once per resolution change)
+                        if self.last_decoded_dimensions != Some((self.width, self.height)) {
+                            info!(
+                                "RGBA frame layout: {}x{}, linesize={} (expected={})",
+                                width,
+                                height,
+                                linesize,
+                                width * bytes_per_pixel
+                            );
+                            self.last_decoded_dimensions = Some((self.width, self.height));
+                        }
+
+                        // Copy line by line to remove padding
+                        let expected_stride = width * bytes_per_pixel;
+                        let data = if linesize == expected_stride {
+                            // No padding - direct copy
+                            rgb_frame.data(0)[0..(width * height * bytes_per_pixel)].to_vec()
+                        } else {
+                            // Has padding - copy line by line
+                            let mut data = Vec::with_capacity(width * height * bytes_per_pixel);
+                            let src = rgb_frame.data(0);
+                            for row in 0..height {
+                                let start = row * linesize;
+                                let end = start + expected_stride;
+                                data.extend_from_slice(&src[start..end]);
+                            }
+                            data
+                        };
+
                         let pts = decoded.timestamp().unwrap_or(0);
 
                         frames.push(DecodedFrame {

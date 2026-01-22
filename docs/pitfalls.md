@@ -1213,5 +1213,202 @@ journalctl -f | grep "Audio player"
 **历史变更**:
 ```
 Phase 1: 128 frames (2.67ms) - 稳定优先
-Phase 3: 64 frames (1.33ms)  - 低延迟优先，可配置回退
+Phase 3: 64 frames (1.33ms)  - 低延迟优先,可配置回退
 ```
+
+---
+
+## FFI 互操作陷阱 (P1 优先级)
+
+> **2026-01-22 更新**: 修复 VAAPI 设备路径传递给 FFmpeg 时出现乱码
+
+### ✅ FIXED: Rust &str 传给 C API 必须转换为 CString
+
+**位置**: `src/decoder/vaapi.rs:117` (已修复)  
+**问题**: 直接使用 `as_ptr()` 传递 Rust `&str` 给 FFmpeg C API,导致设备路径后出现乱码
+
+**修复前**:
+```rust
+// ❌ 错误示例: &str 不保证 null-terminated
+let device_path_cstr = device_path.to_str().unwrap();
+unsafe {
+    ffmpeg::sys::av_hwdevice_ctx_create(
+        &mut hw_device_ctx,
+        ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
+        device_path_cstr.as_ptr() as *const std::os::raw::c_char, // ❌ 未 null-terminated
+        ptr::null_mut(),
+        0,
+    );
+}
+// 结果: FFmpeg 读到 "/dev/dri/renderD128<garbage>"
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例: CString 保证 null-terminated
+use std::ffi::CString;
+
+let device_path_cstr = device_path.to_str().unwrap();
+let device_path_c = CString::new(device_path_cstr).map_err(|e| {
+    VideoError::InitializationError(format!(
+        "VAAPI device path contains null byte: {e}"
+    ))
+})?;
+
+unsafe {
+    ffmpeg::sys::av_hwdevice_ctx_create(
+        &mut hw_device_ctx,
+        ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
+        device_path_c.as_ptr(),  // ✅ 保证 null-terminated
+        ptr::null_mut(),
+        0,
+    );
+}
+```
+
+**根本原因**:
+- Rust `&str` 是长度+指针表示,**不包含** null 结尾符 (`\0`)
+- C 字符串必须以 `\0` 结尾,否则读取时会越界访问内存
+- `CString::new()` 会自动追加 `\0`,并在路径包含内部 null 字节时返回错误
+
+**适用范围**:
+所有传递给 C FFI 的字符串参数都必须使用 `CString`:
+```rust
+// ✅ 正确模式
+use std::ffi::CString;
+
+// 1. 路径传递
+let path = CString::new("/dev/dri/renderD128").unwrap();
+unsafe_c_function(path.as_ptr());
+
+// 2. 错误处理 null 字节
+let user_input = "/path\0with\0nulls";
+match CString::new(user_input) {
+    Ok(c_str) => unsafe_c_function(c_str.as_ptr()),
+    Err(e) => eprintln!("Invalid input: {}", e),
+}
+
+// 3. 字符串生命周期
+let path = CString::new("/tmp/file").unwrap();
+// ❌ 错误: CString 被 drop,指针悬空
+unsafe_c_function(path.as_ptr());
+drop(path);
+
+// ✅ 正确: 确保 CString 活到 FFI 调用结束
+let path = CString::new("/tmp/file").unwrap();
+unsafe_c_function(path.as_ptr());
+// path 在这里才被 drop
+```
+
+**性能影响**:
+- `CString::new()` 会分配堆内存并复制字符串 → **一次性开销**,可忽略
+- 如果频繁调用,可考虑缓存 `CString` 对象
+
+**参考资料**:
+- [Rust FFI Guide: Strings](https://doc.rust-lang.org/nomicon/ffi.html#strings)
+- [std::ffi::CString](https://doc.rust-lang.org/std/ffi/struct.CString.html)
+
+---
+
+### ✅ FIXED: FFmpeg 帧数据直接拷贝导致颜色乱码
+
+**位置**: `src/decoder/h264.rs:163` (已修复)  
+**问题**: 软件解码器直接使用 `rgb_frame.data(0).to_vec()` 拷贝 RGBA 数据,未考虑 FFmpeg linesize padding
+
+**症状**:
+- VAAPI 失败 fallback 到软件解码时,画面颜色乱七八糟
+- 每行像素错位,产生斜纹/错位效果
+- 分辨率越大,错位越明显
+
+**修复前**:
+```rust
+// ❌ 错误示例: 直接拷贝包含 padding 的数据
+let mut rgb_frame = VideoFrame::empty();
+scaler.run(&decoded, &mut rgb_frame)?;
+
+let data = rgb_frame.data(0).to_vec(); // ❌ 包含 linesize padding
+
+frames.push(DecodedFrame {
+    width: self.width,
+    height: self.height,
+    data,  // ❌ 传给 wgpu 的数据行宽不匹配
+    pts,
+    format: Pixel::RGBA,
+});
+```
+
+**修复后**:
+```rust
+// ✅ 正确示例: 逐行拷贝移除 padding
+let linesize = rgb_frame.stride(0);
+let width = self.width as usize;
+let height = self.height as usize;
+let bytes_per_pixel = 4;
+
+let expected_stride = width * bytes_per_pixel;
+let data = if linesize == expected_stride {
+    // No padding - direct copy
+    rgb_frame.data(0)[0..(width * height * bytes_per_pixel)].to_vec()
+} else {
+    // Has padding - copy line by line
+    let mut data = Vec::with_capacity(width * height * bytes_per_pixel);
+    let src = rgb_frame.data(0);
+    for row in 0..height {
+        let start = row * linesize;
+        let end = start + expected_stride;
+        data.extend_from_slice(&src[start..end]);
+    }
+    data
+};
+```
+
+**根本原因**:
+- FFmpeg 的 `AVFrame` 使用 **linesize** 表示每行字节数,通常会 **对齐到 32/64 字节边界**
+- 例如: 864×1920 RGBA 图像
+  - 理论行宽: `864 × 4 = 3456 bytes`
+  - 实际 linesize: `3488 bytes` (对齐到 32 字节 → 3456 + 32 padding)
+- 直接拷贝会包含 padding,传给 wgpu 时 `bytes_per_row` 不匹配,导致每行数据错位
+
+**为什么 VAAPI 没问题?**
+VAAPI 解码器早在 commit `06abfd0` 就修复了此问题:
+```rust
+// VAAPI: 已修复 (2025-12-11)
+let y_linesize = sw_frame.stride(0);
+for row in 0..height {
+    let start = row * y_linesize;
+    let end = start + width;
+    data.extend_from_slice(&y_data[start..end]);
+}
+```
+
+但 H.264 软件解码器**未同步修复**,导致 fallback 时出现颜色乱码。
+
+**性能优化**:
+- 当 `linesize == expected_stride` 时(无 padding),使用快速路径直接拷贝
+- 仅在有 padding 时才逐行拷贝,避免不必要的性能损耗
+
+**适用范围**:
+所有从 FFmpeg `AVFrame` 提取数据的场景都需检查 linesize:
+```rust
+// ✅ 通用模式
+let linesize = frame.stride(plane_index);
+let width = frame.width() as usize;
+let height = frame.height() as usize;
+let bytes_per_pixel = /* 根据格式计算 */;
+
+let expected_stride = width * bytes_per_pixel;
+if linesize != expected_stride {
+    // 逐行拷贝移除 padding
+    for row in 0..height {
+        let start = row * linesize;
+        let end = start + expected_stride;
+        // ...
+    }
+}
+```
+
+**参考资料**:
+- [FFmpeg AVFrame linesize 文档](https://ffmpeg.org/doxygen/trunk/structAVFrame.html#a2c5d080a18c4ba0af9c8da4d34f9e3e8)
+- commit `06abfd0`: VAAPI NV12 linesize 修复
+
+

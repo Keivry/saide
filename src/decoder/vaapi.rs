@@ -13,7 +13,7 @@ use {
         util::frame::video::Video as VideoFrame,
     },
     ffmpeg_next as ffmpeg,
-    std::{fs, path::PathBuf, ptr},
+    std::{ffi::CString, fs, path::PathBuf, ptr},
     tracing::{debug, info, trace, warn},
 };
 
@@ -109,12 +109,17 @@ impl VaapiDecoder {
 
         info!("Using VAAPI device: {}", device_path.display());
 
+        // Convert to null-terminated C string
+        let device_path_c = CString::new(device_path_cstr).map_err(|e| {
+            VideoError::InitializationError(format!("VAAPI device path contains null byte: {e}"))
+        })?;
+
         unsafe {
-            // FFmpeg expects a null-terminated C string
+            // FFmpeg requires null-terminated C string
             let ret = ffmpeg::sys::av_hwdevice_ctx_create(
                 &mut hw_device_ctx,
                 ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
-                device_path_cstr.as_ptr() as *const std::os::raw::c_char,
+                device_path_c.as_ptr(),
                 ptr::null_mut(),
                 0,
             );
