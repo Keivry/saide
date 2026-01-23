@@ -1880,3 +1880,212 @@ RUST_LOG=debug cargo run 2>&1 | grep "InnerSize"
 - Wayland 某些合成器可能不提供 monitor_size
 
 ---
+
+## 解码器选择陷阱 (P1 优先级)
+
+> **2026-01-23 更新**: 移除 GPU 检测依赖，实现级联降级策略
+
+### ✅ FIXED: GPU 检测导致解码器选择失败
+
+**位置**: `src/decoder/auto.rs`, `src/scrcpy/codec_probe.rs` (已修复)  
+**问题**: 依赖 GPU 检测选择解码器，在多 GPU 系统或 GPU 检测失败时无法使用正确解码器
+
+**修复前**:
+
+```rust
+pub fn new(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
+    if !hwdecode {
+        return Ok(Self::Software(H264Decoder::new(width, height)?));
+    }
+
+    let gpu_type = detect_gpu();
+    info!("Detected GPU type: {:?}", gpu_type);
+
+    match gpu_type {
+        GpuType::Nvidia => {
+            info!("Attempting NVIDIA NVDEC hardware decoder");
+            NvdecDecoder::new(width, height)
+                .map(Self::Nvdec)
+                .or_else(|e| {
+                    warn!("NVDEC initialization failed: {}", e);
+                    info!("Falling back to software H.264 decoder");
+                    Ok(Self::Software(H264Decoder::new(width, height)?))
+                })
+        }
+        GpuType::Intel | GpuType::Amd => {
+            #[cfg(not(target_os = "windows"))]
+            {
+                info!("Attempting Linux VAAPI hardware decoder");
+                VaapiDecoder::new(width, height)
+                    .map(Self::Vaapi)
+                    .or_else(|e| {
+                        warn!("VAAPI initialization failed: {}", e);
+                        info!("Falling back to software H.264 decoder");
+                        Ok(Self::Software(H264Decoder::new(width, height)?))
+                    })
+            }
+            #[cfg(target_os = "windows")]
+            {
+                info!("Attempting Windows D3D11VA hardware decoder");
+                D3d11vaDecoder::new(width, height)
+                    .map(Self::D3d11va)
+                    .or_else(|e| {
+                        warn!("D3D11VA initialization failed: {}", e);
+                        info!("Falling back to software H.264 decoder");
+                        Ok(Self::Software(H264Decoder::new(width, height)?))
+                    })
+            }
+        }
+        _ => {
+            info!("Unknown or unsupported GPU, using software decoder");
+            Ok(Self::Software(H264Decoder::new(width, height)?))
+        }
+    }
+}
+```
+
+**问题**:
+
+1. **多 GPU 系统跳过可用解码器**:
+   - Intel iGPU + NVIDIA dGPU 系统: 检测到 Intel → 不尝试 NVDEC
+   - AMD APU + NVIDIA dGPU 系统: 检测到 AMD → 不尝试 NVDEC
+
+2. **GPU 检测失败导致软解码**:
+   - Windows DXGI 未实现 → 返回 `GpuType::Unknown` → 直接软解码
+   - `/proc/driver/nvidia` 不存在 → 漏检 NVIDIA GPU
+
+3. **codec_probe 依赖 GPU 类型选择 profile**:
+   ```rust
+   let gpu_type = detect_gpu();
+   let profile_option = get_profile_for_gpu(gpu_type);
+   info!("Detected GPU: {:?}, using {}={}", gpu_type, profile_option.0, profile_option.1);
+   
+   let mut candidate_options: Vec<(&str, &str)> = vec![profile_option];
+   ```
+   - NVIDIA GPU 检测失败 → 使用 Baseline profile (66) → NVDEC 性能下降
+   - Intel GPU 误检测为 Unknown → 强制 Baseline → 无法利用 VAAPI 高级 profile
+
+**修复后** (Cascade Fallback 策略):
+
+```rust
+pub fn new(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
+    if !hwdecode {
+        return Ok(Self::Software(H264Decoder::new(width, height)?));
+    }
+
+    info!("Starting cascade decoder selection (NVDEC → VAAPI/D3D11VA → Software)");
+
+    if let Ok(decoder) = NvdecDecoder::new(width, height) {
+        info!("✅ Using NVIDIA NVDEC hardware decoder");
+        return Ok(Self::Nvdec(decoder));
+    }
+    warn!("NVDEC unavailable, trying VAAPI/D3D11VA");
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(decoder) = VaapiDecoder::new(width, height) {
+            info!("✅ Using Linux VAAPI hardware decoder");
+            return Ok(Self::Vaapi(decoder));
+        }
+        warn!("VAAPI unavailable, falling back to software decoder");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(decoder) = D3d11vaDecoder::new(width, height) {
+            info!("✅ Using Windows D3D11VA hardware decoder");
+            return Ok(Self::D3d11va(decoder));
+        }
+        warn!("D3D11VA unavailable, falling back to software decoder");
+    }
+
+    info!("Using software H.264 decoder");
+    Ok(Self::Software(H264Decoder::new(width, height)?))
+}
+```
+
+```rust
+pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
+    info!("🔍 Probing codec compatibility for device: {}", serial);
+    let mut profile = DeviceProfile::new(serial)?;
+
+    info!("Starting cascade profile testing (NVDEC → Baseline)...");
+    
+    for (key, value) in CODEC_PROFILES {
+        info!("Testing {}={}...", key, value);
+        let options = format!("{}={}", key, value);
+        if test_codec_options(serial, server_jar, &options, profile.video_encoder.as_deref())? {
+            info!("✅ Profile {}={} supported", key, value);
+            profile.supported_profile = Some(value.to_string());
+            break;
+        } else {
+            info!("❌ Profile {}={} not supported", key, value);
+        }
+    }
+
+    let candidate_options: Vec<(&str, &str)> = CODEC_OPTIONS_BASE.iter()
+        .filter(|(key, _)| match *key {
+            "latency" if profile.android_version < 11 => false,
+            "max-bframes" if profile.android_version < 13 => false,
+            _ => true,
+        })
+        .copied()
+        .collect();
+
+    info!("Testing {} codec options...", candidate_options.len());
+    // ... test each option
+}
+```
+
+**优势**:
+
+1. **多 GPU 系统自动选择最佳解码器**:
+   - Intel iGPU + NVIDIA dGPU: 尝试 NVDEC → 成功使用 dGPU
+   - AMD APU + NVIDIA dGPU: 尝试 NVDEC → 成功使用 dGPU
+   - 仅 Intel iGPU: NVDEC 失败 → VAAPI 成功 → 使用 iGPU
+
+2. **GPU 检测失败仍能使用硬件加速**:
+   - Windows DXGI 未实现 → 仍会尝试 NVDEC + D3D11VA
+   - `/proc/driver/nvidia` 不存在 → 仍会尝试 NVDEC (FFmpeg 内部检测)
+
+3. **Codec profile 自动测试**:
+   - 先测试 NVDEC profile (65536) → 成功则使用
+   - NVDEC 失败 → 测试 Baseline profile (66) → Fallback
+   - 设备实际验证,不依赖 GPU 检测猜测
+
+4. **跨平台统一策略**:
+   - Linux: NVDEC → VAAPI → Software
+   - Windows: NVDEC → D3D11VA → Software
+   - 相同逻辑,仅平台特定解码器不同
+
+**教训**:
+
+1. **依赖检测不如直接尝试**: FFmpeg 解码器内部已实现硬件检测,无需在外部再次检测
+2. **多 GPU 系统需要级联尝试**: 单一 GPU 检测无法反映所有可用硬件
+3. **Fallback 策略优于分支判断**: `try_nvdec() || try_vaapi() || try_software()` 比 `if gpu == nvidia { nvdec } else { ... }` 更健壮
+4. **测试真实行为而非猜测能力**: Profile 测试在设备上运行,比猜测 GPU 类型更准确
+
+**保留的 GPU 检测使用** (非关键路径):
+
+`src/scrcpy/server.rs:142` - `should_lock_orientation_for_nvdec()`
+- **用途**: 优化提示 (NVDEC 性能更好时锁定捕获方向)
+- **非关键**: 检测失败不影响解码器选择,仅影响性能优化
+- **未来考虑**: 改为尝试 NVDEC 初始化成功后再锁定方向
+
+**Breaking Changes**:
+
+- `DeviceProfile::build_options_string(gpu_type: GpuType)` → `build_options_string()` (移除参数)
+- 现有 `device_profiles.toml` 可能需要重新生成 (profile 选择逻辑变化)
+
+**相关提交**:
+
+- Decoder cascade fallback: `src/decoder/auto.rs` (2026-01-23)
+- Codec probe cascade testing: `src/scrcpy/codec_probe.rs` (2026-01-23)
+
+**参考资料**:
+
+- FFmpeg NVDEC 文档: https://trac.ffmpeg.org/wiki/HWAccelIntro#NVDEC
+- FFmpeg VAAPI 文档: https://trac.ffmpeg.org/wiki/Hardware/VAAPI
+- FFmpeg D3D11VA 文档: https://ffmpeg.org/ffmpeg-codecs.html#h264
+
+---

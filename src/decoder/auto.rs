@@ -1,11 +1,14 @@
-//! Automatic decoder selection
+//! Automatic decoder selection with cascade fallback
 //!
-//! This module provides an `AutoDecoder` that selects the appropriate video decoder
-//! based on the detected GPU type (NVIDIA, Intel/AMD, or software fallback).
+//! This module provides an `AutoDecoder` that tries hardware decoders in priority order,
+//! automatically falling back to the next available decoder on failure.
+//!
+//! Priority order (platform-specific):
+//! - Linux: NVDEC → VAAPI → Software H.264
+//! - Windows: NVDEC → D3D11VA → Software H.264
 
 use {
     super::{DecodedFrame, H264Decoder, NvdecDecoder, VideoDecoder, error::Result},
-    crate::{GpuType, detect_gpu},
     tracing::{info, warn},
 };
 
@@ -31,12 +34,19 @@ pub enum AutoDecoder {
 }
 
 impl AutoDecoder {
-    /// Create decoder with automatic GPU detection
+    /// Create decoder with automatic cascade fallback
+    ///
+    /// Tries hardware decoders in priority order, automatically falling back on failure.
+    /// Does NOT depend on GPU detection - decoders self-detect hardware availability.
     ///
     /// # Arguments
     /// * `width` - Video width
     /// * `height` - Video height
-    /// * `hwdecode` - Enable hardware decoding (VAAPI/NVDEC). If false, force software decoder
+    /// * `hwdecode` - Enable hardware decoding. If false, force software decoder
+    ///
+    /// # Priority Order
+    /// - Linux: NVDEC → VAAPI → Software
+    /// - Windows: NVDEC → D3D11VA → Software
     #[cfg(not(target_os = "windows"))]
     pub fn new(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
         if !hwdecode {
@@ -44,53 +54,38 @@ impl AutoDecoder {
             return Ok(Self::Software(H264Decoder::new(width, height)?));
         }
 
-        let gpu_type = detect_gpu();
-        info!("Detected GPU type: {gpu_type:?}");
+        info!("Starting cascade decoder selection (NVDEC → VAAPI → Software)");
 
-        match gpu_type {
-            GpuType::Nvidia => {
-                info!("Using NVIDIA NVDEC hardware decoder");
-                match NvdecDecoder::new(width, height) {
-                    Ok(decoder) => Ok(Self::Nvdec(decoder)),
-                    Err(e) => {
-                        warn!("Failed to initialize NVDEC: {e:?}, falling back to software",);
-                        Ok(Self::Software(H264Decoder::new(width, height)?))
-                    }
-                }
-            }
-            GpuType::Intel | GpuType::Amd => {
-                info!("Using VAAPI hardware decoder (Intel/AMD)");
-                match VaapiDecoder::new(width, height) {
-                    Ok(decoder) => Ok(Self::Vaapi(decoder)),
-                    Err(e) => {
-                        warn!("Failed to initialize VAAPI: {e:?}, falling back to software",);
-                        Ok(Self::Software(H264Decoder::new(width, height)?))
-                    }
-                }
-            }
-            GpuType::Apple => {
-                info!(
-                    "Using software decoder (Apple Silicon - VideoToolbox decoder not yet implemented)"
-                );
-                Ok(Self::Software(H264Decoder::new(width, height)?))
-            }
-            GpuType::Software => {
-                info!("Using software decoder (explicit)");
-                Ok(Self::Software(H264Decoder::new(width, height)?))
-            }
-            GpuType::Unknown => {
-                info!("Unknown GPU, using software decoder");
-                Ok(Self::Software(H264Decoder::new(width, height)?))
-            }
+        if let Ok(decoder) = NvdecDecoder::new(width, height) {
+            info!("✅ Using NVDEC hardware decoder");
+            return Ok(Self::Nvdec(decoder));
         }
+        warn!("NVDEC unavailable, trying VAAPI");
+
+        if let Ok(decoder) = VaapiDecoder::new(width, height) {
+            info!("✅ Using VAAPI hardware decoder");
+            return Ok(Self::Vaapi(decoder));
+        }
+        warn!("VAAPI unavailable, falling back to software decoder");
+
+        info!("Using software H.264 decoder");
+        Ok(Self::Software(H264Decoder::new(width, height)?))
     }
 
-    /// Create decoder with automatic GPU detection (Windows)
+    /// Create decoder with automatic cascade fallback (Windows)
+    ///
+    /// Tries hardware decoders in priority order, automatically falling back on failure.
+    /// Does NOT depend on GPU detection - decoders self-detect hardware availability.
     ///
     /// # Arguments
     /// * `width` - Video width
     /// * `height` - Video height
-    /// * `hwdecode` - Enable hardware decoding (D3D11VA/NVDEC). If false, force software decoder
+    /// * `hwdecode` - Enable hardware decoding. If false, force software decoder
+    ///
+    /// # Priority Order
+    /// - NVDEC (NVIDIA CUDA, cross-platform)
+    /// - D3D11VA (DirectX 11, Intel/AMD/NVIDIA)
+    /// - Software H.264
     #[cfg(target_os = "windows")]
     pub fn new(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
         if !hwdecode {
@@ -98,57 +93,22 @@ impl AutoDecoder {
             return Ok(Self::Software(H264Decoder::new(width, height)?));
         }
 
-        let gpu_type = detect_gpu();
-        info!("Detected GPU type: {gpu_type:?}");
+        info!("Starting cascade decoder selection (NVDEC → D3D11VA → Software)");
 
-        match gpu_type {
-            GpuType::Nvidia => {
-                info!("Using NVIDIA NVDEC hardware decoder");
-                match NvdecDecoder::new(width, height) {
-                    Ok(decoder) => Ok(Self::Nvdec(decoder)),
-                    Err(e) => {
-                        warn!("Failed to initialize NVDEC: {e:?}, falling back to D3D11VA",);
-                        match D3d11vaDecoder::new(width, height) {
-                            Ok(decoder) => Ok(Self::D3d11va(decoder)),
-                            Err(e2) => {
-                                warn!(
-                                    "Failed to initialize D3D11VA: {e2:?}, falling back to software"
-                                );
-                                Ok(Self::Software(H264Decoder::new(width, height)?))
-                            }
-                        }
-                    }
-                }
-            }
-            GpuType::Intel | GpuType::Amd => {
-                info!("Using D3D11VA hardware decoder (Intel/AMD)");
-                match D3d11vaDecoder::new(width, height) {
-                    Ok(decoder) => Ok(Self::D3d11va(decoder)),
-                    Err(e) => {
-                        warn!("Failed to initialize D3D11VA: {e:?}, falling back to software",);
-                        Ok(Self::Software(H264Decoder::new(width, height)?))
-                    }
-                }
-            }
-            GpuType::Apple => {
-                info!("Using software decoder (Apple GPU on Windows - unsupported)");
-                Ok(Self::Software(H264Decoder::new(width, height)?))
-            }
-            GpuType::Software => {
-                info!("Using software decoder (explicit)");
-                Ok(Self::Software(H264Decoder::new(width, height)?))
-            }
-            GpuType::Unknown => {
-                info!("Unknown GPU, trying D3D11VA then software");
-                match D3d11vaDecoder::new(width, height) {
-                    Ok(decoder) => Ok(Self::D3d11va(decoder)),
-                    Err(e) => {
-                        warn!("Failed to initialize D3D11VA: {e:?}, falling back to software");
-                        Ok(Self::Software(H264Decoder::new(width, height)?))
-                    }
-                }
-            }
+        if let Ok(decoder) = NvdecDecoder::new(width, height) {
+            info!("✅ Using NVDEC hardware decoder");
+            return Ok(Self::Nvdec(decoder));
         }
+        warn!("NVDEC unavailable, trying D3D11VA");
+
+        if let Ok(decoder) = D3d11vaDecoder::new(width, height) {
+            info!("✅ Using D3D11VA hardware decoder");
+            return Ok(Self::D3d11va(decoder));
+        }
+        warn!("D3D11VA unavailable, falling back to software decoder");
+
+        info!("Using software H.264 decoder");
+        Ok(Self::Software(H264Decoder::new(width, height)?))
     }
 
     /// Get current decoder type as string

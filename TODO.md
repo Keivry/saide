@@ -1,11 +1,55 @@
 # SAide 任务清单
 
-> **最后更新**: 2026-01-21  
-> **当前状态**: 🚀 Phase 3 延迟优化 + 跨平台支持规划  
+> **最后更新**: 2026-01-23  
+> **当前状态**: 🚀 Cascade Fallback Decoder Selection  
 > **Phase 1**: ✅ 完成 (13-25ms 降低, 目标 20-35ms 已达成)  
 > **Phase 2**: ❌ 终止 (wgpu v28 无外部内存 API, 详见 `docs/PHASE2_ZEROCOPY_FEASIBILITY.md`)  
 > **Phase 3**: 🔄 进行中 (目标额外降低 8-18ms)  
-> **跨平台支持**: 📋 规划完成 (见 [CROSS_PLATFORM_ROADMAP.md](docs/CROSS_PLATFORM_ROADMAP.md))
+> **跨平台支持**: ✅ Windows Phase 1 完成 (D3D11VA 硬件解码 + 级联降级)
+
+---
+
+## 🔄 进行中
+
+### Cascade Fallback Decoder Selection (替代 GPU 检测)
+
+**目标**: 移除 GPU 检测依赖，实现解码器级联降级策略
+
+**架构决策**:
+- **移除**: `detect_gpu()` 在解码器选择中的使用
+- **实现**: 线性尝试所有解码器，直到成功或降级到软件解码
+- **优势**: 
+  1. 多 GPU 系统支持(集显 + 独显)
+  2. FFmpeg 内部自动检测硬件可用性
+  3. 跨平台统一策略(无需平台特定检测)
+  4. 配置失败自动降级，无需手动干预
+
+**进度**:
+- [x] **[decoder]** 重构 `src/decoder/auto.rs`  
+      **实现**: Linux: NVDEC → VAAPI → Software  
+      **实现**: Windows: NVDEC → D3D11VA → Software  
+      **移除**: `detect_gpu()` 调用, GPU 类型检测  
+      **测试**: 108 tests passed  
+      **提交**: 准备中
+
+- [x] **[codec_probe]** 重构 `src/scrcpy/codec_probe.rs`  
+      **移除**: `get_profile_for_gpu()` 函数  
+      **实现**: 级联 profile 测试 (NVDEC profile=65536 → Baseline profile=66)  
+      **修改**: `DeviceProfile::build_options_string()` 不再需要 `gpu_type` 参数  
+      **新增字段**: `supported_profile: Option<String>` 存储实测支持的 profile  
+      **测试**: 单元测试更新通过  
+      **提交**: 准备中
+
+- [ ] **[文档]** 更新 `docs/ARCHITECTURE.md`  
+      **内容**: 解释 cascade fallback 策略替代 GPU 检测的原因
+
+- [ ] **[文档]** 更新 `docs/pitfalls.md`  
+      **内容**: 记录 GPU 检测的局限性和 cascade fallback 的优势
+
+**保留的 GPU 检测使用**:
+- `src/scrcpy/server.rs:142` - `should_lock_orientation_for_nvdec()`  
+  **原因**: NVDEC 优化提示(锁定捕获方向), 非硬性要求  
+  **决策**: 暂时保留, 未来可考虑同样改为 cascade 测试
 
 ---
 

@@ -8,7 +8,7 @@ to a desktop UI built with egui.
 
 ### Key Features
 
-- **High-Performance Video Streaming**: H.264/H.265/AV1 video decoding with hardware acceleration (VAAPI, NVDEC)
+- **High-Performance Video Streaming**: H.264/H.265/AV1 video decoding with hardware acceleration (NVDEC, VAAPI, D3D11VA)
 - **Low-Latency Input**: Direct scrcpy control channel for keyboard and mouse input (40-90ms reduction vs ADB)
 - **Audio Capture**: Opus/AAC/FLAC audio streaming from Android 11+ devices
 - **Keyboard Mapping**: Custom key mappings with coordinate systems supporting screen rotation
@@ -59,8 +59,8 @@ to a desktop UI built with egui.
 │  │  ┌───────────────────────────────────────────────────────────────┐  ││
 │  │  │                    VideoDecoder                                 │  ││
 │  │  │  ┌──────────────┐ ┌──────────────┐ ┌────────────────────────┐ │  ││
-│  │  │  │ H264Decoder  │ │  NvdecDecoder│ │   VaapiDecoder         │ │  ││
-│  │  │  │  (Software)  │ │  (NVIDIA)    │ │   (Intel)              │ │  ││
+│  │  │  │ H264Decoder  │ │  NvdecDecoder│ │ VAAPI / D3D11VA        │ │  ││
+│  │  │  │  (Software)  │ │  (NVIDIA)    │ │ (Intel/AMD)            │ │  ││
 │  │  │  └──────────────┘ └──────────────┘ └────────────────────────┘ │  ││
 │  │  └───────────────────────────────────────────────────────────────┘  ││
 │  │  ┌───────────────────────────────────────────────────────────────┐  ││
@@ -152,12 +152,13 @@ src/
 │
 ├── decoder/               # Media decoding
 │   ├── mod.rs
-│   ├── auto.rs            # Auto decoder selection
+│   ├── auto.rs            # Cascade fallback decoder selection
 │   ├── error.rs           # Decoder error types
 │   ├── h264.rs            # Software H.264 decoder
 │   ├── h264_parser.rs     # H.264 NAL parser
-│   ├── nvdec.rs           # NVIDIA NVDEC decoder
-│   ├── vaapi.rs           # Intel VAAPI decoder
+│   ├── nvdec.rs           # NVIDIA NVDEC decoder (cross-platform)
+│   ├── vaapi.rs           # Linux VAAPI decoder (Intel/AMD)
+│   ├── d3d11va.rs         # Windows D3D11VA decoder (Intel/AMD/NVIDIA)
 │   ├── nv12_render.rs     # NV12 rendering pipeline
 │   ├── rgba_render.rs     # RGBA rendering pipeline
 │   └── audio/             # Audio decoders
@@ -181,7 +182,7 @@ src/
 │   ├── embedded.rs        # Embedded resources
 │   └── fs_source.rs       # Filesystem source
 │
-└── gpu/                   # GPU detection
+└── gpu/                   # GPU detection (legacy - used for optimization hints only)
     └── mod.rs             # GPU type detection
 ```
 
@@ -412,23 +413,59 @@ Keyboard mappings organized by device orientation:
 
 ---
 
+## Decoder Selection Strategy
+
+SAide uses a **cascade fallback** approach for video decoder selection, eliminating dependency on GPU detection.
+
+### Cascade Fallback Algorithm
+
+**Linux**:
+1. Try NVDEC (NVIDIA hardware decoder)
+2. Fallback to VAAPI (Intel/AMD hardware decoder)
+3. Fallback to Software H.264 decoder
+
+**Windows**:
+1. Try NVDEC (NVIDIA hardware decoder)
+2. Fallback to D3D11VA (DirectX 11 hardware decoder - Intel/AMD/NVIDIA)
+3. Fallback to Software H.264 decoder
+
+**Key Benefits**:
+- **Multi-GPU Support**: Works with integrated + discrete GPU setups (e.g., Intel iGPU + NVIDIA dGPU)
+- **Self-Detection**: FFmpeg decoders internally validate hardware availability
+- **Robust**: Works on unknown/misconfigured GPU systems
+- **Platform Agnostic**: Same strategy across Linux/Windows (only decoder order differs)
+
+### Codec Profile Testing
+
+Device codec compatibility is tested using cascade approach:
+
+1. Test NVDEC profile (`profile=65536`)
+2. Fallback to Baseline profile (`profile=66`)
+3. Use first profile that succeeds
+
+Results are cached in `device_profiles.toml` to avoid repeated testing.
+
+**Source**: `src/decoder/auto.rs`, `src/scrcpy/codec_probe.rs`
+
+---
+
 ## Platform Considerations
 
 ### Linux (Primary)
 
-- **Video**: VAAPI (Intel/AMD), NVDEC (NVIDIA), Software fallback
+- **Video**: NVDEC (NVIDIA), VAAPI (Intel/AMD), Software fallback
 - **Audio**: PulseAudio, ALSA via cpal
 - **Display**: X11 and Wayland support via winit
 - **ADB**: Standard Android SDK tools
 
-### Windows (Future)
+### Windows (Experimental - v0.3)
 
-- **Video**: D3D11 (DirectX), WGPU
+- **Video**: NVDEC (NVIDIA), D3D11VA (Intel/AMD/NVIDIA), Software fallback
 - **Audio**: WASAPI via cpal
 - **Display**: DirectComposition
 - **ADB**: Windows SDK
 
-### macOS (Future)
+### macOS (Planned)
 
 - **Video**: VideoToolbox, Metal
 - **Audio**: CoreAudio via cpal

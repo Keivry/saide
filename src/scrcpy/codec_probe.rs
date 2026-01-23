@@ -1,13 +1,16 @@
 //! Automatic Video Codec Options Compatibility Detection
 //!
 //! Probes device capabilities to find optimal low-latency configuration.
+//!
+//! **Strategy**: Cascade profile testing instead of GPU detection.
+//! - Tests all relevant codec profiles (NVDEC, Baseline, etc.) on the device
+//! - Device encoder validates which profiles work via FFmpeg
+//! - Supports multi-GPU systems (integrated + discrete)
 
 use {
     super::server::ServerParams,
     crate::{
-        GpuType,
         controller::AdbShell,
-        detect_gpu,
         error::{IoError, Result, SAideError},
     },
     serde::{Deserialize, Serialize},
@@ -15,62 +18,32 @@ use {
     tracing::{debug, info},
 };
 
-/// Candidate codec options to test (from most to least impactful)
-///
-/// NOTE: "profile" value is GPU-dependent and set dynamically:
-/// - VAAPI (Intel/AMD): profile=66 (Baseline Profile, standard H.264)
-/// - NVDEC (NVIDIA): profile=65536 (NVDEC-specific enum value)
 const CODEC_OPTIONS_BASE: &[(&str, &str)] = &[
-    ("i-frame-interval", "2"),              // Short GOP (high impact)
-    ("latency", "0"),                       // Android 11+ low latency
-    ("max-bframes", "0"),                   // Disable B-frames (Android 13+)
-    ("priority", "0"),                      // Real-time priority
-    ("prepend-sps-pps-to-idr-frames", "1"), // Dynamic resolution
-    ("intra-refresh-period", "60"),         // Periodic refresh
-    ("bitrate-mode", "1"),                  // CBR
+    ("i-frame-interval", "2"),
+    ("latency", "0"),
+    ("max-bframes", "0"),
+    ("priority", "0"),
+    ("prepend-sps-pps-to-idr-frames", "1"),
+    ("intra-refresh-period", "60"),
+    ("bitrate-mode", "1"),
 ];
 
-/// Get profile value based on GPU type
-fn get_profile_for_gpu(gpu_type: GpuType) -> (&'static str, &'static str) {
-    match gpu_type {
-        GpuType::Nvidia => ("profile", "65536"), // NVDEC enum value
-        GpuType::Intel | GpuType::Amd => ("profile", "66"), // Baseline Profile (VAAPI)
-        GpuType::Apple => ("profile", "66"),     // VideoToolbox uses Baseline
-        GpuType::Software => ("profile", "66"),  // Software decoder uses Baseline
-        GpuType::Unknown => ("profile", "66"),   // Fallback to standard Baseline
-    }
-}
+const CODEC_PROFILES: &[(&str, &str)] = &[("profile", "65536"), ("profile", "66")];
 
-/// Device codec compatibility profile
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceProfile {
-    /// Device serial
     pub serial: String,
-
-    /// Device model name
     pub model: String,
-
-    /// SoC platform
     pub platform: String,
-
-    /// Android version
     pub android_version: u32,
-
-    /// Detected hardware encoder (if available)
     pub video_encoder: Option<String>,
-
-    /// Supported codec option keys
     pub supported_options: Vec<String>,
-
-    /// Optimal configuration string
+    pub supported_profile: Option<String>,
     pub optimal_config: Option<String>,
-
-    /// Last tested timestamp
     pub tested_at: String,
 }
 
 impl DeviceProfile {
-    /// Create profile from device info
     pub fn new(serial: &str) -> Result<Self> {
         let model = AdbShell::get_prop(serial, "ro.product.model")?;
         let platform = AdbShell::get_platform(serial)?;
@@ -81,29 +54,25 @@ impl DeviceProfile {
             model,
             platform,
             android_version,
-            video_encoder: None, // Will be set during probing
+            video_encoder: None,
             supported_options: Vec::new(),
+            supported_profile: None,
             optimal_config: None,
             tested_at: chrono::Utc::now().to_rfc3339(),
         })
     }
 
-    /// Build optimal codec options string
-    pub fn build_options_string(&self, gpu_type: GpuType) -> Option<String> {
+    pub fn build_options_string(&self) -> Option<String> {
         if self.supported_options.is_empty() {
             return None;
         }
 
-        let profile_option = get_profile_for_gpu(gpu_type);
-
         let mut options: Vec<String> = Vec::new();
 
-        // Add profile first if supported
-        if self.supported_options.contains(&"profile".to_string()) {
-            options.push(format!("{}={}", profile_option.0, profile_option.1));
+        if let Some(ref profile_value) = self.supported_profile {
+            options.push(format!("profile={}", profile_value));
         }
 
-        // Add other options
         for (key, value) in CODEC_OPTIONS_BASE.iter() {
             if self.supported_options.contains(&key.to_string()) {
                 options.push(format!("{}={}", key, value));
@@ -160,9 +129,7 @@ impl ProfileDatabase {
             .and_then(|p: PathBuf| p.parent().map(|parent| parent.join("device_profiles.toml")))
             .or_else(|| Some(fallback_data_path().join("device_profiles.toml")))
             .ok_or_else(|| {
-                SAideError::IoError(IoError::new_with_message(
-                    "Unable to determine config path",
-                ))
+                SAideError::IoError(IoError::new_with_message("Unable to determine config path"))
             })
     }
 
@@ -175,9 +142,6 @@ impl ProfileDatabase {
     }
 }
 
-/// Probe device codec compatibility
-///
-/// Returns optimal codec options string (or None if no options supported)
 pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
     info!("🔍 Probing codec compatibility for device: {}", serial);
 
@@ -187,7 +151,6 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
         profile.model, profile.platform, profile.android_version
     );
 
-    // Detect hardware encoder
     profile.video_encoder = super::hwcodec::detect_h264_encoder(serial)?;
     if let Some(ref encoder) = profile.video_encoder {
         info!("Detected hardware encoder: {}", encoder);
@@ -195,36 +158,43 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
         info!("Using system default encoder");
     }
 
-    // Detect GPU type for profile selection
-    let gpu_type = detect_gpu();
-    let profile_option = get_profile_for_gpu(gpu_type);
-    info!(
-        "Detected GPU: {:?}, using {}={}",
-        gpu_type, profile_option.0, profile_option.1
-    );
+    info!("Starting cascade profile testing (NVDEC → Baseline)...");
 
-    // Build candidate options list (profile + base options)
-    let mut candidate_options: Vec<(&str, &str)> = vec![profile_option];
-    candidate_options.extend(
-        CODEC_OPTIONS_BASE
-            .iter()
-            .filter(|(key, _)| match *key {
-                "latency" if profile.android_version < 11 => {
-                    debug!("Skipping 'latency' (requires Android 11+)");
-                    false
-                }
-                "max-bframes" if profile.android_version < 13 => {
-                    debug!("Skipping 'max-bframes' (requires Android 13+)");
-                    false
-                }
-                _ => true,
-            })
-            .copied(),
-    );
+    for (key, value) in CODEC_PROFILES {
+        info!("Testing {}={}...", key, value);
+        let options = format!("{}={}", key, value);
+        if test_codec_options(
+            serial,
+            server_jar,
+            &options,
+            profile.video_encoder.as_deref(),
+        )? {
+            info!("✅ Profile {}={} supported", key, value);
+            profile.supported_profile = Some(value.to_string());
+            break;
+        } else {
+            info!("❌ Profile {}={} not supported", key, value);
+        }
+    }
+
+    let candidate_options: Vec<(&str, &str)> = CODEC_OPTIONS_BASE
+        .iter()
+        .filter(|(key, _)| match *key {
+            "latency" if profile.android_version < 11 => {
+                debug!("Skipping 'latency' (requires Android 11+)");
+                false
+            }
+            "max-bframes" if profile.android_version < 13 => {
+                debug!("Skipping 'max-bframes' (requires Android 13+)");
+                false
+            }
+            _ => true,
+        })
+        .copied()
+        .collect();
 
     info!("Testing {} codec options...", candidate_options.len());
 
-    // Test each option individually
     for (i, (key, value)) in candidate_options.iter().enumerate() {
         info!(
             "  [{}/{}] Testing {}={}...",
@@ -248,10 +218,8 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
         }
     }
 
-    // Build optimal config (GPU-aware)
-    profile.optimal_config = profile.build_options_string(gpu_type);
+    profile.optimal_config = profile.build_options_string();
 
-    // Validate combined options work together
     if let Some(ref combined_config) = profile.optimal_config {
         info!("🔄 Validating combined configuration...");
         info!("   Testing: {}", combined_config);
@@ -267,6 +235,7 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
             info!("   ❌ Combined config failed, falling back to None");
             profile.optimal_config = None;
             profile.supported_options.clear();
+            profile.supported_profile = None;
         }
     }
 
@@ -282,7 +251,6 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
         info!("   No options supported, using defaults");
     }
 
-    // Save to database
     let mut db = ProfileDatabase::load()?;
     db.insert(profile.clone());
     db.save()?;
@@ -364,23 +332,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_profile_build_options_vaapi() {
+    fn test_profile_build_options_baseline() {
         let profile = DeviceProfile {
             serial: "test".to_string(),
             model: "Test".to_string(),
             platform: "test".to_string(),
             android_version: 14,
             video_encoder: Some("c2.test.avc.encoder".to_string()),
-            supported_options: vec![
-                "profile".to_string(),
-                "i-frame-interval".to_string(),
-                "latency".to_string(),
-            ],
+            supported_options: vec!["i-frame-interval".to_string(), "latency".to_string()],
+            supported_profile: Some("66".to_string()),
             optimal_config: None,
             tested_at: "2025-01-01T00:00:00Z".to_string(),
         };
 
-        let options = profile.build_options_string(GpuType::Intel).unwrap();
+        let options = profile.build_options_string().unwrap();
         assert!(options.contains("profile=66"));
         assert!(options.contains("i-frame-interval=2"));
         assert!(options.contains("latency=0"));
@@ -394,12 +359,13 @@ mod tests {
             platform: "test".to_string(),
             android_version: 14,
             video_encoder: Some("c2.test.avc.encoder".to_string()),
-            supported_options: vec!["profile".to_string(), "i-frame-interval".to_string()],
+            supported_options: vec!["i-frame-interval".to_string()],
+            supported_profile: Some("65536".to_string()),
             optimal_config: None,
             tested_at: "2025-01-01T00:00:00Z".to_string(),
         };
 
-        let options = profile.build_options_string(GpuType::Nvidia).unwrap();
+        let options = profile.build_options_string().unwrap();
         assert!(options.contains("profile=65536"));
         assert!(options.contains("i-frame-interval=2"));
     }
