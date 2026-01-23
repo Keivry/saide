@@ -31,7 +31,7 @@ pub struct Indicator {
     /// Device orientation (0-3), clockwise
     device_orientation: u32,
 
-    // V4l2 capture orientation (0-3), counter-clockwise
+    // Scrcpy-server capture orientation (0-3), counter-clockwise
     capture_orientation: u32,
 
     // Video render rotation state (0-3), clockwise
@@ -104,13 +104,6 @@ impl Indicator {
 
     pub fn update_device_orientation(&mut self, orientation: u32) -> &mut Self {
         self.device_orientation = orientation % 4;
-        self
-    }
-
-    // TODO: Allow user specify capture orientation in config
-    #[allow(dead_code)] // May be used in V4L2Player (deprecated)
-    pub fn update_capture_orientation(&mut self, orientation: u32) -> &mut Self {
-        self.capture_orientation = orientation % 4;
         self
     }
 
