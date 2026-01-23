@@ -12,11 +12,16 @@ mod rgba_render;
 mod vaapi;
 
 #[cfg(target_os = "windows")]
+mod d3d11va;
+
+#[cfg(target_os = "windows")]
 mod windows;
 
 #[cfg(target_os = "macos")]
 mod macos;
 
+#[cfg(target_os = "windows")]
+pub use d3d11va::D3d11vaDecoder;
 use error::Result;
 #[cfg(target_os = "macos")]
 pub use macos::VtDecoder;

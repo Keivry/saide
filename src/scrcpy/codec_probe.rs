@@ -155,11 +155,15 @@ impl ProfileDatabase {
 
     /// Get config file path
     fn config_path() -> Result<PathBuf> {
-        let home = std::env::var("HOME")?;
-        Ok(PathBuf::from(home)
-            .join(".config")
-            .join("saide")
-            .join("device_profiles.toml"))
+        use crate::constant::{config_dir, fallback_data_path};
+        config_dir()
+            .and_then(|p: PathBuf| p.parent().map(|parent| parent.join("device_profiles.toml")))
+            .or_else(|| Some(fallback_data_path().join("device_profiles.toml")))
+            .ok_or_else(|| {
+                SAideError::IoError(IoError::new_with_message(
+                    "Unable to determine config path",
+                ))
+            })
     }
 
     /// Get profile for device

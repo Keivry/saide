@@ -41,14 +41,12 @@ fn main() -> Result<()> {
     }
 
     // Show saved profile location
-    let config_path = std::env::var("HOME")
-        .map(|home| {
-            std::path::PathBuf::from(home)
-                .join(".config")
-                .join("saide")
-                .join("device_profiles.toml")
+    use saide::constant::{config_dir, fallback_data_path};
+    let config_path = config_dir()
+        .and_then(|p: std::path::PathBuf| {
+            p.parent().map(|parent| parent.join("device_profiles.toml"))
         })
-        .ok();
+        .or_else(|| Some(fallback_data_path().join("device_profiles.toml")));
 
     if let Some(path) = config_path {
         println!("\n💾 Profile saved to: {}", path.display());

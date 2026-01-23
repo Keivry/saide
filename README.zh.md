@@ -16,7 +16,8 @@
 ### 核心能力
 
 - 🚀 **低延迟串流**: Phase 3 优化后实现 20-35ms 端到端延迟
-  - 硬件加速视频解码 (VAAPI、NVDEC、软件 H.264 回退)
+  - 硬件加速视频解码 (VAAPI/D3D11VA、NVDEC、软件 H.264 回退)
+  - 跨平台支持: Linux (VAAPI)、Windows (D3D11VA)、全平台 (NVDEC/软件解码)
   - 优化音频管线 (64 帧缓冲、可配置环形缓冲区)
   - TCP_QUICKACK 和网络优化
 - 🎮 **高级输入映射**: 可自定义键盘和鼠标映射
@@ -36,8 +37,11 @@
 
 ### 技术亮点
 
-- **零拷贝 GPU 渲染** 通过 wgpu (Vulkan 后端)
-- **硬件加速**: VAAPI (Intel/AMD)、NVDEC (NVIDIA)、软件 H.264 回退
+- **零拷贝 GPU 渲染** 通过 wgpu (Vulkan/DirectX 12 后端)
+- **硬件加速**: 
+  - Linux: VAAPI (Intel/AMD)、NVDEC (NVIDIA)
+  - Windows: D3D11VA (Intel/AMD/NVIDIA)、NVDEC (NVIDIA)
+  - 全平台: 软件 H.264 回退
 - **健壮的错误处理**: 生产代码无 panic,全面的诊断信息
 - **一切皆可配置**: 基于 TOML 的配置系统,带验证和热重载
 - **内置性能分析**: 5 阶段延迟分析 (网络 → 解码 → 上传 → 显示)
@@ -50,7 +54,7 @@
 
 #### 系统需求
 
-- **操作系统**: Linux (主要支持),macOS/Windows (规划中)
+- **操作系统**: Linux (已测试),Windows (实验性 - v0.3),macOS (规划中 - v0.3)
 - **Rust**: 1.85 或更高版本
 - **Android**: Android 5.0+ 设备 (音频需 Android 11+)
 - **ADB**: 已安装 Android Debug Bridge 并在 PATH 中

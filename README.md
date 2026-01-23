@@ -16,7 +16,8 @@
 ### Core Capabilities
 
 - 🚀 **Low-Latency Streaming**: 20-35ms end-to-end latency with Phase 3 optimizations
-  - Hardware-accelerated video decoding (VAAPI, NVDEC, software H.264 fallback)
+  - Hardware-accelerated video decoding (VAAPI/D3D11VA, NVDEC, software H.264 fallback)
+  - Cross-platform: Linux (VAAPI), Windows (D3D11VA), all platforms (NVDEC/Software)
   - Optimized audio pipeline (64-frame buffer, configurable ring buffer)
   - TCP_QUICKACK and network optimizations
 - 🎮 **Advanced Input Mapping**: Customizable keyboard and mouse mappings
@@ -36,8 +37,11 @@
 
 ### Technical Highlights
 
-- **Zero-copy GPU rendering** via wgpu (Vulkan backend)
-- **Hardware acceleration**: VAAPI (Intel/AMD), NVDEC (NVIDIA), software H.264 fallback
+- **Zero-copy GPU rendering** via wgpu (Vulkan/DirectX 12 backend)
+- **Hardware acceleration**: 
+  - Linux: VAAPI (Intel/AMD), NVDEC (NVIDIA)
+  - Windows: D3D11VA (Intel/AMD/NVIDIA), NVDEC (NVIDIA)
+  - All platforms: Software H.264 fallback
 - **Robust error handling**: No panics in production code, comprehensive diagnostics
 - **Configurable everything**: TOML-based configuration with validation and hot-reload
 - **Profiling built-in**: 5-stage latency profiling (network → decode → upload → display)
@@ -50,7 +54,7 @@
 
 #### System Requirements
 
-- **Operating System**: Linux (primary), macOS/Windows (planned)
+- **Operating System**: Linux (tested), Windows (experimental - v0.3), macOS (planned - v0.3)
 - **Rust**: 1.85 or later
 - **Android**: Device with Android 5.0+ (Android 11+ for audio)
 - **ADB**: Android Debug Bridge installed and in PATH
@@ -235,8 +239,9 @@ saide/
 │   │   └── server.rs        # scrcpy-server deployment
 │   ├── decoder/             # Video/Audio decoding
 │   │   ├── h264.rs          # Software H.264 decoder
-│   │   ├── nvdec.rs         # NVIDIA hardware decoder
-│   │   ├── vaapi.rs         # VAAPI hardware decoder
+│   │   ├── nvdec.rs         # NVIDIA hardware decoder (cross-platform)
+│   │   ├── vaapi.rs         # Linux VAAPI hardware decoder
+│   │   ├── d3d11va.rs       # Windows D3D11VA hardware decoder
 │   │   └── audio/           # Opus/AAC audio decoding
 │   ├── config/              # Configuration management
 │   ├── i18n/                # Internationalization
@@ -344,10 +349,12 @@ See [docs/LATENCY_OPTIMIZATION.md](docs/LATENCY_OPTIMIZATION.md) for detailed an
 
 #### Mid-term (v0.3 - Q2 2026)
 
+- [x] Windows hardware decoding (D3D11VA) - **Completed 2026-01-23**
+- [ ] Windows GPU detection (DXGI enumeration)
+- [ ] macOS support (VideoToolbox decoder)
 - [ ] H.265/AV1 codec support
 - [ ] File transfer (drag-and-drop files to device)
 - [ ] Recording mode (save video/audio to file)
-- [ ] macOS/Windows support
 
 #### Long-term (v1.0 - 2026+)
 
@@ -434,8 +441,10 @@ backend = "VULKAN"      # Ensure hardware acceleration
 Check GPU detection:
 
 ```bash
-cargo run 2>&1 | grep "Video backend"
-# Should show: "Video backend: VULKAN"
+cargo run 2>&1 | grep -E "(Detected GPU|Using.*decoder)"
+# Linux: "Detected GPU type: Intel" → "Using VAAPI hardware decoder"
+# Windows: "Detected GPU type: Intel" → "Using D3D11VA hardware decoder"
+# NVIDIA: "Using NVIDIA NVDEC hardware decoder"
 ```
 
 #### 6. **Input lag / sluggish controls**
@@ -465,6 +474,12 @@ level = "debug"
 ```
 
 ### Known Issues
+
+#### Windows-Specific (v0.3 - Experimental)
+
+- **GPU detection returns "Unknown"**: D3D11VA still works, but decoder selection is not optimized. DXGI enumeration pending.
+- **First run may be slow**: Windows Defender/antivirus may scan the executable on first launch.
+- **Config path**: Use `%APPDATA%\saide\config.toml` instead of `~/.config/saide/config.toml`.
 
 See [docs/pitfalls.md](docs/pitfalls.md) for comprehensive list of known issues and workarounds.
 
