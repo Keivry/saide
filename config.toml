@@ -14,6 +14,14 @@ bit_rate = "24M"
 max_fps = 120
 max_size = 1600
 codec = "h264"
+# Lock video capture orientation (prevents auto-rotation with device)
+# None (default): video follows device rotation
+# Some(0): locked to portrait 0°
+# Some(1): locked to landscape 90°CCW (left)
+# Some(2): locked to portrait 180° (upside-down)
+# Some(3): locked to landscape 270°CCW (right)
+# When set, video rotation automatically compensates for device orientation changes
+# capture_orientation = 0
 
 [scrcpy.audio]
 enabled = true

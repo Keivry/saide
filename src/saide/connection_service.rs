@@ -58,7 +58,7 @@ impl ConnectionService {
         debug!("Connecting to device: {}", serial);
 
         let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
-            if ServerParams::should_lock_orientation_for_nvdec() {
+            if config.gpu.hwdecode && ServerParams::should_lock_orientation_for_nvdec() {
                 Some(0)
             } else {
                 None
@@ -180,12 +180,7 @@ impl ConnectionService {
         // - Avoid decoder rebuild overhead (~200ms + black screen)
         // - No need for prepend-sps-pps-to-idr-frames=1 (compatibility)
         // - More stable, works on all devices
-        if let Some(capture_orientation) = capture_orientation {
-            // Lock to current device orientation (absolute)
-            // @0 = lock to 0° (portrait), follows device's natural orientation
-            params.capture_orientation = Some(format!("@{}", capture_orientation));
-            info!("🔒 Locked capture orientation for NVDEC (prevents resolution changes)");
-        }
+        params.capture_orientation = capture_orientation;
 
         ScrcpyConnection::connect(serial, server_path, &config.general.bind_address, params)
             .map_err(|e| {

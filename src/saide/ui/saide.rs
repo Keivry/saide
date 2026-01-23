@@ -270,6 +270,8 @@ impl SAideApp {
         screen_w: f32,
         screen_h: f32,
     ) -> (u32, u32) {
+        // Use 90% of screen dimensions as usable area
+        // to leave some margin for taskbars, docks, etc.
         const SCREEN_MARGIN_RATIO: f32 = 0.9;
 
         let usable_w = (screen_w * SCREEN_MARGIN_RATIO) as u32;
@@ -388,7 +390,7 @@ impl SAideApp {
     }
 
     /// Process device monitor events
-    fn process_device_monitor_events(&mut self) {
+    fn process_device_monitor_events(&mut self, ctx: &egui::Context) {
         if self.init_state != InitState::Ready {
             debug!("Skipping device monitor processing - not initialized");
             return;
@@ -420,20 +422,52 @@ impl SAideApp {
             }
         }
 
-        // Refresh keyboard profiles if needed
         if rotated {
             self.refresh_mapping_profiles();
 
             self.indicator
                 .update_device_orientation(self.app_state.device_orientation());
 
-            // Update MappingCoordSys (device orientation changed)
             self.ui_state
                 .mapping_coords_mut()
                 .update_device_orientation(self.app_state.device_orientation());
             debug!(
                 "Updated device orientation to {}",
                 self.app_state.device_orientation()
+            );
+
+            self.apply_auto_rotation(ctx);
+        }
+    }
+
+    /// Apply automatic video rotation compensation when capture_orientation is locked
+    ///
+    /// When capture_orientation is set (video locked to specific orientation),
+    /// automatically adjust video_rotation to compensate for device physical rotation.
+    /// This ensures the displayed video always appears correctly oriented.
+    fn apply_auto_rotation(&mut self, ctx: &egui::Context) {
+        if let Some(capture_orient) = self.app_state.scrcpy_coords().capture_orientation {
+            let device_orient = self.app_state.device_orientation();
+
+            let target_rotation = (4 - ((capture_orient + device_orient) % 4)) % 4;
+
+            self.player.set_rotation(target_rotation);
+            self.indicator.update_video_rotation(target_rotation);
+            self.ui_state
+                .visual_coords_mut()
+                .update_rotation(target_rotation);
+
+            self.resize(ctx);
+            self.indicator
+                .update_video_resolution(self.player.video_dimensions());
+
+            info!(
+                "Auto-rotation: device={} ({}°), capture={} ({}°), applying video_rotation={}",
+                device_orient,
+                device_orient * 90,
+                capture_orient,
+                capture_orient * 90,
+                target_rotation
             );
         }
     }
@@ -1162,7 +1196,7 @@ impl eframe::App for SAideApp {
                 }
 
                 // Check for device monitor events
-                self.process_device_monitor_events();
+                self.process_device_monitor_events(ctx);
             }
             InitState::Failed(ref _reason) => {
                 // Player will show error state automatically

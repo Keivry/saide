@@ -83,7 +83,7 @@ pub struct ServerParams {
     /// Lock capture orientation (0-3 for natural/90/180/270, or @0-@3 for absolute)
     /// When set, prevents resolution changes on device rotation
     /// Useful for hardware decoders (NVDEC) that can't handle dynamic resolution
-    pub capture_orientation: Option<String>,
+    pub capture_orientation: Option<u32>,
 
     /// Keep device awake (prevent auto-sleep)
     pub stay_awake: bool,
@@ -241,7 +241,8 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
 
     // 🔒 NVDEC WORKAROUND: Lock capture orientation to prevent resolution changes
     if let Some(ref orientation) = params.capture_orientation {
-        args.push(format!("capture_orientation={}", orientation));
+        // Lock orientation with `capture_orientation=@` parameter
+        args.push(format!("capture_orientation=@{}", orientation * 90));
         info!(
             "Locked capture orientation: {} (prevents resolution changes)",
             orientation
