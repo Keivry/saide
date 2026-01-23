@@ -466,9 +466,6 @@ core-foundation = "0.10"
 core-graphics = "0.24"
 objc2 = "0.5"
 
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", features = ["process", "signal"] }
-
 [target.'cfg(target_os = "linux")'.dependencies.wgpu]
 version = "27"
 features = ["vulkan"]
@@ -488,7 +485,6 @@ features = ["metal"]
 |------|------|----------|
 | `/dev/dri/renderD128` 硬编码 | VAAPI 设备路径固定 | 动态枚举 `/dev/dri/renderD*` |
 | `TCP_QUICKACK` Linux only | Windows/macOS 无此 socket 选项 | 使用 `TCP_NODELAY` (已有) + 接受性能损失 |
-| `nix` crate Unix only | POSIX 信号处理 | 条件编译: `nix` on Unix, `windows-sys` on Windows |
 
 ### 测试矩阵
 

@@ -86,7 +86,7 @@ SAide 目前仅在以下环境测试和运行：
 
 | 文件 | 问题 | 平台特定 |
 |------|------|----------|
-| `Cargo.toml:74` | `nix` crate | Unix only |
+| `src/controller/adb.rs` | 进程控制依赖 | Windows 仍需补齐实现 |
 
 **影响**: Windows ADB 进程控制可能失效
 
@@ -294,8 +294,6 @@ winapi = { version = "0.3", features = [
     "mfobjects",
 ] }
 
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", features = ["process", "signal"] }
 ```
 
 **Windows GPU 检测**:
@@ -868,10 +866,6 @@ ffmpeg-next = "7.1"
 # 音频播放
 cpal = "0.17"
 opus = "0.3"
-
-# 进程管理 (条件依赖)
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", features = ["process", "signal"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [

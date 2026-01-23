@@ -256,16 +256,19 @@ if !config.disable_av_sync && av_snapshot.should_drop_video(frame.pts) {
 
 #[cfg(target_os = "linux")]
 {
-    use std::os::unix::io::AsRawFd;
-    use nix::sys::socket::{setsockopt, sockopt};
-    
-    let fd = stream.as_raw_fd();
-    
-    // TCP_QUICKACK: 立即发送 ACK
-    if let Err(e) = setsockopt(fd, sockopt::TcpQuickAck, &true) {
-        warn!("Failed to set TCP_QUICKACK: {}", e);
+    let quickack: libc::c_int = 1;
+    unsafe {
+        if libc::setsockopt(
+            stream.as_raw_fd(),
+            libc::IPPROTO_TCP,
+            libc::TCP_QUICKACK,
+            &quickack as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        ) != 0
+        {
+            warn!("Failed to set TCP_QUICKACK");
+        }
     }
-    
     debug!("{} connection: TCP_QUICKACK enabled", channel);
 }
 ```
