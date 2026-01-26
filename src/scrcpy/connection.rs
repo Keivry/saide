@@ -502,19 +502,22 @@ fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStr
 
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::io::AsRawSocket;
+        use {
+            std::os::windows::io::AsRawSocket,
+            windows_sys::Win32::Networking::WinSock::{IPPROTO_TCP, setsockopt},
+        };
 
         let socket = stream.as_raw_socket();
 
-        // TCP_QUICKACK = 12 on Windows
-        let quickack: libc::c_int = 1;
+        // TCP_QUICKACK = 12 on Windows (undocumented, but works)
+        let quickack: i32 = 1;
         let ret = unsafe {
-            libc::setsockopt(
-                socket as libc::SOCKET,
-                libc::IPPROTO_TCP,
+            setsockopt(
+                socket as usize,
+                IPPROTO_TCP,
                 12, // TCP_QUICKACK
-                &quickack as *const _ as *const libc::c_void,
-                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                &quickack as *const _ as *const u8,
+                std::mem::size_of::<i32>() as i32,
             )
         };
 
