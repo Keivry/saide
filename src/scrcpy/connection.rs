@@ -504,31 +504,30 @@ fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStr
     {
         use {
             std::os::windows::io::AsRawSocket,
-            windows_sys::Win32::Networking::WinSock::{IPPROTO_TCP, setsockopt},
+            windows_sys::Win32::Networking::WinSock::{IPPROTO_TCP, SOCKET, setsockopt},
         };
 
         let socket = stream.as_raw_socket();
 
-        // TCP_QUICKACK = 12 on Windows (undocumented, but works)
-        let quickack: i32 = 1;
+        let nodelay: i32 = 1;
         let ret = unsafe {
             setsockopt(
-                socket as usize,
+                socket as SOCKET,
                 IPPROTO_TCP,
-                12, // TCP_QUICKACK
-                &quickack as *const _ as *const u8,
+                1,
+                &nodelay as *const _ as *const u8,
                 std::mem::size_of::<i32>() as i32,
             )
         };
 
-        if ret < 0 {
+        if ret != 0 {
             debug!(
-                "Failed to set TCP_QUICKACK for {} connection: errno {}",
+                "Failed to set TCP_NODELAY for {} connection: {}",
                 channel,
                 std::io::Error::last_os_error()
             );
         } else {
-            debug!("{} connection: TCP_QUICKACK enabled", channel);
+            debug!("{} connection: TCP_NODELAY enabled", channel);
         }
     }
 
