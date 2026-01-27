@@ -16,7 +16,7 @@ use {
         util::frame::video::Video as VideoFrame,
     },
     ffmpeg_next as ffmpeg,
-    std::ptr,
+    std::{ffi::CStr, ptr},
     tracing::{debug, info, trace, warn},
 };
 
@@ -54,7 +54,6 @@ impl D3d11vaDecoder {
         info!("Initializing D3D11VA hardware decoder");
 
         unsafe {
-            // D3D11VA doesn't require device path (auto-detects default GPU)
             let ret = ffmpeg::sys::av_hwdevice_ctx_create(
                 &mut hw_device_ctx,
                 ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA,
@@ -63,13 +62,36 @@ impl D3d11vaDecoder {
                 0,
             );
             if ret < 0 {
+                let mut errbuf = [0u8; 128];
+                ffmpeg::sys::av_strerror(ret, errbuf.as_mut_ptr() as *mut i8, 128);
+                let ffmpeg_err = CStr::from_ptr(errbuf.as_ptr() as *const i8)
+                    .to_string_lossy()
+                    .into_owned();
+
                 let err_msg = if ret == -22 {
-                    "Invalid D3D11 device or driver not compatible. Ensure updated GPU drivers installed.".to_string()
+                    format!(
+                        "D3D11VA: Invalid D3D11 device or driver not compatible (EINVAL). \
+                         FFmpeg error: {}. \
+                         Action: Update GPU drivers to latest version.",
+                        ffmpeg_err
+                    )
                 } else if ret == -12 {
-                    "Out of memory when creating D3D11VA context. Try closing other GPU-intensive applications.".to_string()
+                    format!(
+                        "D3D11VA: Out of memory when creating context (ENOMEM). \
+                         FFmpeg error: {}. \
+                         Action: Close GPU-intensive applications or increase BIOS UMA memory (AMD APU).",
+                        ffmpeg_err
+                    )
                 } else {
-                    format!("Failed to create D3D11VA device context: FFmpeg error code {ret}")
+                    format!(
+                        "D3D11VA: Failed to create device context (code {}). \
+                         FFmpeg error: {}. \
+                         Action: Check GPU drivers, BIOS settings, or disable hwdecode.",
+                        ret, ffmpeg_err
+                    )
                 };
+
+                warn!("{}", err_msg);
                 return Err(VideoError::InitializationError(err_msg));
             }
         }
@@ -141,23 +163,47 @@ impl D3d11vaDecoder {
         unsafe {
             let ctx_ptr = self.decoder.as_mut_ptr();
 
-            let hw_config = ffmpeg::sys::avcodec_get_hw_config((*ctx_ptr).codec, 0);
+            // Iterate through all hardware configs (FFmpeg may list D3D11VA at any index)
+            let mut i = 0;
+            let mut found_d3d11va = false;
 
-            if hw_config.is_null() {
+            debug!("D3D11VA: Enumerating available hardware configs for H.264 codec");
+
+            loop {
+                let hw_config = ffmpeg::sys::avcodec_get_hw_config((*ctx_ptr).codec, i);
+
+                if hw_config.is_null() {
+                    // End of config list
+                    break;
+                }
+
+                let config = &*hw_config;
+                debug!(
+                    "D3D11VA: Found hw_config[{}]: device_type={:?}, pix_fmt={:?}, methods=0x{:x}",
+                    i, config.device_type, config.pix_fmt, config.methods
+                );
+
+                if config.device_type == ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA {
+                    info!("D3D11VA: Found D3D11VA config at index {}", i);
+                    found_d3d11va = true;
+                    break;
+                }
+
+                i += 1;
+            }
+
+            if !found_d3d11va {
                 return Err(VideoError::InitializationError(
-                    "D3D11VA: No hardware config found for H.264 codec. GPU may not support D3D11VA.".to_string()
+                    "D3D11VA: No D3D11VA config found in any hw_config index. \
+                     This FFmpeg build may not support D3D11VA hardware acceleration."
+                        .to_string(),
                 ));
             }
 
-            let config = &*hw_config;
-            if config.device_type != ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA {
-                return Err(VideoError::InitializationError(format!(
-                    "D3D11VA: Hardware config mismatch (expected D3D11VA, got {:?})",
-                    config.device_type
-                )));
-            }
-
-            debug!("D3D11VA hardware support verified");
+            debug!(
+                "D3D11VA hardware support verified (found at config index {})",
+                i
+            );
         }
 
         Ok(())
