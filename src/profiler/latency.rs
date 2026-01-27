@@ -181,6 +181,23 @@ pub struct LatencyStats {
     count: usize,
 }
 
+/// Lock-free latency summary for UI display
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LatencySummary {
+    /// Average latency (ms)
+    pub average: f32,
+    /// Minimum latency (ms)
+    pub min: f32,
+    /// Maximum latency (ms)
+    pub max: f32,
+    /// 95th percentile latency (ms)
+    pub p95: f32,
+    /// 99th percentile latency (ms)
+    pub p99: f32,
+    /// Number of samples
+    pub count: usize,
+}
+
 impl LatencyStats {
     /// Create new statistics aggregator
     ///
@@ -254,6 +271,41 @@ impl LatencyStats {
 
     /// Check if statistics are ready (have enough samples)
     pub fn is_ready(&self) -> bool { self.count >= self.window_size / 2 }
+
+    /// Compute summary snapshot for lock-free publishing
+    pub fn summary(&self) -> LatencySummary {
+        if self.count == 0 {
+            return LatencySummary::default();
+        }
+
+        let mut sorted: Vec<f64> = self.samples.iter().take(self.count).copied().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let p95_idx = (self.count as f64 * 0.95) as usize;
+        let p99_idx = (self.count as f64 * 0.99) as usize;
+
+        LatencySummary {
+            average: self.average() as f32,
+            min: sorted[0] as f32,
+            max: sorted[self.count - 1] as f32,
+            p95: sorted[p95_idx.min(self.count - 1)] as f32,
+            p99: sorted[p99_idx.min(self.count - 1)] as f32,
+            count: self.count,
+        }
+    }
+
+    /// Get 99th percentile latency (in milliseconds)
+    pub fn p99(&self) -> f64 {
+        if self.count == 0 {
+            return 0.0;
+        }
+
+        let mut sorted: Vec<f64> = self.samples.iter().take(self.count).copied().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let idx = (self.count as f64 * 0.99) as usize;
+        sorted[idx.min(self.count - 1)]
+    }
 }
 
 #[cfg(test)]

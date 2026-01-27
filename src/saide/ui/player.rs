@@ -21,9 +21,10 @@ use {
             new_rgba_render_callback,
         },
         error::Result,
-        profiler::{LatencyProfiler, LatencyStats},
+        profiler::{LatencyProfiler, LatencyStats, latency::LatencySummary},
         scrcpy::protocol::video::VideoPacket,
     },
+    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     parking_lot::Mutex,
@@ -131,8 +132,8 @@ pub struct StreamPlayer {
     /// Stream statistics
     stats: StreamStats,
 
-    /// Latency statistics aggregator
-    latency_stats: Arc<Mutex<LatencyStats>>,
+    /// Latency summary (lock-free, published from decoder thread)
+    latency_summary: Arc<ArcSwap<LatencySummary>>,
 
     /// Player state
     state: PlayerState,
@@ -208,7 +209,7 @@ impl StreamPlayer {
             stats_rx: None,
             current_frame: None,
             stats: StreamStats::default(),
-            latency_stats: Arc::new(Mutex::new(LatencyStats::new(60))),
+            latency_summary: Arc::new(ArcSwap::new(Arc::new(LatencySummary::default()))),
             state: PlayerState::Idle,
             stream_thread: None,
             video_rect: egui::Rect::NOTHING,
@@ -243,7 +244,7 @@ impl StreamPlayer {
 
         let event_tx = self.event_tx.clone();
         let cancel_token = self.cancel_token.clone();
-        let latency_stats = self.latency_stats.clone();
+        let latency_summary = self.latency_summary.clone();
         let audio_buffer_frames = self.audio_buffer_frames;
         let audio_ring_capacity = self.audio_ring_capacity;
         let hwdecode = self.hwdecode;
@@ -260,7 +261,7 @@ impl StreamPlayer {
                 video_resolution,
                 event_tx,
                 cancel_token.clone(),
-                latency_stats,
+                latency_summary,
                 StreamWorkerConfig {
                     audio_buffer_frames,
                     audio_ring_capacity,
@@ -461,18 +462,17 @@ impl StreamPlayer {
         }
     }
 
-    /// Get video statistics
     pub fn video_stats(&self) -> VideoStats {
-        let latency = self.latency_stats.lock();
+        let summary = self.latency_summary.load();
 
         VideoStats {
             fps: self.fps,
             total_frames: self.stats.video_frames as u32,
             dropped_frames: self.stats.dropped_frames as u32,
-            latency_ms: latency.average() as f32,
+            latency_ms: summary.average,
             latency_decode_ms: self.stats.last_decode_ms as f32,
             latency_upload_ms: self.stats.last_upload_ms as f32,
-            latency_p95_ms: latency.p95() as f32,
+            latency_p95_ms: summary.p95,
         }
     }
 
@@ -562,7 +562,7 @@ fn stream_worker(
     video_resolution: (u32, u32),
     event_tx: Sender<PlayerEvent>,
     token: CancellationToken,
-    latency_stats: Arc<Mutex<LatencyStats>>,
+    latency_summary: Arc<ArcSwap<LatencySummary>>,
     config: StreamWorkerConfig,
 ) -> Result<()> {
     let (width, height) = video_resolution;
@@ -601,6 +601,7 @@ fn stream_worker(
     });
 
     debug!("Starting video decode loop...");
+    let mut latency_stats = LatencyStats::new(60);
     let decode_result = VideoLoop::run(
         &mut video_stream,
         &mut video_decoder,
@@ -609,7 +610,8 @@ fn stream_worker(
         &event_tx,
         &stats,
         &av_snapshot,
-        &latency_stats,
+        &mut latency_stats,
+        &latency_summary,
         &mut last_resolution,
         decoder_mgr.hwdecode,
         &token,
@@ -789,7 +791,8 @@ impl VideoLoop {
         event_tx: &Sender<PlayerEvent>,
         stats: &Arc<Mutex<StreamStats>>,
         av_snapshot: &crate::avsync::AVSyncSnapshot,
-        latency_stats: &Arc<Mutex<LatencyStats>>,
+        latency_stats: &mut LatencyStats,
+        latency_summary: &Arc<ArcSwap<LatencySummary>>,
         last_resolution: &mut (u32, u32),
         hwdecode: bool,
         token: &CancellationToken,
@@ -918,11 +921,16 @@ impl VideoLoop {
                 profiler.mark_display();
 
                 if let Some(breakdown) = profiler.breakdown() {
-                    latency_stats.lock().add_sample(breakdown.total_ms());
+                    latency_stats.add_sample(breakdown.total_ms());
 
                     let mut s = stats.lock();
                     s.last_decode_ms = breakdown.decode_ms();
                     s.last_upload_ms = breakdown.upload_ms();
+                }
+
+                if current_stats.video_frames % 30 == 0 {
+                    let summary = latency_stats.summary();
+                    latency_summary.store(Arc::new(summary));
                 }
 
                 match frame_tx.try_send(Arc::new(frame)) {
