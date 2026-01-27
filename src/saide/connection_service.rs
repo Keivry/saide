@@ -7,6 +7,7 @@ use {
     crate::{
         config::SAideConfig,
         controller::{control_sender::ControlSender, keyboard::KeyboardMapper, mouse::MouseMapper},
+        decoder::AutoDecoder,
         error::{Result, SAideError},
         scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
@@ -58,7 +59,7 @@ impl ConnectionService {
         debug!("Connecting to device: {}", serial);
 
         let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
-            if ServerParams::should_lock_orientation(config.gpu.hwdecode) {
+            if AutoDecoder::needs_orientation_lock(config.gpu.hwdecode) {
                 Some(0)
             } else {
                 None

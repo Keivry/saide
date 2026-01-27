@@ -841,6 +841,11 @@ impl VideoLoop {
             profiler.mark_capture(estimated_capture);
 
             // Lazy decoder initialization: create decoder from first keyframe SPS
+            // Note: SPS parsing on every keyframe (~1-2/sec) has negligible cost (~1-5μs)
+            // We keep resolution change detection as defensive programming:
+            // - Software decoder (hwdecode=false): no orientation lock, resolution may change
+            // - Hardware decoder: capture_orientation lock may fail on some devices
+            // - Cost of check: single integer comparison, worth the safety
             if video_packet.is_keyframe
                 && let Some((width_sps, height_sps)) =
                     extract_resolution_from_stream(&video_packet.data)
@@ -848,7 +853,6 @@ impl VideoLoop {
                 let new_res = (width_sps, height_sps);
                 if new_res.0 > 32 && new_res.1 > 32 {
                     if video_decoder.is_none() {
-                        // First keyframe - create decoder with real resolution from SPS
                         info!(
                             "Creating video decoder from SPS: {}x{}",
                             new_res.0, new_res.1
@@ -860,7 +864,6 @@ impl VideoLoop {
                             height: new_res.1,
                         });
                     } else if new_res != *last_resolution {
-                        // Resolution changed - recreate decoder (D3D11VA limitation)
                         warn!(
                             "Resolution change detected in SPS: {}x{} -> {}x{}, recreating decoder",
                             last_resolution.0, last_resolution.1, new_res.0, new_res.1

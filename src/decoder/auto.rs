@@ -34,6 +34,67 @@ pub enum AutoDecoder {
 }
 
 impl AutoDecoder {
+    /// Determine if orientation lock is needed for hardware decoding
+    ///
+    /// This is a conservative prediction made BEFORE decoder creation.
+    /// Called during scrcpy-server startup to set capture_orientation parameter.
+    ///
+    /// # Rationale
+    ///
+    /// Some hardware decoders cannot handle resolution changes at runtime:
+    /// - **NVDEC** (NVIDIA): Requires fixed resolution, needs orientation lock
+    /// - **D3D11VA** (Windows DirectX): Requires fixed resolution, needs orientation lock
+    /// - **VAAPI** (Linux Intel/AMD): Can handle dynamic resolution, no lock needed
+    ///
+    /// # Strategy
+    ///
+    /// - **Windows**: Always lock if `hwdecode=true`
+    ///   - Both D3D11VA and NVDEC require orientation lock
+    ///   - Conservative approach: lock for all hardware decoders on Windows
+    ///
+    /// - **Linux**: Lock only if NVIDIA GPU is detected
+    ///   - NVDEC needs lock, VAAPI doesn't
+    ///   - Use GPU detection to predict if NVDEC will be used
+    ///   - If non-NVIDIA GPU → VAAPI will be selected → no lock needed
+    ///
+    /// # Arguments
+    ///
+    /// * `hwdecode` - Whether hardware decoding is enabled in config
+    ///
+    /// # Returns
+    ///
+    /// `true` if scrcpy-server should set `capture_orientation=0` (lock rotation)
+    pub fn needs_orientation_lock(hwdecode: bool) -> bool {
+        if !hwdecode {
+            return false;
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            // Windows: Both D3D11VA and NVDEC require orientation lock
+            // Conservative: lock for all hardware decoders on Windows
+            info!("Windows hardware decoding enabled, will lock capture orientation");
+            true
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            use crate::gpu::{GpuType, detect_gpu};
+
+            // Linux: Only NVDEC needs lock, VAAPI can handle dynamic resolution
+            match detect_gpu() {
+                GpuType::Nvidia => {
+                    info!("NVIDIA GPU detected, will lock orientation for potential NVDEC usage");
+                    true
+                }
+                _ => {
+                    info!("Non-NVIDIA GPU detected, VAAPI will handle dynamic resolution");
+                    false
+                }
+            }
+        }
+    }
+
     /// Create decoder with automatic cascade fallback
     ///
     /// Tries hardware decoders in priority order, automatically falling back on failure.

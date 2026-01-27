@@ -2844,3 +2844,160 @@ hwdecode = false  # 强制软件解码
 - FFmpeg hwaccel flags: https://ffmpeg.org/doxygen/trunk/group__lavc__core.html#ga8e6f251dbe6d48cfe8dc6f6d36a61dc1
 
 ---
+## Pitfall #22: Orientation Lock Decision Timing (2026-01-27)
+
+### Problem: GPU Detection vs. Actual Decoder Selection Mismatch
+
+**Symptom**: 
+- GPU detection says "NVIDIA" → locks orientation for NVDEC
+- But NVDEC initialization fails → falls back to VAAPI
+- VAAPI doesn't need orientation lock, but already locked (scrcpy-server started with `capture_orientation=0`)
+- Result: Unnecessary orientation lock on non-NVDEC systems
+
+**Root Cause**:
+
+Decision point mismatch in execution flow:
+
+```
+Timeline:
+1. connection_service.rs:60 → should_lock_orientation(hwdecode)
+2. server.rs:146 → detect_gpu() returns GpuType::Nvidia
+3. Decision: lock=true, start scrcpy-server with capture_orientation=0
+4. player.rs:860 → AutoDecoder::new() cascade fallback:
+   - Try NVDEC → FAILS
+   - Try VAAPI → SUCCESS ✅
+5. Problem: VAAPI running with locked orientation (suboptimal)
+```
+
+**Why This Matters**:
+
+- **VAAPI** can handle dynamic resolution changes without decoder recreation
+- Locking orientation prevents device rotation → worse UX
+- GPU detection predicts decoder type, but cascade fallback may choose differently
+
+### Solution: Decoder-Driven Orientation Lock Decision
+
+**Design**: Move decision logic from GPU detection to `AutoDecoder` module
+
+#### Implementation
+
+**New API** (`src/decoder/auto.rs`):
+
+```rust
+impl AutoDecoder {
+    /// Determine if orientation lock is needed for hardware decoding
+    ///
+    /// Conservative prediction made BEFORE decoder creation.
+    /// Called during scrcpy-server startup to set capture_orientation.
+    ///
+    /// Strategy:
+    /// - Windows: Always lock if hwdecode=true (D3D11VA/NVDEC both need it)
+    /// - Linux: Lock only if NVIDIA GPU detected (NVDEC needs it, VAAPI doesn't)
+    pub fn needs_orientation_lock(hwdecode: bool) -> bool {
+        if !hwdecode {
+            return false;
+        }
+        
+        #[cfg(target_os = "windows")]
+        {
+            // Both D3D11VA and NVDEC require orientation lock
+            true
+        }
+        
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Only NVDEC needs lock, VAAPI handles dynamic resolution
+            match detect_gpu() {
+                GpuType::Nvidia => true,
+                _ => false,
+            }
+        }
+    }
+}
+```
+
+**Caller Update** (`src/saide/connection_service.rs:60`):
+
+```rust
+// Before (GPU detection in server.rs)
+let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
+    if ServerParams::should_lock_orientation(config.gpu.hwdecode) {
+        Some(0)
+    } else {
+        None
+    }
+});
+
+// After (Decoder-driven decision)
+let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
+    if AutoDecoder::needs_orientation_lock(config.gpu.hwdecode) {
+        Some(0)
+    } else {
+        None
+    }
+});
+```
+
+**Removed** (`src/scrcpy/server.rs`):
+
+```rust
+// Deleted should_lock_orientation() method (36 lines)
+// GPU detection imports removed (GpuType, detect_gpu)
+```
+
+### Why This Design Is Better
+
+| Aspect | Old (GPU Detection) | New (Decoder-Driven) |
+|--------|---------------------|----------------------|
+| **Responsibility** | server.rs decides decoder needs | AutoDecoder declares own needs |
+| **Accuracy** | Predicts based on GPU | Knows decoder requirements |
+| **Platform Logic** | Windows-specific if-else in server.rs | Encapsulated in AutoDecoder |
+| **Maintenance** | GPU detection + server.rs both need updates | Single source of truth |
+
+### Limitations
+
+**Still a Prediction**: Decision made BEFORE decoder creation
+
+- Cannot be 100% accurate (cascade fallback unknown until runtime)
+- Conservative strategy:
+  - **Windows**: Always lock (both D3D11VA and NVDEC need it)
+  - **Linux**: Lock if NVIDIA GPU present (predicts NVDEC usage)
+
+**Alternative Considered** (not implemented):
+
+```rust
+// Two-phase initialization (rejected: bad UX)
+1. Start scrcpy-server without orientation lock
+2. Create decoder → know actual type
+3. If NVDEC → restart scrcpy-server with lock
+4. Otherwise continue
+
+Problem: First connection always restarts on NVDEC systems
+```
+
+### Testing
+
+```bash
+# Linux: NVIDIA GPU → lock enabled
+$ RUST_LOG=info cargo run
+INFO AutoDecoder: NVIDIA GPU detected, will lock orientation for potential NVDEC usage
+INFO ScrcpyConnection: Starting with capture_orientation=0
+
+# Linux: Intel GPU → lock disabled
+$ RUST_LOG=info cargo run
+INFO AutoDecoder: Non-NVIDIA GPU detected, VAAPI will handle dynamic resolution
+INFO ScrcpyConnection: Starting with capture_orientation=None
+
+# Windows: Any GPU → always lock
+$ $env:RUST_LOG="info"; cargo run
+INFO AutoDecoder: Windows hardware decoding enabled, will lock capture orientation
+INFO ScrcpyConnection: Starting with capture_orientation=0
+```
+
+### Key Takeaway
+
+**Decouple decision logic from detection logic**:
+- GPU detection = capability discovery (what hardware exists)
+- Orientation lock = decoder requirement (what behavior is needed)
+
+Moving the decision to `AutoDecoder` creates single source of truth for decoder-related policies.
