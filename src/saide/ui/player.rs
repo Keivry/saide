@@ -906,11 +906,13 @@ impl VideoLoop {
                     s.last_upload_ms = breakdown.upload_ms();
                 }
 
-                if frame_tx.try_send(Arc::new(frame)).is_err() {
-                    if frame_tx.is_full() {
+                match frame_tx.try_send(Arc::new(frame)) {
+                    Ok(()) => {}
+                    Err(crossbeam_channel::TrySendError::Full(_)) => {
                         let mut s = stats.lock();
                         s.dropped_frames += 1;
-                    } else {
+                    }
+                    Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
                         debug!("Frame channel disconnected, stopping decode loop");
                         return Ok(());
                     }

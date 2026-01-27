@@ -4,6 +4,181 @@
 
 ---
 
+## 并发陷阱 (P0 优先级)
+
+> **2026-01-27 更新**: 修复 crossbeam channel 错误分类导致的误判断连
+
+### ✅ FIXED: Channel 错误处理的竞态条件
+
+**位置**: `src/saide/ui/player.rs:910-920` (已修复)  
+**问题**: 使用 `is_full()` 后置检查来判断 `try_send()` 失败原因，存在经典的 TOCTTOU (Time-Of-Check-To-Time-Of-Use) 竞态条件
+
+**症状** (在 Linux 和 Windows 上都会出现):
+
+```
+"Frame channel disconnected, stopping decode loop"
+→ 视频流意外终止
+→ 音频随后也终止
+→ 可能出现后续网络错误 (如 Windows 的 error 10053)
+```
+
+**触发频率**:
+- **Linux**: 偶尔触发（用户报告过）
+- **Windows**: 更频繁触发（系统整体性能较差）
+- **根本原因**: 代码逻辑 bug，与平台无关
+
+**修复前**:
+
+```rust
+if frame_tx.try_send(Arc::new(frame)).is_err() {
+    if frame_tx.is_full() {  // ← TOCTTOU bug: 两次独立的状态检查
+        stats.dropped_frames += 1;
+    } else {
+        debug!("Disconnected");  // ← 误判
+        return Ok(());
+    }
+}
+```
+
+**竞态窗口** (实际发生的时序):
+
+```
+正常情况（竞态未触发）:
+Time   Thread    Action                           Channel State
+----   ------    ------                           -------------
+T0     Decode    try_send() → Full error          buffer=[1/1]
+T1     Decode    检查 is_full() → true            buffer=[1/1]
+T2     Decode    dropped_frames += 1 (正确)       buffer=[1/1]
+T3     UI        消费帧                            buffer=[0/1]
+
+竞态触发场景（Linux 和 Windows 均可能发生）:
+Time   Thread    Action                           Channel State
+----   ------    ------                           -------------
+T0     Decode    try_send() → Full error          buffer=[1/1]
+T1     UI        消费帧（try_recv 成功）           buffer=[0/1] ← 关键!
+T2     Decode    检查 is_full() → FALSE           buffer=[0/1]
+T3     Decode    误判为 Disconnected → 退出!      (实际 rx 仍活着)
+```
+
+**关键发现**: 
+- `Sender::is_full()` **检查当前缓冲区状态**，不是"try_send 失败时的状态"
+- UI 线程可能在 T0 和 T2 之间消费数据（无论是 Linux 还是 Windows）
+- 在 T0 和 T2 之间，缓冲区从 [1/1] 变为 [0/1]
+- `is_full()` 看到 [0/1] → 返回 false
+- 代码错误地认为 "!is_full() && is_err()" = "Disconnected"
+
+**根本原因**:
+
+1. **`is_full()` 的语义陷阱**:
+   ```rust
+   // crossbeam-channel 源码 (bounded array)
+   pub fn is_full(&self) -> bool {
+       let tail = self.tail.load(Ordering::SeqCst);
+       let head = self.head.load(Ordering::SeqCst);
+       head.wrapping_add(self.one_lap) == tail & !self.mark_bit
+   }
+   ```
+   - `is_full()` **读取当前的 head/tail 计数器**
+   - **不记忆** `try_send()` 失败时的状态
+   - 如果 UI 线程在两次调用之间消费了数据，`is_full()` 会返回 `false`
+
+2. **后置检查的时序漏洞**:
+   - `try_send()` 失败 → 返回 `Err(TrySendError::Full)` (T0 时刻的快照)
+   - `is_full()` 检查 → 返回**当前**缓冲区状态 (T2 时刻的快照)
+   - T0 到 T2 之间可能发生: 
+     - ✅ **UI 消费数据** (buffer [1/1] → [0/1]) ← 实际发生
+     - ❌ ~~Receiver 被 drop~~ ← 不需要这个也能触发 bug
+
+3. **Windows 触发更频繁的原因**:
+   - **根本原因**: 这是**纯并发 bug**，与平台无关
+   - **Linux**: 系统整体性能好 → buffer 处于 Full 状态的时间短 → 竞态窗口小
+   - **Windows**: 系统整体性能差 → buffer 处于 Full 状态的时间长 → 竞态窗口大
+   - 更长的竞态窗口 → UI 线程更可能在 is_full() 检查前消费数据
+   - **注意**: 这不是 Windows 特有的 bug，Linux 上也会触发（用户已确认）
+
+4. **错误的逻辑假设**:
+   ```rust
+   // ❌ 错误假设: "!is_full() 且 try_send() 失败" = "Disconnected"
+   // ✅ 实际情况: 可能是 "Full → UI 消费 → 现在不 Full 了"
+   ```
+
+**修复后**:
+
+```rust
+match frame_tx.try_send(Arc::new(frame)) {
+    Ok(()) => {}
+    Err(crossbeam_channel::TrySendError::Full(_)) => {
+        stats.dropped_frames += 1;
+    }
+    Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+        debug!("Frame channel disconnected, stopping decode loop");
+        return Ok(());
+    }
+}
+```
+
+**为什么这样修复?**
+
+- `try_send()` 返回的 `Err(TrySendError::Full(_))` **精确表示发送失败时的原因**
+- 直接 match 错误类型，避免了后置检查的时间窗口
+- 如果真的是 `Disconnected`，说明 receiver 确实在 `try_send()` 调用时已经不存在
+
+**教训**:
+
+1. **永远不要用后置检查来判断错误原因**:
+   - `is_err()` 然后 `is_full()` 之间的竞态: UI 可能消费数据
+   - Rust 的 `Result`/`Error` 类型设计就是为了 **match** 而非事后推断
+   - **错误变体本身携带了失败时的精确原因**，不需要二次查询
+
+2. **`is_full()` 不是"为什么上次发送失败"的查询函数**:
+   - 它是 "当前缓冲区满吗？" 的瞬时快照
+   - crossbeam 源码: 直接读 head/tail 原子计数器
+   - 如果 receiver 在两次调用间消费了数据，结果会变
+
+3. **bounded(1) 的危险性**:
+   - 单帧缓冲 → 极小的竞态窗口也会触发
+   - `try_send() 失败` 和 `is_full() 检查` 之间只需 1 次 `try_recv()` 就能翻转状态
+
+4. **平台差异会影响触发频率，但不改变 bug 的性质**:
+   - Linux 上系统性能好 → buffer Full 时间短 → 竞态窗口小
+   - Windows 上系统性能差 → buffer Full 时间长 → 竞态窗口大
+   - 不能假设"Linux 能跑就是对的"
+   - **这是跨平台的并发 bug，不是 Windows 专属问题**
+
+**后续行动** (如果修复后仍出现 Disconnected):
+
+1. **添加 Drop 追踪**:
+   ```rust
+   impl Drop for StreamPlayer {
+       fn drop(&mut self) {
+           error!("StreamPlayer dropped! Backtrace: {:?}", 
+                  std::backtrace::Backtrace::capture());
+       }
+   }
+   ```
+
+2. **检查 channel 替换**:
+   - 搜索 `frame_rx = Some(new_rx)` → 旧 receiver 被 drop
+   - 检查 `PlayerEvent::Ready` 是否被多次触发
+   - 确认解码线程使用的 `frame_tx` 对应正确的 receiver
+
+3. **审计 resize 路径**:
+   - `resize(ctx)` → `ViewportCommand::InnerSize()`
+   - wgpu 是否触发 surface lost/recreation
+   - egui 是否重建 app state
+
+**性能影响**: 无（仅改变错误分类逻辑）
+
+**相关代码**:
+- 错误处理: `src/saide/ui/player.rs:910-920`
+- Receiver 生命周期: `src/saide/ui/player.rs:289, 309`
+
+**参考**:
+- [crossbeam-channel `TrySendError` docs](https://docs.rs/crossbeam-channel/latest/crossbeam_channel/enum.TrySendError.html)
+- Oracle 分析: "crossbeam has no timeout/liveness check; `Disconnected` = receiver count is zero"
+
+---
+
 ## 坐标系统陷阱 (P1 优先级)
 
 > **2026-01-22 更新**: 新增自动视频旋转补偿功能 (capture_orientation 锁定时)  

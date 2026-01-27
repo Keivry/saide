@@ -480,6 +480,11 @@ level = "debug"
 - **GPU detection returns "Unknown"**: D3D11VA still works, but decoder selection is not optimized. DXGI enumeration pending.
 - **First run may be slow**: Windows Defender/antivirus may scan the executable on first launch.
 - **Config path**: Use `%APPDATA%\saide\config.toml` instead of `~/.config/saide/config.toml`.
+- **Connection drops during resolution changes (2026-01-27)**: FIXED in v0.3.1
+  - **Symptom**: Video stream disconnects ~2.5 seconds after device rotation
+  - **Root cause**: TOCTTOU race condition - `is_full()` checked after `try_send()` failed, but UI thread consumed frame between the two calls, causing false "disconnected" detection
+  - **Fix**: Match `TrySendError::{Full, Disconnected}` directly instead of post-hoc `is_full()` check
+  - **Impact**: Eliminates false disconnection on both Windows and Linux. Windows triggers more frequently due to slower overall performance (longer time in buffer Full state = larger race window), but the bug is platform-agnostic.
 - **AMD GPU D3D11VA compatibility (2026-01-27)**:
   - Some AMD GPU/driver combinations may fail D3D11VA initialization with `Failed setup for format d3d11: hwaccel initialisation returned error`
   - **Workaround**: Update AMD GPU drivers to latest version from [AMD Support](https://www.amd.com/en/support)
