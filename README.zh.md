@@ -475,12 +475,18 @@ level = "debug"
 - **GPU 检测返回 "Unknown"**: D3D11VA 仍可工作,但解码器选择未优化,DXGI 枚举待实现。
 - **首次运行可能较慢**: Windows Defender 可能在首次启动时扫描可执行文件。
 - **配置文件路径**: 使用 `%APPDATA%\saide\config.toml` 而非 `~/.config/saide/config.toml`。
-- **AMD GPU D3D11VA 兼容性问题 (2026-01-27)**:
-  - 某些 AMD GPU/驱动组合可能在 D3D11VA 初始化时失败,报错 `Failed setup for format d3d11: hwaccel initialisation returned error`
-  - **解决方法**: 从 [AMD 官网](https://www.amd.com/zh-hans/support) 更新至最新驱动
-  - **诊断工具**: 运行 `.\scripts\test_d3d11va_amd.ps1` 测试兼容性
-  - **临时方案**: 在 `config.toml` 中设置 `hwdecode = false` 强制软件解码
-  - **根本原因**: FFmpeg D3D11VA 需要驱动级 H.264 硬解支持 (UVD/VCN)。旧驱动 (2020 年前) 或 APU 集成显卡可能不完全支持。
+- **分辨率变化时连接断开 (2026-01-27)**: ✅ **已在 v0.3.1 修复**
+  - **症状**: 设备旋转后约 2.5 秒视频流断开
+  - **根因**: TOCTTOU 竞态条件 - `try_send()` 失败后检查 `is_full()`,但 UI 线程在两次调用间消费了帧,导致误判为已断开
+  - **修复**: 直接匹配 `TrySendError::{Full, Disconnected}` 而非事后检查 `is_full()`
+  - **影响**: 消除 Windows 和 Linux 上的误断开。Windows 因整体性能较慢(缓冲区满状态持续更久)触发更频繁,但本质是跨平台 Bug。
+- **AMD GPU D3D11VA 硬编码配置索引 (2026-01-27)**: ✅ **已在 d7f0b25 修复**
+  - **之前问题**: 硬编码 `avcodec_get_hw_config(..., 0)` 导致部分 FFmpeg 构建初始化失败
+  - **症状**: 报错 `Failed setup for format d3d11: hwaccel initialisation returned error` 或 `Hardware config mismatch`
+  - **修复**: 现在遍历所有 hw_config 索引直到找到 D3D11VA
+  - **增强诊断**: 添加 FFmpeg 错误信息转换 (`av_strerror`) 并提供可操作的建议
+  - **当前状态**: 大多数 AMD GPU 在正确驱动下已可正常使用 D3D11VA
+  - **如仍失败**: 运行 `.\scripts\test_d3d11va_amd.ps1` 诊断驱动/UMA 显存问题 (详见 [AMD_D3D11VA_TROUBLESHOOTING.md](docs/AMD_D3D11VA_TROUBLESHOOTING.md))
 
 完整的已知问题和解决方法请参阅 [docs/pitfalls.md](docs/pitfalls.md)。
 

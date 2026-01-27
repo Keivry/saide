@@ -480,17 +480,18 @@ level = "debug"
 - **GPU detection returns "Unknown"**: D3D11VA still works, but decoder selection is not optimized. DXGI enumeration pending.
 - **First run may be slow**: Windows Defender/antivirus may scan the executable on first launch.
 - **Config path**: Use `%APPDATA%\saide\config.toml` instead of `~/.config/saide/config.toml`.
-- **Connection drops during resolution changes (2026-01-27)**: FIXED in v0.3.1
+- **Connection drops during resolution changes (2026-01-27)**: ✅ **FIXED in v0.3.1**
   - **Symptom**: Video stream disconnects ~2.5 seconds after device rotation
   - **Root cause**: TOCTTOU race condition - `is_full()` checked after `try_send()` failed, but UI thread consumed frame between the two calls, causing false "disconnected" detection
   - **Fix**: Match `TrySendError::{Full, Disconnected}` directly instead of post-hoc `is_full()` check
   - **Impact**: Eliminates false disconnection on both Windows and Linux. Windows triggers more frequently due to slower overall performance (longer time in buffer Full state = larger race window), but the bug is platform-agnostic.
-- **AMD GPU D3D11VA compatibility (2026-01-27)**:
-  - Some AMD GPU/driver combinations may fail D3D11VA initialization with `Failed setup for format d3d11: hwaccel initialisation returned error`
-  - **Workaround**: Update AMD GPU drivers to latest version from [AMD Support](https://www.amd.com/en/support)
-  - **Testing**: Run `.\scripts\test_d3d11va_amd.ps1` to diagnose compatibility
-  - **Fallback**: Set `hwdecode = false` in `config.toml` to force software decoding
-  - **Root cause**: FFmpeg D3D11VA requires driver-level H.264 decode support (UVD/VCN). Older drivers (pre-2020) or APU integrated graphics may lack full support.
+- **AMD GPU D3D11VA hardcoded config index (2026-01-27)**: ✅ **FIXED in commit d7f0b25**
+  - **Previous issue**: Hardcoded `avcodec_get_hw_config(..., 0)` caused initialization failures on some FFmpeg builds
+  - **Symptom**: `Failed setup for format d3d11: hwaccel initialisation returned error` or `Hardware config mismatch` errors
+  - **Fix**: Now iterates all hw_config indices until D3D11VA is found
+  - **Enhanced diagnostics**: Added FFmpeg error message conversion (`av_strerror`) with actionable guidance
+  - **Status**: D3D11VA now works on most AMD GPUs with proper drivers
+  - **If still failing**: Run `.\scripts\test_d3d11va_amd.ps1` to diagnose driver/UMA memory issues (see [AMD_D3D11VA_TROUBLESHOOTING.md](docs/AMD_D3D11VA_TROUBLESHOOTING.md))
 
 See [docs/pitfalls.md](docs/pitfalls.md) for comprehensive list of known issues and workarounds.
 
