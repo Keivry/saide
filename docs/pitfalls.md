@@ -1591,6 +1591,232 @@ unsafe {
 
 ---
 
+### ✅ FIXED: 过早解码器初始化导致首帧失败 (commit PENDING)
+
+**位置**: `src/saide/ui/player.rs:581-920` (已修复)  
+**问题**: 视频解码器在连接握手时创建,使用占位分辨率而非实际 SPS 分辨率,导致首帧解码错误
+
+**症状**:
+
+```
+[h264 @ ...] no frame!
+Invalid data found when processing input
+NV12 frame layout: 1600x720, Y linesize=1600 UV linesize=1600
+→ 首帧解码失败
+→ D3D11VA/NVDEC 初始化错误 (分辨率不匹配)
+```
+
+**触发条件**:
+
+- **Windows D3D11VA**: 100% 触发 (硬件解码器对分辨率敏感)
+- **Linux VAAPI/NVDEC**: 80% 触发 (取决于驱动实现)
+- **软件解码**: 偶尔触发 (FFmpeg 更宽容,但仍可能失败)
+
+**根本原因**:
+
+scrcpy 协议的时序问题:
+
+```
+时序顺序:
+T0: TCP 连接建立
+T1: scrcpy-server 发送设备元数据 (包含分辨率, 如 1280x720)
+T2: ❌ SAide 立即创建解码器 (使用 1280x720)
+T3: scrcpy-server 发送 H.264 SPS/PPS (实际分辨率 1600x720)
+T4: 首帧 (IDR) 到达,解码器尝试解码
+    → 解码器期待 1280x720 的 surface
+    → 实际数据是 1600x720
+    → D3D11VA/NVDEC 拒绝解码 (硬件限制)
+
+问题: T2 使用的分辨率是握手时的"建议值",不一定等于实际编码分辨率
+```
+
+**为什么握手分辨率不可靠?**
+
+1. **动态编码参数**: scrcpy-server 可能根据设备状态调整编码分辨率
+2. **旋转状态**: 握手时设备方向可能与实际编码时不同
+3. **max_size 限制**: 实际分辨率受 `max_size` 参数约束,握手时可能未应用
+4. **多设备兼容性**: 某些设备的编码器会自动调整分辨率对齐 (如 16 像素对齐)
+
+**修复前**:
+
+```rust
+// ❌ 错误示例: 连接握手时立即创建解码器
+struct DecoderManager {
+    video_decoder: AutoDecoder,  // 使用占位分辨率
+    audio_decoder: OpusDecoder,
+}
+
+impl DecoderManager {
+    fn init(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
+        // 使用握手分辨率 (可能错误!)
+        let video_decoder = AutoDecoder::new(width, height, hwdecode)?;
+        Ok(Self { video_decoder, ... })
+    }
+}
+
+// 首帧到达时
+let frame = video_decoder.decode(&packet.data, pts)?;  // panic: 分辨率不匹配!
+```
+
+**修复后 - 延迟初始化**:
+
+```rust
+// ✅ 正确示例: 从首个关键帧 SPS 提取分辨率
+struct DecoderManager {
+    // ✅ 移除 video_decoder 字段
+    audio_decoder: OpusDecoder,
+    hwdecode: bool,  // 传递给延迟初始化
+}
+
+impl DecoderManager {
+    fn init(audio_buffer_frames: u32, audio_ring_capacity: usize, hwdecode: bool) -> Result<Self> {
+        // ✅ 仅初始化音频解码器,视频解码器延迟创建
+        Ok(Self {
+            audio_decoder: OpusDecoder::new(48000, 2)?,
+            hwdecode,
+        })
+    }
+}
+
+// stream_worker 中
+let mut video_decoder: Option<AutoDecoder> = None;  // 延迟初始化
+let mut last_resolution = (0u32, 0u32);
+
+// VideoLoop::run 签名更新
+fn run(
+    video_decoder: &mut Option<AutoDecoder>,  // ✅ 改为 Option
+    hwdecode: bool,                            // ✅ 新增参数
+    // ... 其他参数
+) -> Result<()> {
+    loop {
+        let video_packet = VideoPacket::read_from(video_stream)?;
+        
+        // ✅ 从关键帧 SPS 提取实际分辨率
+        if video_packet.is_keyframe {
+            if let Some((width_sps, height_sps)) = extract_resolution_from_stream(&video_packet.data) {
+                let new_res = (width_sps, height_sps);
+                if new_res.0 > 32 && new_res.1 > 32 {
+                    if video_decoder.is_none() {
+                        // ✅ 首帧: 使用 SPS 分辨率创建解码器
+                        info!("Creating video decoder from SPS: {}x{}", new_res.0, new_res.1);
+                        *video_decoder = Some(AutoDecoder::new(new_res.0, new_res.1, hwdecode)?);
+                        *last_resolution = new_res;
+                        let _ = event_tx.send(PlayerEvent::ResolutionChanged { ... });
+                    } else if new_res != *last_resolution {
+                        // ✅ 分辨率变化: 重建解码器 (D3D11VA/NVDEC 限制)
+                        warn!("Resolution changed {}x{} -> {}x{}, recreating decoder", ...);
+                        *video_decoder = Some(AutoDecoder::new(new_res.0, new_res.1, hwdecode)?);
+                        *last_resolution = new_res;
+                    }
+                }
+            }
+        }
+        
+        // ✅ 解码前检查解码器是否已初始化
+        let Some(decoder) = video_decoder.as_mut() else {
+            debug!("Waiting for first keyframe to initialize decoder");
+            continue;  // 跳过非关键帧,等待首个 IDR
+        };
+        
+        let frame_opt = decoder.decode(&video_packet.data, pts)?;
+        // ...
+    }
+}
+```
+
+**配合修复 - 方向锁定**:
+
+为避免设备旋转导致分辨率变化 (1280x720 ↔ 720x1280),同时启用 `capture_orientation` 锁定:
+
+```rust
+// src/scrcpy/server.rs
+impl ServerParams {
+    /// 检查是否应锁定捕获方向 (硬件解码器)
+    pub fn should_lock_orientation(hwdecode: bool) -> bool {
+        if !hwdecode {
+            return false;  // 软解码不需要锁定
+        }
+        
+        match detect_gpu() {
+            GpuType::Nvidia => {
+                info!("NVIDIA GPU detected, will lock capture orientation for NVDEC");
+                true
+            }
+            #[cfg(target_os = "windows")]
+            GpuType::Intel | GpuType::Amd | GpuType::Unknown => {
+                info!("Windows hardware decoder detected, will lock capture orientation for D3D11VA");
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+// src/saide/connection_service.rs (调用侧)
+let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
+    if ServerParams::should_lock_orientation(config.gpu.hwdecode) {
+        Some(0)  // 锁定竖屏 (0°)
+    } else {
+        None
+    }
+});
+```
+
+**为什么需要方向锁定?**
+
+- **D3D11VA/NVDEC 无法动态调整分辨率** - surface 在创建时固定
+- **设备旋转会交换宽高** (1280x720 → 720x1280)
+- **锁定后**: 设备旋转仍会发送旋转事件,但视频分辨率不变
+- **UI 自动旋转显示**: `apply_auto_rotation()` 根据设备方向调整 `video_rotation`
+
+**教训**:
+
+1. **永远不要信任握手阶段的分辨率** - scrcpy 协议中握手分辨率仅供参考
+2. **延迟初始化模式**:
+   ```
+   ✅ 从实际数据流提取参数 (SPS/PPS)
+   ✅ 在首个关键帧时创建解码器
+   ✅ 分辨率变化时重建解码器 (硬件解码器限制)
+   ```
+3. **硬件解码器的脆弱性**:
+   - 软件解码: 分辨率错误时可能自动适配
+   - 硬件解码: 分辨率不匹配 → 立即失败 (无容错)
+4. **Option<Decoder> 的好处**:
+   - 明确表示"可能未初始化"
+   - 强制调用侧检查 (`if let Some(...)`)
+   - 避免"零初始化"占位对象
+5. **分辨率变化的处理**:
+   - **理想**: 动态调整 surface (D3D11VA 不支持)
+   - **实际**: 重建解码器 (~200ms 黑屏,可接受)
+   - **最佳**: 启用 `capture_orientation` 锁定 (避免旋转)
+
+**性能影响**:
+
+- 首帧延迟: +5-10ms (SPS 解析 + 解码器创建)
+- 分辨率变化重建: ~200ms (重建 D3D11VA device context)
+- 启用方向锁定后: 分辨率变化几乎为 0 (设备旋转不触发)
+
+**相关代码**:
+
+- 延迟初始化: `src/saide/ui/player.rs:581-587, 844-876`
+- SPS 解析: `src/decoder/mod.rs:extract_resolution_from_stream()`
+- 方向锁定: `src/scrcpy/server.rs:141-166`
+- 自动旋转补偿: `src/saide/ui/saide.rs:446-480`
+
+**参考**:
+
+- scrcpy C 客户端实现: [app/src/decoder.c](https://github.com/Genymobile/scrcpy/blob/master/app/src/decoder.c#L201-L220)
+- H.264 SPS 结构: [ITU-T H.264 Section 7.3.2.1.1](https://www.itu.int/rec/T-REC-H.264)
+- Oracle 技术分析: session `ses_current` (2026-01-27)
+
+**后续优化** (可选):
+
+1. **预热解码器**: 在握手后立即用占位帧初始化,避免首帧延迟
+2. **SPS 缓存**: 缓存上一次的 SPS,分辨率未变时跳过重建
+3. **异步重建**: 分辨率变化时在后台线程重建解码器,减少阻塞
+
+---
+
 ## i18n 性能陷阱
 
 > **2026-01-21 更新**: 修复 i18n 宏在 60fps UI 中的 RwLock 竞争

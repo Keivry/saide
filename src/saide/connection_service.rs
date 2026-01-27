@@ -58,7 +58,7 @@ impl ConnectionService {
         debug!("Connecting to device: {}", serial);
 
         let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
-            if config.gpu.hwdecode && ServerParams::should_lock_orientation_for_nvdec() {
+            if ServerParams::should_lock_orientation(config.gpu.hwdecode) {
                 Some(0)
             } else {
                 None

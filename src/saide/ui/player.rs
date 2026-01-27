@@ -578,14 +578,13 @@ fn stream_worker(
         height,
     })?;
 
-    let mut decoder_mgr = DecoderManager::init(
-        width,
-        height,
+    let decoder_mgr = DecoderManager::init(
         config.audio_buffer_frames,
         config.audio_ring_capacity,
         config.hwdecode,
     )?;
-    let mut last_resolution = (width, height);
+    let mut last_resolution = (0u32, 0u32);
+    let mut video_decoder: Option<AutoDecoder> = None;
 
     let stats = Arc::new(Mutex::new(StreamStats::default()));
     let av_snapshot = decoder_mgr.av_sync.snapshot();
@@ -604,7 +603,7 @@ fn stream_worker(
     debug!("Starting video decode loop...");
     let decode_result = VideoLoop::run(
         &mut video_stream,
-        &mut decoder_mgr.video_decoder,
+        &mut video_decoder,
         &frame_tx,
         &stats_tx,
         &event_tx,
@@ -612,6 +611,7 @@ fn stream_worker(
         &av_snapshot,
         &latency_stats,
         &mut last_resolution,
+        decoder_mgr.hwdecode,
         &token,
     );
 
@@ -639,35 +639,27 @@ fn stream_worker(
 }
 
 struct DecoderManager {
-    video_decoder: AutoDecoder,
     audio_decoder: OpusDecoder,
     audio_player: AudioPlayer,
     av_sync: AVSync,
+    hwdecode: bool,
 }
 
 impl DecoderManager {
-    fn init(
-        width: u32,
-        height: u32,
-        audio_buffer_frames: u32,
-        audio_ring_capacity: usize,
-        hwdecode: bool,
-    ) -> Result<Self> {
-        let video_decoder = AutoDecoder::new(width, height, hwdecode)?;
+    fn init(audio_buffer_frames: u32, audio_ring_capacity: usize, hwdecode: bool) -> Result<Self> {
         let audio_decoder = OpusDecoder::new(48000, 2)?;
         let audio_player = AudioPlayer::new(48000, 2, audio_buffer_frames, audio_ring_capacity)?;
         let av_sync = AVSync::new(20);
 
         info!(
-            "Decoders initialized: {} + Opus",
-            video_decoder.decoder_type()
+            "Audio decoder initialized: Opus (video decoder will be created from first keyframe SPS)"
         );
 
         Ok(Self {
-            video_decoder,
             audio_decoder,
             audio_player,
             av_sync,
+            hwdecode,
         })
     }
 }
@@ -791,7 +783,7 @@ impl VideoLoop {
     #[allow(clippy::too_many_arguments)]
     fn run(
         video_stream: &mut TcpStream,
-        video_decoder: &mut AutoDecoder,
+        video_decoder: &mut Option<AutoDecoder>,
         frame_tx: &Sender<Arc<DecodedFrame>>,
         stats_tx: &Sender<StreamStats>,
         event_tx: &Sender<PlayerEvent>,
@@ -799,6 +791,7 @@ impl VideoLoop {
         av_snapshot: &crate::avsync::AVSyncSnapshot,
         latency_stats: &Arc<Mutex<LatencyStats>>,
         last_resolution: &mut (u32, u32),
+        hwdecode: bool,
         token: &CancellationToken,
     ) -> Result<()> {
         let mut consecutive_read_errors = 0u32;
@@ -847,25 +840,48 @@ impl VideoLoop {
             let estimated_capture = Instant::now() - Duration::from_millis(30);
             profiler.mark_capture(estimated_capture);
 
+            // Lazy decoder initialization: create decoder from first keyframe SPS
             if video_packet.is_keyframe
                 && let Some((width_sps, height_sps)) =
                     extract_resolution_from_stream(&video_packet.data)
             {
                 let new_res = (width_sps, height_sps);
-                if new_res != *last_resolution && new_res.0 > 32 && new_res.1 > 32 {
-                    info!(
-                        "Resolution change detected in SPS: {}x{} -> {}x{}",
-                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
-                    );
-                    let _ = event_tx.send(PlayerEvent::ResolutionChanged {
-                        width: new_res.0,
-                        height: new_res.1,
-                    });
-                    *last_resolution = new_res;
+                if new_res.0 > 32 && new_res.1 > 32 {
+                    if video_decoder.is_none() {
+                        // First keyframe - create decoder with real resolution from SPS
+                        info!(
+                            "Creating video decoder from SPS: {}x{}",
+                            new_res.0, new_res.1
+                        );
+                        *video_decoder = Some(AutoDecoder::new(new_res.0, new_res.1, hwdecode)?);
+                        *last_resolution = new_res;
+                        let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                            width: new_res.0,
+                            height: new_res.1,
+                        });
+                    } else if new_res != *last_resolution {
+                        // Resolution changed - recreate decoder (D3D11VA limitation)
+                        warn!(
+                            "Resolution change detected in SPS: {}x{} -> {}x{}, recreating decoder",
+                            last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                        );
+                        *video_decoder = Some(AutoDecoder::new(new_res.0, new_res.1, hwdecode)?);
+                        *last_resolution = new_res;
+                        let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                            width: new_res.0,
+                            height: new_res.1,
+                        });
+                    }
                 }
             }
 
-            let frame_opt = match video_decoder.decode(&video_packet.data, pts) {
+            // Decode only if decoder exists (wait for first keyframe)
+            let Some(decoder) = video_decoder.as_mut() else {
+                debug!("Waiting for first keyframe to initialize decoder");
+                continue;
+            };
+
+            let frame_opt = match decoder.decode(&video_packet.data, pts) {
                 Ok(frame) => {
                     profiler.mark_decode();
                     frame

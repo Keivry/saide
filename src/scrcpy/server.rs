@@ -128,22 +128,40 @@ impl Default for ServerParams {
 }
 
 impl ServerParams {
-    /// Check if should lock capture orientation for NVDEC
+    /// Check if should lock capture orientation for hardware decoders
     ///
-    /// Strategy: Always lock orientation when using NVDEC to prevent resolution changes
+    /// Strategy: Always lock orientation when using hardware decoders to prevent resolution changes
     /// Benefits:
     /// - Avoid decoder rebuild overhead (~200ms + brief black screen)
     /// - No need for prepend-sps-pps-to-idr-frames=1 (compatibility issues)
     /// - More stable and predictable behavior
     /// - Works on all devices
     ///
-    /// Returns true if NVDEC is likely to be used (NVIDIA GPU detected)
-    pub fn should_lock_orientation_for_nvdec() -> bool {
-        if let GpuType::Nvidia = detect_gpu() {
-            info!("NVIDIA GPU detected, will lock capture orientation for NVDEC");
-            return true;
+    /// Applies to:
+    /// - NVDEC (NVIDIA GPUs, all platforms)
+    /// - D3D11VA (Intel/AMD/NVIDIA, Windows)
+    /// - VAAPI (Intel/AMD, Linux) - optional, can handle dynamic resolution
+    ///
+    /// Returns true if hardware decoding is enabled and GPU requires orientation lock
+    pub fn should_lock_orientation(hwdecode: bool) -> bool {
+        if !hwdecode {
+            return false;
         }
-        false
+
+        match detect_gpu() {
+            GpuType::Nvidia => {
+                info!("NVIDIA GPU detected, will lock capture orientation for NVDEC");
+                true
+            }
+            #[cfg(target_os = "windows")]
+            GpuType::Intel | GpuType::Amd | GpuType::Unknown => {
+                info!(
+                    "Windows hardware decoder detected, will lock capture orientation for D3D11VA"
+                );
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Create params with device-specific codec options

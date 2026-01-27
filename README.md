@@ -480,6 +480,11 @@ level = "debug"
 - **GPU detection returns "Unknown"**: D3D11VA still works, but decoder selection is not optimized. DXGI enumeration pending.
 - **First run may be slow**: Windows Defender/antivirus may scan the executable on first launch.
 - **Config path**: Use `%APPDATA%\saide\config.toml` instead of `~/.config/saide/config.toml`.
+- **First frame "no frame!" error (2026-01-27)**: ✅ **FIXED in v0.3.1**
+  - **Symptom**: `[h264 @ ...] no frame!` error on first packet, decoder initialization fails
+  - **Root cause**: Decoder created with placeholder resolution from handshake instead of actual SPS resolution
+  - **Fix**: Lazy decoder initialization - extract real resolution from first keyframe SPS, defer decoder creation
+  - **Impact**: Eliminates first frame errors on D3D11VA/NVDEC/software decoders. Adds orientation locking for D3D11VA to prevent resolution changes.
 - **Connection drops during resolution changes (2026-01-27)**: ✅ **FIXED in v0.3.1**
   - **Symptom**: Video stream disconnects ~2.5 seconds after device rotation
   - **Root cause**: TOCTTOU race condition - `is_full()` checked after `try_send()` failed, but UI thread consumed frame between the two calls, causing false "disconnected" detection
