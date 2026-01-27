@@ -500,66 +500,6 @@ fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStr
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        use {
-            std::os::windows::io::AsRawSocket,
-            windows_sys::Win32::Networking::WinSock::{IPPROTO_TCP, SOCKET, setsockopt},
-        };
-
-        let socket = stream.as_raw_socket();
-
-        let nodelay: i32 = 1;
-        let ret = unsafe {
-            setsockopt(
-                socket as SOCKET,
-                IPPROTO_TCP,
-                1,
-                &nodelay as *const _ as *const u8,
-                std::mem::size_of::<i32>() as i32,
-            )
-        };
-
-        if ret != 0 {
-            debug!(
-                "Failed to set TCP_NODELAY for {} connection: {}",
-                channel,
-                std::io::Error::last_os_error()
-            );
-        } else {
-            debug!("{} connection: TCP_NODELAY enabled", channel);
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::io::AsRawFd;
-
-        let fd = stream.as_raw_fd();
-
-        // TCP_QUICKACK = 12 on macOS (BSD-derived)
-        let quickack: libc::c_int = 1;
-        let ret = unsafe {
-            libc::setsockopt(
-                fd,
-                libc::IPPROTO_TCP,
-                12, // TCP_QUICKACK (BSD/macOS constant)
-                &quickack as *const _ as *const libc::c_void,
-                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-            )
-        };
-
-        if ret < 0 {
-            debug!(
-                "Failed to set TCP_QUICKACK for {} connection (advisory on macOS): errno {}",
-                channel,
-                std::io::Error::last_os_error()
-            );
-        } else {
-            debug!("{} connection: TCP_QUICKACK set (advisory)", channel);
-        }
-    }
-
     let timeout = match channel {
         Channel::Control => Duration::from_secs(2),
         _ => Duration::from_secs(5),

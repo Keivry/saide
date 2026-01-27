@@ -63,9 +63,14 @@ impl D3d11vaDecoder {
                 0,
             );
             if ret < 0 {
-                return Err(VideoError::InitializationError(format!(
-                    "Failed to create D3D11VA device context: {ret}",
-                )));
+                let err_msg = if ret == -22 {
+                    "Invalid D3D11 device or driver not compatible. Ensure updated GPU drivers installed.".to_string()
+                } else if ret == -12 {
+                    "Out of memory when creating D3D11VA context. Try closing other GPU-intensive applications.".to_string()
+                } else {
+                    format!("Failed to create D3D11VA device context: FFmpeg error code {ret}")
+                };
+                return Err(VideoError::InitializationError(err_msg));
             }
         }
 
@@ -99,11 +104,14 @@ impl D3d11vaDecoder {
             // D3D11VA will output NV12 after hw transfer
             (*ctx_ptr).sw_pix_fmt = ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NV12;
 
+            // AMD GPU compatibility: Use conservative flags to avoid decoder rejection
             (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
-            (*ctx_ptr).flags2 |= ffmpeg::sys::AV_CODEC_FLAG2_FAST;
-            (*ctx_ptr).strict_std_compliance = ffmpeg::sys::FF_COMPLIANCE_EXPERIMENTAL;
+            (*ctx_ptr).strict_std_compliance = ffmpeg::sys::FF_COMPLIANCE_NORMAL;
 
             (*ctx_ptr).thread_count = 1;
+
+            // AMD GPU workaround: Explicitly set hwaccel flags for better compatibility
+            (*ctx_ptr).hwaccel_flags |= ffmpeg::sys::AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
         }
 
         let decoder = context.decoder().video().map_err(|e| {
@@ -114,7 +122,7 @@ impl D3d11vaDecoder {
 
         debug!("D3D11VA H.264 decoder initialized: {width}x{height}");
 
-        Ok(Self {
+        let mut decoder = Self {
             decoder,
             scaler: None,
             hw_device_ctx,
@@ -122,7 +130,37 @@ impl D3d11vaDecoder {
             height,
             output_format: Pixel::NV12,
             last_decoded_dimensions: None,
-        })
+        };
+
+        decoder.verify_hardware_support()?;
+
+        Ok(decoder)
+    }
+
+    fn verify_hardware_support(&mut self) -> Result<()> {
+        unsafe {
+            let ctx_ptr = self.decoder.as_mut_ptr();
+
+            let hw_config = ffmpeg::sys::avcodec_get_hw_config((*ctx_ptr).codec, 0);
+
+            if hw_config.is_null() {
+                return Err(VideoError::InitializationError(
+                    "D3D11VA: No hardware config found for H.264 codec. GPU may not support D3D11VA.".to_string()
+                ));
+            }
+
+            let config = &*hw_config;
+            if config.device_type != ffmpeg::sys::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA {
+                return Err(VideoError::InitializationError(format!(
+                    "D3D11VA: Hardware config mismatch (expected D3D11VA, got {:?})",
+                    config.device_type
+                )));
+            }
+
+            debug!("D3D11VA hardware support verified");
+        }
+
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -178,6 +216,8 @@ impl D3d11vaDecoder {
 
     fn receive_frames(&mut self) -> Result<Vec<DecodedFrame>> {
         let mut frames = Vec::new();
+        let mut consecutive_failures = 0;
+        const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 
         loop {
             let mut hw_frame = VideoFrame::empty();
@@ -192,10 +232,25 @@ impl D3d11vaDecoder {
                             0,
                         );
                         if ret < 0 {
-                            warn!("Failed to transfer frame from GPU: {ret}");
+                            warn!(
+                                "D3D11VA: Failed to transfer frame from GPU (error {ret}). This may indicate GPU driver issues or insufficient BIOS UMA memory (AMD APU)."
+                            );
+                            consecutive_failures += 1;
+                            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                                return Err(VideoError::DecodingError(format!(
+                                    "D3D11VA: {} consecutive GPU transfer failures. Common causes:\n\
+                                     1. AMD APU: Increase BIOS UMA memory to 2GB (see docs/AMD_D3D11VA_TROUBLESHOOTING.md)\n\
+                                     2. Update GPU drivers to latest version\n\
+                                     3. Disable hardware decoding (hwdecode=false in config.toml)",
+                                    consecutive_failures
+                                )));
+                            }
                             continue;
                         }
                     }
+
+                    // Reset counter only after both decode AND GPU transfer succeed
+                    consecutive_failures = 0;
 
                     trace!(
                         "Decoded frame (D3D11VA): {}x{} {:?} PTS={:?}",
@@ -264,9 +319,21 @@ impl D3d11vaDecoder {
                     break;
                 }
                 Err(e) => {
-                    return Err(VideoError::DecodingError(format!(
-                        "Failed to receive frame from decoder: {e:?}",
-                    )));
+                    consecutive_failures += 1;
+
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        return Err(VideoError::DecodingError(format!(
+                            "D3D11VA: {} consecutive decode failures ({:?}). GPU hardware acceleration may be unsupported by this GPU/driver. Consider updating GPU drivers or disabling hardware decoding.",
+                            consecutive_failures, e
+                        )));
+                    }
+
+                    warn!(
+                        "D3D11VA: Decode error ({:?}), attempt {}/{}. Retrying...",
+                        e, consecutive_failures, MAX_CONSECUTIVE_FAILURES
+                    );
+
+                    continue;
                 }
             }
         }

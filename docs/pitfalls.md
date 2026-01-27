@@ -2089,3 +2089,138 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
 - FFmpeg D3D11VA 文档: https://ffmpeg.org/ffmpeg-codecs.html#h264
 
 ---
+
+## Pitfall #20: AMD GPU D3D11VA 硬件加速初始化成功但解码失败 (2026-01-27)
+
+**问题描述**:
+
+在 Windows 上使用 AMD GPU 时,D3D11VA 硬件加速器初始化成功(`D3D11VA device context created successfully`),但实际解码 H.264 数据时持续失败:
+
+```
+[h264 @ 0000019ECCA4E9C0] Failed setup for format d3d11: hwaccel initialisation returned error.
+[h264 @ 0000019ECCA4E9C0] decode_slice_header error
+[h264 @ 0000019ECCA4E9C0] no frame!
+```
+
+**根本原因**:
+
+1. **FFmpeg 标志不兼容**: `AV_CODEC_FLAG2_FAST` 和 `FF_COMPLIANCE_EXPERIMENTAL` 在某些 AMD GPU 驱动上会导致 D3D11VA 初始化失败
+2. **Profile 不匹配**: AMD D3D11VA 对 H.264 profile 有严格要求,需要 `AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH`
+3. **错误诊断不足**: 原代码只输出通用错误码,无法定位具体问题(驱动版本、GPU 型号、兼容性)
+
+**错误场景**:
+
+```rust
+// 旧代码 (不兼容 AMD GPU)
+unsafe {
+    (*ctx_ptr).flags2 |= ffmpeg::sys::AV_CODEC_FLAG2_FAST;  // AMD GPU 拒绝此标志
+    (*ctx_ptr).strict_std_compliance = ffmpeg::sys::FF_COMPLIANCE_EXPERIMENTAL;  // 过于宽松
+    // 未设置 hwaccel_flags,导致 profile 不匹配时直接失败
+}
+```
+
+**修复方案**:
+
+```rust
+// AMD GPU 兼容修复 (src/decoder/d3d11va.rs)
+unsafe {
+    let ctx_ptr = context.as_mut_ptr();
+    
+    (*ctx_ptr).hw_device_ctx = ffmpeg::sys::av_buffer_ref(hw_device_ctx);
+    (*ctx_ptr).get_format = Some(get_d3d11va_format);
+    
+    // AMD GPU compatibility: Use conservative flags to avoid decoder rejection
+    (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
+    (*ctx_ptr).strict_std_compliance = ffmpeg::sys::FF_COMPLIANCE_NORMAL;  // 改为 NORMAL
+    (*ctx_ptr).thread_count = 1;
+    
+    // AMD GPU workaround: Explicitly set hwaccel flags for better compatibility
+    (*ctx_ptr).hwaccel_flags |= ffmpeg::sys::AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
+}
+
+// 硬件支持验证 (初始化后检查)
+fn verify_hardware_support(&mut self) -> Result<()> {
+    unsafe {
+        let hw_config = ffmpeg::sys::avcodec_get_hw_config((*ctx_ptr).codec, 0);
+        if hw_config.is_null() {
+            return Err(VideoError::InitializationError(
+                "D3D11VA: No hardware config found. GPU may not support D3D11VA.".to_string()
+            ));
+        }
+        // 检查 device_type 是否匹配 AV_HWDEVICE_TYPE_D3D11VA
+    }
+    Ok(())
+}
+
+// 增强错误诊断
+fn receive_frames(&mut self) -> Result<Vec<DecodedFrame>> {
+    let mut consecutive_failures = 0;
+    const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+    
+    loop {
+        match self.decoder.receive_frame(&mut hw_frame) {
+            Err(e) => {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(VideoError::DecodingError(format!(
+                        "D3D11VA: {} consecutive failures. GPU may be unsupported. Update drivers or disable hwdecode.",
+                        consecutive_failures
+                    )));
+                }
+            }
+            // ...
+        }
+    }
+}
+```
+
+**变更影响**:
+
+1. ✅ **AMD GPU 兼容性提升**: 移除 `AV_CODEC_FLAG2_FAST`,使用 `FF_COMPLIANCE_NORMAL`
+2. ✅ **Profile 容错**: `AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH` 允许 Baseline/Main/High profile 混用
+3. ✅ **早期失败检测**: `verify_hardware_support()` 在初始化后立即验证硬件支持
+4. ✅ **连续失败保护**: 5 次失败后自动降级,避免无限重试
+5. ✅ **详细错误消息**: 提示用户更新驱动或禁用 `hwdecode`
+
+**已知限制**:
+
+- **旧版 AMD 驱动**: 2020 年前的驱动可能仍不支持 D3D11VA H.264 硬解,建议更新至最新版
+- **集成显卡**: AMD APU (如 Ryzen 5 5600G) 的 Vega iGPU 部分型号不支持 D3D11VA,需降级软解
+- **多 GPU 系统**: FFmpeg 默认选择主 GPU,若主 GPU 不支持 D3D11VA,需手动禁用 `hwdecode`
+
+**测试验证**:
+
+```bash
+# Windows 测试 (AMD GPU)
+cargo run --release 2>&1 | Select-String "D3D11VA|decoder"
+
+# 预期输出 (成功)
+# INFO  saide::decoder::d3d11va > Initializing D3D11VA hardware decoder
+# INFO  saide::decoder::d3d11va > D3D11VA device context created successfully
+# DEBUG saide::decoder::d3d11va > D3D11VA hardware support verified
+# INFO  saide::decoder::auto     > ✅ Using D3D11VA hardware decoder
+
+# 预期输出 (失败 → 自动降级)
+# WARN  saide::decoder::auto     > D3D11VA unavailable, falling back to software decoder
+# INFO  saide::decoder::auto     > Using software H.264 decoder
+```
+
+**回退方案** (若仍失败):
+
+```toml
+# config.toml
+[scrcpy.video]
+hwdecode = false  # 强制软件解码
+```
+
+**相关文件**:
+
+- 修复实现: `src/decoder/d3d11va.rs` (2026-01-27)
+- 降级逻辑: `src/decoder/auto.rs` (NVDEC → D3D11VA → Software)
+
+**参考资料**:
+
+- AMD D3D11VA 驱动兼容性列表: https://www.amd.com/en/support/kb/release-notes
+- FFmpeg hwaccel flags: https://ffmpeg.org/doxygen/trunk/group__lavc__core.html#ga8e6f251dbe6d48cfe8dc6f6d36a61dc1
+
+---

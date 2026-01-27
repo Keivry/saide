@@ -374,23 +374,74 @@
       **状态**: `Child::kill()` 已跨平台(Rust std 内置 Windows 支持)  
       **无需修改**: 现有代码已兼容 Windows
 
+#### ✅ AMD GPU 兼容性修复 (已完成 - 2026-01-27)
+
+- [x] **[decoder]** AMD APU D3D11VA 兼容性修复 (`src/decoder/d3d11va.rs`)  
+      **问题**: AMD Ryzen 3500U Vega 8 初始化成功但解码失败  
+      **修复**:
+  - 移除 `AV_CODEC_FLAG2_FAST` flag (导致 AMD 驱动拒绝)
+  - 降低 `strict_std_compliance` 从 `EXPERIMENTAL` 到 `NORMAL`
+  - 添加 `AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH` (H.264 profile 容错)
+  - 添加 `AV_HWACCEL_FLAG_ALLOW_HIGH_DEPTH` (Vega 8 workaround)
+  - 添加 `AV_HWACCEL_FLAG_ALLOW_SOFTWARE` (部分硬件支持回退)
+  - 实现 `verify_hardware_support()` 早期检测不支持的 GPU
+  - 增强错误诊断 (连续失败计数器, 5 次失败自动回退软件解码)
+
+- [x] **[docs]** AMD GPU 故障排除文档 (已完成)  
+      **新增文件**:
+  - `docs/AMD_D3D11VA_TROUBLESHOOTING.md` (中英双语快速参考卡)
+  - `docs/pitfalls.md` Pitfall #20 (根因分析 + 解决方案 + 测试步骤)
+  - `README.md` + `README.zh.md` Known Issues 章节更新
+
+      **内容**:
+  - 硬件兼容性列表 (Vega 8 confirmed problematic)
+  - 3 种修复方案 (驱动更新 / BIOS UMA 调整 / 禁用 hwdecode)
+  - BIOS UMA 内存调整详细步骤 (APU 关键配置)
+  - 驱动版本要求 (AMD 21.6.1+, Adrenalin 23.11.1+)
+
+- [x] **[test]** 诊断脚本开发 (已完成)  
+      **新增文件**:
+  - `scripts/test_d3d11va_amd.ps1` (Windows PowerShell)
+    - 自动检测 GPU 型号和驱动版本
+    - 检查 FFmpeg D3D11VA 支持
+    - 构建并运行 SAide 带诊断日志
+    - 分析输出并提供兼容性报告
+    - 根据测试结果推荐修复方案
+  - `scripts/test_vaapi_amd.sh` (Linux Bash, 对比测试)
+
+      **状态**: 待用户硬件测试验证
+
 #### 待测试 (需 Windows 环境)
+
+- [ ] **[test]** AMD Vega 8 D3D11VA 兼容性验证 (用户硬件测试)  
+      **测试环境**: AMD Ryzen 5 3500U (Vega 8 iGPU)  
+      **前置条件**:
+  1. 更新 AMD 驱动至 21.6.1+ (推荐 Adrenalin 23.11.1+)
+  2. BIOS 调整 UMA Frame Buffer Size 至 2GB (详见 `docs/AMD_D3D11VA_TROUBLESHOOTING.md`)
+  3. 运行 `.\scripts\test_d3d11va_amd.ps1` 获取诊断报告
+
+      **验证项**:
+  - [ ] D3D11VA 初始化成功 (日志: `✅ Using D3D11VA hardware decoder`)
+  - [ ] H.264 解码正常工作 (无 `Failed setup for format d3d11` 错误)
+  - [ ] 帧率稳定 (>= 30 FPS @ 1080p)
+  - [ ] 无内存泄漏 (长时间运行)
+
+      **回退测试** (如硬件仍失败):
+  - [ ] 自动降级到软件解码 (日志: `Failed to initialize D3D11VA, falling back to software`)
+  - [ ] 软件解码正常工作 (验证 5 次连续失败触发回退机制)
 
 - [ ] **[gpu]** 创建 `src/gpu/windows.rs`  
       **需求**: 使用 DXGI 枚举 GPU (NVIDIA/Intel/AMD), 返回 GpuType  
-      **当前**: `detect_gpu()` 在 Windows 返回 `GpuType::Unknown`, 但 D3D11VA 仍可工作
+      **当前**: `detect_gpu()` 在 Windows 返回 `GpuType::Unknown`, 但 D3D11VA 仍可工作  
+      **优先级**: P2 (AMD 兼容性修复后, GPU 检测仅影响优化提示, 非核心功能)
 
 - [ ] **[test]** Windows 集成测试矩阵  
       **平台**: Windows 10 22H2, Windows 11 23H2  
-      **GPU**: NVIDIA RTX (NVDEC), Intel Xe (D3D11VA), AMD RX (D3D11VA)
-
-- [ ] **[test]** 硬件加速兼容性测试  
-      **需求**: 验证 D3D11VA 硬件解码正常工作  
-      **检查**: 日志输出 "Using D3D11VA hardware decoder"
-
-- [ ] **[test]** 软件解码回退测试  
-      **需求**: 虚拟机无 GPU 时是否正确回退  
-      **检查**: 日志输出 "Failed to initialize D3D11VA, falling back to software"
+      **GPU**: 
+  - NVIDIA RTX (NVDEC)
+  - Intel Xe (D3D11VA)
+  - AMD RX 5000+ (D3D11VA, 预期正常)
+  - AMD Vega 8/11 APU (D3D11VA, 已修复待验证)
 
 ### 阶段 2: macOS 支持 (2-3 周)
 

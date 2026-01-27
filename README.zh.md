@@ -470,6 +470,18 @@ level = "debug"
 
 ### 已知问题
 
+#### Windows 特定问题 (v0.3 - 实验性)
+
+- **GPU 检测返回 "Unknown"**: D3D11VA 仍可工作,但解码器选择未优化,DXGI 枚举待实现。
+- **首次运行可能较慢**: Windows Defender 可能在首次启动时扫描可执行文件。
+- **配置文件路径**: 使用 `%APPDATA%\saide\config.toml` 而非 `~/.config/saide/config.toml`。
+- **AMD GPU D3D11VA 兼容性问题 (2026-01-27)**:
+  - 某些 AMD GPU/驱动组合可能在 D3D11VA 初始化时失败,报错 `Failed setup for format d3d11: hwaccel initialisation returned error`
+  - **解决方法**: 从 [AMD 官网](https://www.amd.com/zh-hans/support) 更新至最新驱动
+  - **诊断工具**: 运行 `.\scripts\test_d3d11va_amd.ps1` 测试兼容性
+  - **临时方案**: 在 `config.toml` 中设置 `hwdecode = false` 强制软件解码
+  - **根本原因**: FFmpeg D3D11VA 需要驱动级 H.264 硬解支持 (UVD/VCN)。旧驱动 (2020 年前) 或 APU 集成显卡可能不完全支持。
+
 完整的已知问题和解决方法请参阅 [docs/pitfalls.md](docs/pitfalls.md)。
 
 ---

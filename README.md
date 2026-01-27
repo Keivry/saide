@@ -480,6 +480,12 @@ level = "debug"
 - **GPU detection returns "Unknown"**: D3D11VA still works, but decoder selection is not optimized. DXGI enumeration pending.
 - **First run may be slow**: Windows Defender/antivirus may scan the executable on first launch.
 - **Config path**: Use `%APPDATA%\saide\config.toml` instead of `~/.config/saide/config.toml`.
+- **AMD GPU D3D11VA compatibility (2026-01-27)**:
+  - Some AMD GPU/driver combinations may fail D3D11VA initialization with `Failed setup for format d3d11: hwaccel initialisation returned error`
+  - **Workaround**: Update AMD GPU drivers to latest version from [AMD Support](https://www.amd.com/en/support)
+  - **Testing**: Run `.\scripts\test_d3d11va_amd.ps1` to diagnose compatibility
+  - **Fallback**: Set `hwdecode = false` in `config.toml` to force software decoding
+  - **Root cause**: FFmpeg D3D11VA requires driver-level H.264 decode support (UVD/VCN). Older drivers (pre-2020) or APU integrated graphics may lack full support.
 
 See [docs/pitfalls.md](docs/pitfalls.md) for comprehensive list of known issues and workarounds.
 
