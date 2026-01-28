@@ -435,4 +435,68 @@ impl KeyboardMapper {
 
     /// Delete a scrcpy mapping (pixel coordinates)
     fn delete_scrcpy_mapping(&self, key: &Key) { self.scrcpy_mappings.write().remove(key); }
+
+    /// Create a new profile for current device and rotation
+    ///
+    /// # Parameters
+    /// - `device_serial`: current device serial
+    /// - `device_rotation`: current device rotation (0, 1, 2, 3)
+    ///
+    /// # Returns
+    /// - `Some(profile_name)` if profile created successfully
+    /// - `None` if device info is invalid
+    pub fn create_profile(&self, device_serial: &str, device_rotation: u32) -> Option<String> {
+        if device_serial.is_empty() || device_rotation > 3 {
+            return None;
+        }
+
+        // Generate profile name with timestamp
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let profile_name = format!("{}_{}_r{}", device_serial, timestamp, device_rotation);
+
+        // Create new profile with empty mappings
+        let new_profile = Arc::new(Profile {
+            name: profile_name.clone(),
+            device_serial: device_serial.to_string(),
+            rotation: device_rotation,
+            mappings: Arc::new(KeyMapping::default()),
+        });
+
+        // Add to config
+        self.config.add_profile(Arc::clone(&new_profile));
+
+        // Set as active profile
+        self.active_profile.store(Arc::new(Some(new_profile)));
+        self.scrcpy_mappings.write().clear();
+
+        // Refresh available profiles
+        let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
+        *self.avail_profiles.write() = avail_profiles;
+
+        info!("Created new profile: {}", profile_name);
+        Some(profile_name)
+    }
+
+    /// Delete the active profile
+    ///
+    /// # Returns
+    /// - `true` if profile deleted successfully
+    /// - `false` if no active profile
+    pub fn delete_active_profile(&self) -> bool {
+        let Some(active_profile) = self.get_active_profile() else {
+            return false;
+        };
+
+        let profile_name = active_profile.name.clone();
+
+        // Remove from config
+        self.config.remove_profile(&profile_name);
+
+        // Clear active profile
+        self.active_profile.store(Arc::new(None));
+        self.scrcpy_mappings.write().clear();
+
+        info!("Deleted profile: {}", profile_name);
+        true
+    }
 }

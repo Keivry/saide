@@ -21,6 +21,8 @@ pub enum ToolbarEvent {
     ToggleMappingVisualization,
     RotateVideo,
     ConfigureMappings,
+    CreateProfile,
+    DeleteProfile,
     ToggleScreenPower,
 }
 
@@ -37,7 +39,7 @@ struct ToolbarButton {
 }
 
 lazy_static! {
-    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 5] = [
+    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 7] = [
         ToolbarButton {
             btn_type: ButtonType::Selectable(Toolbar::is_keyboard_mapping_enabled),
             lable: "⌨",
@@ -61,6 +63,18 @@ lazy_static! {
             lable: "⚙",
             tooltip_key: "toolbar-configure",
             event: ToolbarEvent::ConfigureMappings,
+        },
+        ToolbarButton {
+            btn_type: ButtonType::Normal,
+            lable: "➕",
+            tooltip_key: "toolbar-create-profile",
+            event: ToolbarEvent::CreateProfile,
+        },
+        ToolbarButton {
+            btn_type: ButtonType::Normal,
+            lable: "➖",
+            tooltip_key: "toolbar-delete-profile",
+            event: ToolbarEvent::DeleteProfile,
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,

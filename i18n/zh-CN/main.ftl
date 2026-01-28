@@ -4,6 +4,8 @@ app-title = SAide
 ## UI - 工具栏
 toolbar-rotate = 旋转视频
 toolbar-configure = 配置映射
+toolbar-create-profile = 创建映射配置
+toolbar-delete-profile = 删除映射配置
 toolbar-keyboard-mapping = 切换键盘映射
 toolbar-mapping-visualization = 显示映射可视化
 toolbar-screen-off = 关闭屏幕

@@ -369,7 +369,6 @@ impl SAideApp {
     fn toggle_mapping_visualization(&mut self) {
         self.ui_state.toggle_mapping_visualization();
 
-        // Update toolbar button state
         self.toolbar
             .set_mapping_visualization_enabled(self.ui_state.mapping_visualization_enabled());
 
@@ -377,6 +376,47 @@ impl SAideApp {
             "Mapping visualization toggled: {}",
             self.ui_state.mapping_visualization_enabled()
         );
+    }
+
+    fn create_profile(&mut self) {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
+            error!("Keyboard mapper not initialized");
+            return;
+        };
+
+        let device_serial = self.app_state.device_serial();
+        let device_rotation = self.app_state.device_orientation();
+
+        if let Some(profile_name) = keyboard_mapper.create_profile(device_serial, device_rotation) {
+            info!("Profile created: {}", profile_name);
+
+            if let Err(e) = self.config_state.config_manager.save() {
+                error!("Failed to save config: {}", e);
+            } else {
+                info!("Profile saved to config file");
+            }
+        } else {
+            error!("Failed to create profile");
+        }
+    }
+
+    fn delete_profile(&mut self) {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
+            error!("Keyboard mapper not initialized");
+            return;
+        };
+
+        if keyboard_mapper.delete_active_profile() {
+            info!("Active profile deleted");
+
+            if let Err(e) = self.config_state.config_manager.save() {
+                error!("Failed to save config: {}", e);
+            } else {
+                info!("Config saved after profile deletion");
+            }
+        } else {
+            warn!("No active profile to delete");
+        }
     }
 
     // Check if position is within video rectangle
@@ -977,10 +1017,15 @@ impl SAideApp {
                 ToolbarEvent::ConfigureMappings => {
                     self.toggle_mapping_config(ctx);
                 }
+                ToolbarEvent::CreateProfile => {
+                    self.create_profile();
+                }
+                ToolbarEvent::DeleteProfile => {
+                    self.delete_profile();
+                }
                 ToolbarEvent::ToggleScreenPower => {
                     debug!("Turning off screen from toolbar");
                     if let Some(sender) = &self.app_state.control_sender {
-                        // Only turn OFF screen, wake up with physical power button
                         if let Err(e) = sender.send_set_display_power(false) {
                             error!("Failed to turn off screen: {}", e);
                         } else {
