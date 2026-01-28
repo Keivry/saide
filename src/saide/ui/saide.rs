@@ -621,6 +621,37 @@ impl SAideApp {
                         .request_rename_dialog(&current_name);
                 }
             }
+            MappingConfigEvent::RequestCreateProfile => {
+                self.create_profile();
+            }
+            MappingConfigEvent::RequestDeleteProfile => {
+                self.delete_profile();
+            }
+            MappingConfigEvent::RequestSaveAsProfile => {
+                if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper {
+                    let device_serial = self.app_state.device_serial();
+                    let device_rotation = self.app_state.device_orientation();
+
+                    if let Some(profile_name) =
+                        keyboard_mapper.create_profile(device_serial, device_rotation)
+                    {
+                        info!("Profile saved as: {}", profile_name);
+
+                        keyboard_mapper.refresh_profiles(device_serial, device_rotation);
+                        self.indicator
+                            .update_active_profile(keyboard_mapper.get_active_profile_name());
+
+                        if let Err(e) = self.config_state.config_manager.save() {
+                            error!("Failed to save config: {}", e);
+                        } else {
+                            info!("Profile saved to config file");
+                        }
+                    }
+                }
+            }
+            MappingConfigEvent::RequestShowHelp => {
+                self.mapping_config_window.request_help_dialog();
+            }
             MappingConfigEvent::None => {}
         }
 
@@ -662,6 +693,9 @@ impl SAideApp {
             && let Some(new_name) = self.mapping_config_window.show_rename_dialog(ctx)
         {
             self.rename_profile(new_name);
+        }
+        if self.mapping_config_window.is_help_dialog_open() {
+            self.mapping_config_window.show_help_dialog(ctx);
         }
     }
 
@@ -1046,6 +1080,16 @@ impl SAideApp {
     }
 
     fn draw_toolbar(&mut self, ctx: &egui::Context) {
+        let has_mappings = self
+            .app_state
+            .keyboard_mapper
+            .as_ref()
+            .and_then(|mapper| mapper.get_active_mappings())
+            .map(|mappings| !mappings.read().is_empty())
+            .unwrap_or(false);
+
+        self.toolbar.set_has_active_mappings(has_mappings);
+
         let colors = AppColors::from_context(ctx);
         egui::SidePanel::left("Toolbar")
             .frame(egui::Frame::NONE.fill(colors.toolbar_bg))
@@ -1057,12 +1101,6 @@ impl SAideApp {
                 }
                 ToolbarEvent::ConfigureMappings => {
                     self.toggle_mapping_config(ctx);
-                }
-                ToolbarEvent::CreateProfile => {
-                    self.create_profile();
-                }
-                ToolbarEvent::DeleteProfile => {
-                    self.delete_profile();
                 }
                 ToolbarEvent::ToggleScreenPower => {
                     debug!("Turning off screen from toolbar");

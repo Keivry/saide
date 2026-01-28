@@ -21,14 +21,15 @@ pub enum ToolbarEvent {
     ToggleMappingVisualization,
     RotateVideo,
     ConfigureMappings,
-    CreateProfile,
-    DeleteProfile,
     ToggleScreenPower,
 }
 
 enum ButtonType {
     Normal,
-    Selectable(fn(&Toolbar) -> bool),
+    SelectableConditional {
+        is_selected: fn(&Toolbar) -> bool,
+        is_enabled: fn(&Toolbar) -> bool,
+    },
 }
 
 struct ToolbarButton {
@@ -39,15 +40,21 @@ struct ToolbarButton {
 }
 
 lazy_static! {
-    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 7] = [
+    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 5] = [
         ToolbarButton {
-            btn_type: ButtonType::Selectable(Toolbar::is_keyboard_mapping_enabled),
+            btn_type: ButtonType::SelectableConditional {
+                is_selected: Toolbar::is_keyboard_mapping_enabled,
+                is_enabled: Toolbar::has_active_mappings,
+            },
             lable: "⌨",
             tooltip_key: "toolbar-keyboard-mapping",
             event: ToolbarEvent::ToggleKeyboardMapping,
         },
         ToolbarButton {
-            btn_type: ButtonType::Selectable(Toolbar::is_mapping_visualization_enabled),
+            btn_type: ButtonType::SelectableConditional {
+                is_selected: Toolbar::is_mapping_visualization_enabled,
+                is_enabled: Toolbar::has_active_mappings,
+            },
             lable: "👁",
             tooltip_key: "toolbar-mapping-visualization",
             event: ToolbarEvent::ToggleMappingVisualization,
@@ -66,18 +73,6 @@ lazy_static! {
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,
-            lable: "➕",
-            tooltip_key: "toolbar-create-profile",
-            event: ToolbarEvent::CreateProfile,
-        },
-        ToolbarButton {
-            btn_type: ButtonType::Normal,
-            lable: "➖",
-            tooltip_key: "toolbar-delete-profile",
-            event: ToolbarEvent::DeleteProfile,
-        },
-        ToolbarButton {
-            btn_type: ButtonType::Normal,
             lable: "💤",
             tooltip_key: "toolbar-screen-off",
             event: ToolbarEvent::ToggleScreenPower,
@@ -88,6 +83,7 @@ lazy_static! {
 pub struct Toolbar {
     keyboard_mapping_enabled: bool,
     mapping_visualization_enabled: bool,
+    has_active_mappings: bool,
 }
 
 impl Default for Toolbar {
@@ -99,6 +95,7 @@ impl Toolbar {
         Self {
             keyboard_mapping_enabled: false,
             mapping_visualization_enabled: false,
+            has_active_mappings: false,
         }
     }
 
@@ -108,6 +105,8 @@ impl Toolbar {
 
     fn is_mapping_visualization_enabled(&self) -> bool { self.mapping_visualization_enabled }
 
+    fn has_active_mappings(&self) -> bool { self.has_active_mappings }
+
     /// Set keyboard mapping enabled state
     pub fn set_keyboard_mapping_enabled(&mut self, enabled: bool) {
         self.keyboard_mapping_enabled = enabled;
@@ -116,6 +115,11 @@ impl Toolbar {
     /// Set mapping visualization enabled state
     pub fn set_mapping_visualization_enabled(&mut self, enabled: bool) {
         self.mapping_visualization_enabled = enabled;
+    }
+
+    /// Set whether there are active mappings
+    pub fn set_has_active_mappings(&mut self, has_mappings: bool) {
+        self.has_active_mappings = has_mappings;
     }
 
     /// Draw the toolbar, return the event if any button is clicked
@@ -151,12 +155,23 @@ impl Toolbar {
     fn draw_button(&self, btn: &ToolbarButton, ui: &mut egui::Ui) -> bool {
         let mut button = Button::new(RichText::new(btn.lable).size(TOOLBAR_FONT_SIZE));
 
-        if let ButtonType::Selectable(is_selected) = btn.btn_type {
-            button = button.selected(is_selected(self));
+        let (enabled, selected) = match btn.btn_type {
+            ButtonType::Normal => (true, false),
+            ButtonType::SelectableConditional {
+                is_selected,
+                is_enabled,
+            } => (is_enabled(self), is_selected(self)),
+        };
+
+        if selected {
+            button = button.selected(true);
         }
 
-        ui.add_sized(TOOLBAR_BTN_SIZE, button)
-            .on_hover_text(t!(btn.tooltip_key))
-            .clicked()
+        let response = ui.add_enabled_ui(enabled, |ui| {
+            ui.add_sized(TOOLBAR_BTN_SIZE, button)
+                .on_hover_text(t!(btn.tooltip_key))
+        });
+
+        response.inner.clicked()
     }
 }

@@ -59,6 +59,19 @@ mapping-config-dialog-override-message =
     Override to new position ({$new_x}, {$new_y})?
 mapping-config-dialog-rename-title = Rename Profile
 mapping-config-dialog-rename-placeholder = Enter new name...
+mapping-config-help-title = Keyboard Shortcuts Help
+mapping-config-help-message =
+    Available Keyboard Shortcuts:
+    
+    F1 - Show this help
+    F2 - Rename Profile
+    F3 - Create New Profile
+    F4 - Delete Current Profile
+    F5 - Save As (Create Copy)
+    
+    Left Click - Add key mapping
+    Right Click - Delete nearest mapping
+    ESC - Close configuration window
 
 ## UI - Common Dialog Buttons
 dialog-button-confirm = Confirm

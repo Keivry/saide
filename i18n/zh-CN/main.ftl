@@ -59,6 +59,19 @@ mapping-config-dialog-override-message =
     覆盖到新位置（{$new_x}, {$new_y}）？
 mapping-config-dialog-rename-title = 重命名配置
 mapping-config-dialog-rename-placeholder = 输入新名称...
+mapping-config-help-title = 快捷键帮助
+mapping-config-help-message =
+    可用快捷键：
+    
+    F1 - 显示此帮助
+    F2 - 重命名配置
+    F3 - 新建配置
+    F4 - 删除当前配置
+    F5 - 另存为（创建副本）
+    
+    左键 - 添加按键映射
+    右键 - 删除最近的映射
+    ESC - 关闭配置窗口
 
 ## UI - 通用对话框按钮
 dialog-button-confirm = 确认

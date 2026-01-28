@@ -38,6 +38,10 @@ pub enum MappingConfigEvent {
     RequestAddMapping(Pos2),
     RequestDeleteMapping(Pos2),
     RequestRenameProfile,
+    RequestCreateProfile,
+    RequestDeleteProfile,
+    RequestSaveAsProfile,
+    RequestShowHelp,
 }
 
 /// Mapping configuration UI state
@@ -65,6 +69,9 @@ pub struct MappingConfigWindow {
 
     /// Rename profile dialog state
     rename_dialog: ModalDialog,
+
+    /// Help dialog state
+    help_dialog: ModalDialog,
 }
 
 impl MappingConfigWindow {
@@ -93,6 +100,9 @@ impl MappingConfigWindow {
             rename_dialog: ModalDialog::new("rename_profile_dialog")
                 .with_title(&t!("mapping-config-dialog-rename-title"))
                 .with_text_input(&t!("mapping-config-dialog-rename-placeholder")),
+
+            help_dialog: ModalDialog::new("help_dialog")
+                .with_title(&t!("mapping-config-help-title")),
         }
     }
 
@@ -124,6 +134,8 @@ impl MappingConfigWindow {
         self.override_new_pos = None;
 
         self.rename_dialog.reset();
+
+        self.help_dialog.reset();
     }
 
     pub fn is_visible(&self) -> bool { self.visible }
@@ -250,13 +262,40 @@ impl MappingConfigWindow {
                         modifiers,
                         ..
                     } = e
-                        && *key == egui::Key::Escape
-                        && modifiers.is_none()
                     {
-                        event = MappingConfigEvent::Close;
-
-                        input.consume_key(Modifiers::NONE, egui::Key::Escape);
-                        break;
+                        match key {
+                            egui::Key::Escape if modifiers.is_none() => {
+                                event = MappingConfigEvent::Close;
+                                input.consume_key(Modifiers::NONE, egui::Key::Escape);
+                                break;
+                            }
+                            egui::Key::F1 if modifiers.is_none() => {
+                                event = MappingConfigEvent::RequestShowHelp;
+                                input.consume_key(Modifiers::NONE, egui::Key::F1);
+                                break;
+                            }
+                            egui::Key::F2 if modifiers.is_none() => {
+                                event = MappingConfigEvent::RequestRenameProfile;
+                                input.consume_key(Modifiers::NONE, egui::Key::F2);
+                                break;
+                            }
+                            egui::Key::F3 if modifiers.is_none() => {
+                                event = MappingConfigEvent::RequestCreateProfile;
+                                input.consume_key(Modifiers::NONE, egui::Key::F3);
+                                break;
+                            }
+                            egui::Key::F4 if modifiers.is_none() => {
+                                event = MappingConfigEvent::RequestDeleteProfile;
+                                input.consume_key(Modifiers::NONE, egui::Key::F4);
+                                break;
+                            }
+                            egui::Key::F5 if modifiers.is_none() => {
+                                event = MappingConfigEvent::RequestSaveAsProfile;
+                                input.consume_key(Modifiers::NONE, egui::Key::F5);
+                                break;
+                            }
+                            _ => {}
+                        }
                     }
                 }
             });
@@ -389,6 +428,7 @@ impl MappingConfigWindow {
             || self.delete_mapping_dialog.is_visible()
             || self.override_mapping_dialog.is_visible()
             || self.rename_dialog.is_visible()
+            || self.help_dialog.is_visible()
     }
 
     pub fn is_input_dialog_open(&self) -> bool { self.key_input_dialog.is_visible() }
@@ -398,6 +438,8 @@ impl MappingConfigWindow {
     pub fn is_override_dialog_open(&self) -> bool { self.override_mapping_dialog.is_visible() }
 
     pub fn is_rename_dialog_open(&self) -> bool { self.rename_dialog.is_visible() }
+
+    pub fn is_help_dialog_open(&self) -> bool { self.help_dialog.is_visible() }
 
     pub fn get_pos(&self) -> Option<MappingPos> { self.pos }
 
@@ -469,5 +511,32 @@ impl MappingConfigWindow {
         }
 
         result
+    }
+
+    pub fn request_help_dialog(&mut self) {
+        self.help_dialog
+            .set_message(&t!("mapping-config-help-message"))
+            .set_visible(true);
+    }
+
+    pub fn show_help_dialog(&mut self, ctx: &egui::Context) -> bool {
+        if !self.help_dialog.is_visible() {
+            return false;
+        }
+
+        let mut should_close = false;
+
+        match self.help_dialog.show(ctx) {
+            ModalDialogResult::Confirmed | ModalDialogResult::Canceled => {
+                should_close = true;
+            }
+            _ => {}
+        }
+
+        if should_close {
+            self.help_dialog.reset();
+        }
+
+        should_close
     }
 }
