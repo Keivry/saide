@@ -10,6 +10,7 @@ use {
             utils::extract_position,
         },
         dialog::{ModalDialog, ModalDialogResult},
+        theme::AppColors,
     },
     crate::{
         config::mapping::{Key, KeyMapping},
@@ -123,6 +124,7 @@ impl MappingConfigWindow {
         }
 
         let mut event = MappingConfigEvent::None;
+        let colors = AppColors::from_context(ctx);
 
         // Draw semi-transparent overlay (non-interactive to not block toolbar)
         egui::Area::new(egui::Id::new("mapping_config_overlay"))
@@ -178,8 +180,12 @@ impl MappingConfigWindow {
                         );
 
                         // Draw circle marker
-                        painter.circle_filled(screen_pos, 12.0, Color32::from_rgb(100, 200, 255));
-                        painter.circle_stroke(screen_pos, 12.0, Stroke::new(2.0, Color32::WHITE));
+                        painter.circle_filled(screen_pos, 12.0, colors.mapping_circle_fill);
+                        painter.circle_stroke(
+                            screen_pos,
+                            12.0,
+                            Stroke::new(2.0, colors.mapping_circle_stroke),
+                        );
 
                         // Draw key label
                         let key_text = format!("{:?}", key);

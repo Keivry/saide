@@ -10,8 +10,8 @@
 use {
     crate::{
         config::{
-            mapping::{MouseButton, WheelDirection},
             InputConfig,
+            mapping::{MouseButton, WheelDirection},
         },
         controller::control_sender::ControlSender,
         error::Result,
@@ -323,11 +323,7 @@ impl MouseMapper {
 
                 trace!(
                     "Move during Pressed: from ({}, {}) to ({}, {}), distance={:.1}px",
-                    current_x,
-                    current_y,
-                    x,
-                    y,
-                    distance
+                    current_x, current_y, x, y, distance
                 );
 
                 if distance >= self.config.drag_threshold_px {

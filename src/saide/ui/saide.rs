@@ -16,6 +16,7 @@ use {
         mapping::{MappingConfigEvent, MappingConfigWindow},
         player::{PlayerState, StreamPlayer},
         state::{AppState, ConfigState, UIState},
+        theme::AppColors,
         toolbar::{Toolbar, ToolbarEvent},
     },
     crate::{
@@ -25,12 +26,10 @@ use {
         t,
     },
     crossbeam_channel::{Receiver, bounded},
-    eframe::egui::{self, Color32},
+    eframe::egui,
     std::{thread, time::Instant},
     tracing::{debug, error, info, trace, warn},
 };
-
-const BG_COLOR: Color32 = Color32::from_rgb(32, 32, 32);
 
 /// Initialization state enum
 #[derive(PartialEq)]
@@ -964,11 +963,12 @@ impl SAideApp {
     }
 
     fn draw_toolbar(&mut self, ctx: &egui::Context) {
+        let colors = AppColors::from_context(ctx);
         egui::SidePanel::left("Toolbar")
-            .frame(egui::Frame::NONE.fill(BG_COLOR))
+            .frame(egui::Frame::NONE.fill(colors.toolbar_bg))
             .resizable(false)
             .exact_width(Toolbar::width())
-            .show(ctx, |ui| match self.toolbar.draw(ui) {
+            .show(ctx, |ui| match self.toolbar.draw(ui, &colors) {
                 ToolbarEvent::RotateVideo => {
                     self.rotate(ctx);
                 }
@@ -1057,19 +1057,16 @@ impl SAideApp {
                         );
 
                         let key_text = format!("{:?}", key);
+                        let colors = AppColors::from_context(ctx);
 
-                        painter.circle_filled(
-                            screen_pos,
-                            12.0,
-                            egui::Color32::from_rgba_unmultiplied(0, 255, 0, 60),
-                        );
+                        painter.circle_filled(screen_pos, 12.0, colors.mapping_overlay_fill);
 
                         painter.text(
                             screen_pos,
                             egui::Align2::CENTER_CENTER,
                             &key_text,
                             egui::FontId::proportional(10.0),
-                            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+                            colors.mapping_overlay_text,
                         );
                     }
                 }
@@ -1222,12 +1219,13 @@ impl eframe::App for SAideApp {
 
         // Show audio warning if present (overlay at top)
         if let Some(warning) = self.ui_state.audio_warning.clone() {
+            let colors = AppColors::from_context(ctx);
             let mut close_clicked = false;
             egui::Area::new(egui::Id::new("audio_warning"))
                 .fixed_pos(egui::pos2(Toolbar::width() + 10.0, 10.0))
                 .show(ctx, |ui| {
                     egui::Frame::new()
-                        .fill(egui::Color32::from_rgba_unmultiplied(40, 40, 40, 220))
+                        .fill(colors.audio_warning_bg)
                         .corner_radius(5.0)
                         .inner_margin(10.0)
                         .show(ui, |ui| {

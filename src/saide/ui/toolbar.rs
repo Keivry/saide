@@ -4,14 +4,14 @@
 //! such as rotating video, configuring mappings, and toggling screen power.
 
 use {
+    super::theme::AppColors,
     crate::t,
-    egui::{Button, Color32, RichText},
+    egui::{Button, RichText},
     lazy_static::lazy_static,
 };
 
 const TOOLBAR_WIDTH: f32 = 42.0;
 const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
-const TOOLBAR_FG_COLOR: Color32 = Color32::from_rgb(200, 200, 200);
 const TOOLBAR_FONT_SIZE: f32 = 16.0;
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
 
@@ -106,7 +106,7 @@ impl Toolbar {
     }
 
     /// Draw the toolbar, return the event if any button is clicked
-    pub fn draw(&mut self, ui: &mut egui::Ui) -> ToolbarEvent {
+    pub fn draw(&mut self, ui: &mut egui::Ui, colors: &AppColors) -> ToolbarEvent {
         let count = TOOLBAR_BUTTONS_BASE.len();
         if count == 0 {
             return ToolbarEvent::None;
@@ -128,7 +128,7 @@ impl Toolbar {
 
             // Draw buttons
             for btn in TOOLBAR_BUTTONS_BASE.iter() {
-                if self.draw_button(btn, ui) {
+                if self.draw_button(btn, ui, colors) {
                     result = btn.event;
                 }
             }
@@ -138,10 +138,10 @@ impl Toolbar {
     }
 
     /// Draw a single button, return true if clicked
-    fn draw_button(&self, btn: &ToolbarButton, ui: &mut egui::Ui) -> bool {
+    fn draw_button(&self, btn: &ToolbarButton, ui: &mut egui::Ui, colors: &AppColors) -> bool {
         let mut button = Button::new(
             RichText::new(btn.lable)
-                .color(TOOLBAR_FG_COLOR)
+                .color(colors.toolbar_fg)
                 .size(TOOLBAR_FONT_SIZE),
         );
 

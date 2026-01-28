@@ -4,9 +4,10 @@ mod mapping;
 mod player;
 mod saide;
 mod state;
+mod theme;
 mod toolbar;
 
-pub use {saide::SAideApp, toolbar::Toolbar};
+pub use {saide::SAideApp, theme::AppColors, toolbar::Toolbar};
 
 #[derive(Default)]
 pub struct VideoStats {

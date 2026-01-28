@@ -4,7 +4,7 @@
 //! The panel can be toggled by hovering over the indicator while holding a modifier key.
 
 use {
-    super::VideoStats,
+    super::{VideoStats, theme::AppColors},
     crate::{config::IndicatorPosition, t},
     std::time::{Duration, Instant},
 };
@@ -136,6 +136,8 @@ impl Indicator {
 
     /// Draw indicator in video corner, returns the rectangle of the drawn indicator
     pub fn draw_indicator(&mut self, ui: &mut egui::Ui, video_rect: egui::Rect) -> egui::Rect {
+        let colors = AppColors::from_context(ui.ctx());
+
         // Calculate indicator top-left position based on corner_position
         let indicator_pos = match self.position {
             IndicatorPosition::TopLeft => {
@@ -161,7 +163,7 @@ impl Indicator {
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
                 egui::Frame::NONE
-                    .fill(egui::Color32::from_black_alpha(150))
+                    .fill(colors.indicator_bg)
                     .corner_radius(4.0)
                     .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
@@ -194,14 +196,19 @@ impl Indicator {
 
         // Draw floating panel if needed
         if self.floating_panel_visible {
-            self.draw_floating_panel(ui, indicator_rect);
+            self.draw_floating_panel(ui, indicator_rect, &colors);
         }
 
         indicator_rect
     }
 
     /// Draw detailed floating panel near the indicator
-    fn draw_floating_panel(&self, ui: &mut egui::Ui, indicator_rect: egui::Rect) {
+    fn draw_floating_panel(
+        &self,
+        ui: &mut egui::Ui,
+        indicator_rect: egui::Rect,
+        colors: &AppColors,
+    ) {
         let panel_id = ui.id().with("stats_floating_panel");
 
         // Calculate panel position to avoid overlapping indicator
@@ -237,8 +244,8 @@ impl Indicator {
             .order(egui::Order::Tooltip)
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style())
-                    .fill(egui::Color32::from_gray(40))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(80)))
+                    .fill(colors.indicator_popup_bg)
+                    .stroke(egui::Stroke::new(1.0, colors.indicator_popup_stroke))
                     .inner_margin(egui::Margin::same(12))
                     .show(ui, |ui| {
                         ui.set_min_width(280.0);
