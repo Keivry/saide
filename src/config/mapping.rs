@@ -333,15 +333,27 @@ impl Mappings {
             .collect()
     }
 
-    // TODO: Add, remove profiles
-    #[allow(dead_code)]
     pub fn add_profile(&self, profile: Arc<Profile>) { self.profiles.write().push(profile); }
 
-    #[allow(dead_code)]
     pub fn remove_profile(&self, profile_name: &str) {
         self.profiles
             .write()
             .retain(|profile| profile.name != profile_name);
+    }
+
+    pub fn rename_profile(&self, old_name: &str, new_name: &str) -> bool {
+        let mut profiles = self.profiles.write();
+        if let Some(profile) = profiles.iter_mut().find(|p| p.name == old_name) {
+            *profile = Arc::new(Profile {
+                name: new_name.to_string(),
+                device_serial: profile.device_serial.clone(),
+                rotation: profile.rotation,
+                mappings: Arc::clone(&profile.mappings),
+            });
+            true
+        } else {
+            false
+        }
     }
 }
 

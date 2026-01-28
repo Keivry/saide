@@ -40,6 +40,8 @@ indicator-panel-profile-none = Not Available
 
 ## UI - Mapping Configuration
 mapping-config-title = Mapping Configuration Mode
+mapping-config-profile-label = Profile Name:
+mapping-config-rename-button = Rename
 mapping-config-instruction-add = Left Click: Add key mapping
 mapping-config-instruction-delete = Right Click: Delete nearest mapping
 mapping-config-instruction-exit = Press ESC to exit
@@ -55,6 +57,8 @@ mapping-config-dialog-override-message =
     {$key}: ({$old_x}, {$old_y}) is already mapped.
     
     Override to new position ({$new_x}, {$new_y})?
+mapping-config-dialog-rename-title = Rename Profile
+mapping-config-dialog-rename-placeholder = Enter new name...
 
 ## UI - Common Dialog Buttons
 dialog-button-confirm = Confirm

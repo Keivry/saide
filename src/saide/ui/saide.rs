@@ -429,6 +429,27 @@ impl SAideApp {
         }
     }
 
+    fn rename_profile(&mut self, new_name: String) {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
+            error!("Keyboard mapper not initialized");
+            return;
+        };
+
+        if keyboard_mapper.rename_active_profile(&new_name) {
+            info!("Profile renamed to: {}", new_name);
+
+            self.indicator.update_active_profile(Some(new_name));
+
+            if let Err(e) = self.config_state.config_manager.save() {
+                error!("Failed to save config: {}", e);
+            } else {
+                info!("Config saved after profile rename");
+            }
+        } else {
+            error!("Failed to rename profile");
+        }
+    }
+
     // Check if position is within video rectangle
     fn is_in_video_rect(&self, pos: &VisualPos) -> bool {
         let video_rect = self.player.video_rect();
@@ -536,16 +557,19 @@ impl SAideApp {
         let mappings = keyboard_mapper
             .get_active_mappings()
             .unwrap_or_else(|| Arc::new(KeyMapping::default()));
+        let profile_name = keyboard_mapper.get_active_profile_name();
 
-        // Draw the config window and handle events
         let video_rect = self.player.video_rect();
         let event = self.mapping_config_window.draw(
             ctx,
-            &mappings,
-            video_rect,
-            self.ui_state.visual_coords(),
-            self.app_state.scrcpy_coords(),
-            self.ui_state.mapping_coords(),
+            crate::saide::ui::mapping::MappingDrawParams {
+                mappings: &mappings,
+                profile_name: profile_name.as_deref(),
+                video_rect,
+                visual_coords: self.ui_state.visual_coords(),
+                scrcpy_coords: self.app_state.scrcpy_coords(),
+                mapping_coords: self.ui_state.mapping_coords(),
+            },
         );
 
         match event {
@@ -553,8 +577,6 @@ impl SAideApp {
                 self.mapping_config_window.hide();
             }
             MappingConfigEvent::RequestAddMapping(screen_pos) => {
-                // Convert screen position to mapping percentage coordinates (0.0-1.0)
-                // Visual -> Scrcpy -> Mapping
                 let video_rect = self.player.video_rect();
                 if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
                     &screen_pos,
@@ -576,8 +598,6 @@ impl SAideApp {
                 }
             }
             MappingConfigEvent::RequestDeleteMapping(screen_pos) => {
-                // Find nearest mapping to delete
-                // Visual -> Scrcpy -> Mapping
                 let video_rect = self.player.video_rect();
                 if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
                     &screen_pos,
@@ -593,6 +613,12 @@ impl SAideApp {
                     );
                     self.mapping_config_window
                         .request_delete_dialog(nearest_key, &nearest_pos);
+                }
+            }
+            MappingConfigEvent::RequestRenameProfile => {
+                if let Some(current_name) = profile_name {
+                    self.mapping_config_window
+                        .request_rename_dialog(&current_name);
                 }
             }
             MappingConfigEvent::None => {}
@@ -631,6 +657,11 @@ impl SAideApp {
             && confirmed
         {
             self.add_mapping(key, &new_pos);
+        }
+        if self.mapping_config_window.is_rename_dialog_open()
+            && let Some(new_name) = self.mapping_config_window.show_rename_dialog(ctx)
+        {
+            self.rename_profile(new_name);
         }
     }
 

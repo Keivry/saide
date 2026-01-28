@@ -40,6 +40,8 @@ indicator-panel-profile-none = 不可用
 
 ## UI - 映射配置
 mapping-config-title = 映射配置模式
+mapping-config-profile-label = 配置名称：
+mapping-config-rename-button = 重命名
 mapping-config-instruction-add = 左键：添加按键映射
 mapping-config-instruction-delete = 右键：删除最近映射
 mapping-config-instruction-exit = 按 ESC 退出
@@ -55,6 +57,8 @@ mapping-config-dialog-override-message =
     {$key}：({$old_x}, {$old_y}) 已映射。
     
     覆盖到新位置（{$new_x}, {$new_y}）？
+mapping-config-dialog-rename-title = 重命名配置
+mapping-config-dialog-rename-placeholder = 输入新名称...
 
 ## UI - 通用对话框按钮
 dialog-button-confirm = 确认

@@ -499,4 +499,38 @@ impl KeyboardMapper {
         info!("Deleted profile: {}", profile_name);
         true
     }
+
+    pub fn rename_active_profile(&self, new_name: &str) -> bool {
+        if new_name.trim().is_empty() {
+            return false;
+        }
+
+        let Some(active_profile) = self.get_active_profile() else {
+            return false;
+        };
+
+        let old_name = active_profile.name.clone();
+
+        if !self.config.rename_profile(&old_name, new_name) {
+            return false;
+        }
+
+        let updated_profile = Arc::new(Profile {
+            name: new_name.to_string(),
+            device_serial: active_profile.device_serial.clone(),
+            rotation: active_profile.rotation,
+            mappings: Arc::clone(&active_profile.mappings),
+        });
+
+        self.active_profile
+            .store(Arc::new(Some(updated_profile.clone())));
+
+        let device_serial = &active_profile.device_serial;
+        let device_rotation = active_profile.rotation;
+        let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
+        *self.avail_profiles.write() = avail_profiles;
+
+        info!("Renamed profile from '{}' to '{}'", old_name, new_name);
+        true
+    }
 }

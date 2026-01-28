@@ -15,6 +15,7 @@ pub enum ModalDialogResult {
     Confirmed,
     Canceled,
     CapturedKey(Key),
+    TextInput(String),
 }
 
 pub struct ModalDialog {
@@ -28,6 +29,10 @@ pub struct ModalDialog {
 
     /// Whether to capture key input
     pub capture: bool,
+    /// Text input field (when Some, shows text input instead of key capture)
+    pub text_input: Option<String>,
+    /// Placeholder text for text input
+    pub text_placeholder: String,
 }
 
 impl ModalDialog {
@@ -43,6 +48,8 @@ impl ModalDialog {
             cancel: Some(t!("dialog-button-cancel")),
 
             capture: false,
+            text_input: None,
+            text_placeholder: String::new(),
         }
     }
 
@@ -94,6 +101,20 @@ impl ModalDialog {
         self
     }
 
+    /// Enable text input mode with optional placeholder
+    pub fn with_text_input(mut self, placeholder: &str) -> Self {
+        self.text_input = Some(String::new());
+        self.text_placeholder = placeholder.into();
+        self.capture = false;
+        self
+    }
+
+    /// Enable text input mode with optional placeholder
+    pub fn set_text_input(&mut self, initial_value: &str) -> &mut Self {
+        self.text_input = Some(initial_value.into());
+        self
+    }
+
     /// Set the dialog title
     pub fn with_title(mut self, title: &str) -> Self {
         self.title = title.into();
@@ -127,7 +148,12 @@ impl ModalDialog {
     }
 
     /// Reset the dialog to hidden state
-    pub fn reset(&mut self) { self.visible = false; }
+    pub fn reset(&mut self) {
+        self.visible = false;
+        if let Some(ref mut input) = self.text_input {
+            input.clear();
+        }
+    }
 
     pub fn is_visible(&self) -> bool { self.visible }
 
@@ -152,6 +178,23 @@ impl ModalDialog {
                 ui.separator();
                 ui.label(self.message.as_str());
 
+                // Draw text input if enabled
+                if let Some(ref mut input_text) = self.text_input {
+                    ui.separator();
+                    let response = ui.text_edit_singleline(input_text);
+
+                    // Check for Enter key to confirm
+                    if response.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        && !input_text.trim().is_empty()
+                    {
+                        result = ModalDialogResult::TextInput(input_text.trim().to_string());
+                    }
+
+                    // Auto-focus the text input
+                    response.request_focus();
+                }
+
                 // Draw buttons if any
                 let button_count = self.button_count();
                 if button_count > 0 {
@@ -166,11 +209,25 @@ impl ModalDialog {
                         ui.add_space(offset.max(0.0));
 
                         if let Some(confirm_label) = &self.confirm {
+                            let confirm_enabled = if let Some(ref input_text) = self.text_input {
+                                !input_text.trim().is_empty()
+                            } else {
+                                true
+                            };
+
                             if ui
-                                .add_sized(BUTTON_SIZE, egui::Button::new(confirm_label.as_str()))
+                                .add_enabled(
+                                    confirm_enabled,
+                                    egui::Button::new(confirm_label.as_str())
+                                        .min_size(BUTTON_SIZE.into()),
+                                )
                                 .clicked()
                             {
-                                result = ModalDialogResult::Confirmed;
+                                result = if let Some(ref input_text) = self.text_input {
+                                    ModalDialogResult::TextInput(input_text.trim().to_string())
+                                } else {
+                                    ModalDialogResult::Confirmed
+                                };
                             }
                             if self.cancel.is_some() {
                                 ui.add_space(spacing);
