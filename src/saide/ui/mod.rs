@@ -7,7 +7,11 @@ mod state;
 mod theme;
 mod toolbar;
 
-pub use {saide::SAideApp, theme::AppColors, toolbar::Toolbar};
+pub use {
+    saide::SAideApp,
+    theme::{AppColors, ThemeMode},
+    toolbar::Toolbar,
+};
 
 #[derive(Default)]
 pub struct VideoStats {

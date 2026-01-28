@@ -4,7 +4,6 @@
 //! such as rotating video, configuring mappings, and toggling screen power.
 
 use {
-    super::theme::AppColors,
     crate::t,
     egui::{Button, RichText},
     lazy_static::lazy_static,
@@ -106,7 +105,7 @@ impl Toolbar {
     }
 
     /// Draw the toolbar, return the event if any button is clicked
-    pub fn draw(&mut self, ui: &mut egui::Ui, colors: &AppColors) -> ToolbarEvent {
+    pub fn draw(&mut self, ui: &mut egui::Ui) -> ToolbarEvent {
         let count = TOOLBAR_BUTTONS_BASE.len();
         if count == 0 {
             return ToolbarEvent::None;
@@ -117,7 +116,6 @@ impl Toolbar {
         ui.vertical_centered(|ui| {
             ui.spacing_mut().item_spacing.y = TOOLBAR_BTN_SPACING;
 
-            // Center buttons vertically
             let rect = ui.available_rect_before_wrap();
             let desired_height =
                 (TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING) * count as f32 + TOOLBAR_BTN_SPACING;
@@ -126,9 +124,8 @@ impl Toolbar {
 
             ui.add_space(TOOLBAR_BTN_SPACING);
 
-            // Draw buttons
             for btn in TOOLBAR_BUTTONS_BASE.iter() {
-                if self.draw_button(btn, ui, colors) {
+                if self.draw_button(btn, ui) {
                     result = btn.event;
                 }
             }
@@ -137,18 +134,8 @@ impl Toolbar {
         result
     }
 
-    /// Draw a single button, return true if clicked
-    fn draw_button(&self, btn: &ToolbarButton, ui: &mut egui::Ui, colors: &AppColors) -> bool {
-        let visuals = ui.visuals_mut();
-        visuals.widgets.inactive.weak_bg_fill = colors.toolbar_button_bg;
-        visuals.widgets.hovered.weak_bg_fill = colors.toolbar_button_bg_hovered;
-        visuals.widgets.active.weak_bg_fill = colors.toolbar_button_bg_active;
-
-        let mut button = Button::new(
-            RichText::new(btn.lable)
-                .color(colors.toolbar_fg)
-                .size(TOOLBAR_FONT_SIZE),
-        );
+    fn draw_button(&self, btn: &ToolbarButton, ui: &mut egui::Ui) -> bool {
+        let mut button = Button::new(RichText::new(btn.lable).size(TOOLBAR_FONT_SIZE));
 
         if let ButtonType::Selectable(is_selected) = btn.btn_type {
             button = button.selected(is_selected(self));

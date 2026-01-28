@@ -6,7 +6,7 @@ use {
         config::ConfigManager,
         controller::AdbShell,
         error::{Result, SAideError},
-        saide::ui::{SAideApp, Toolbar},
+        saide::ui::{SAideApp, ThemeMode, Toolbar},
     },
     tracing::info,
     tracing_subscriber::{EnvFilter, fmt, prelude::*},
@@ -105,6 +105,7 @@ fn start_ui(serial: &str, config_manager: ConfigManager, shutdown_rx: Receiver<(
         options,
         Box::new(move |cc| {
             load_cjk_font(&cc.egui_ctx);
+            ThemeMode::apply_to_context(&cc.egui_ctx);
             Ok(Box::new(SAideApp::new(
                 cc,
                 serial,

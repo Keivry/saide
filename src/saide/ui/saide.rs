@@ -968,7 +968,7 @@ impl SAideApp {
             .frame(egui::Frame::NONE.fill(colors.toolbar_bg))
             .resizable(false)
             .exact_width(Toolbar::width())
-            .show(ctx, |ui| match self.toolbar.draw(ui, &colors) {
+            .show(ctx, |ui| match self.toolbar.draw(ui) {
                 ToolbarEvent::RotateVideo => {
                     self.rotate(ctx);
                 }

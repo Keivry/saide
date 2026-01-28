@@ -131,7 +131,6 @@ impl Indicator {
     pub fn draw_indicator(&mut self, ui: &mut egui::Ui, video_rect: egui::Rect) -> egui::Rect {
         let colors = AppColors::from_context(ui.ctx());
 
-        // Calculate indicator top-left position based on corner_position
         let indicator_pos = match self.position {
             IndicatorPosition::TopLeft => {
                 video_rect.left_top() + egui::vec2(INDICATOR_PADDING, INDICATOR_PADDING)
@@ -177,7 +176,6 @@ impl Indicator {
 
         let indicator_rect = area_response.response.rect;
 
-        // Check if mouse is hovering and modifier key is pressed
         let should_show_floating_panel = ui.input(|i| {
             i.modifiers.matches_exact(TRIGGER_MODIFIER)
                 && i.pointer
@@ -187,7 +185,6 @@ impl Indicator {
 
         self.floating_panel_visible = should_show_floating_panel;
 
-        // Draw floating panel if needed
         if self.floating_panel_visible {
             self.draw_floating_panel(ui, indicator_rect, &colors);
         }
@@ -204,28 +201,19 @@ impl Indicator {
     ) {
         let panel_id = ui.id().with("stats_floating_panel");
 
-        // Calculate panel position to avoid overlapping indicator
         let panel_pos = match self.position {
-            IndicatorPosition::TopLeft => {
-                // Panel below indicator, left aligned
-                egui::pos2(
-                    indicator_rect.left(),
-                    indicator_rect.bottom() + PANEL_SPACING,
-                )
-            }
-            IndicatorPosition::TopRight => {
-                // Panel below indicator, right aligned
-                egui::pos2(
-                    indicator_rect.right(),
-                    indicator_rect.bottom() + PANEL_SPACING,
-                )
-            }
+            IndicatorPosition::TopLeft => egui::pos2(
+                indicator_rect.left(),
+                indicator_rect.bottom() + PANEL_SPACING,
+            ),
+            IndicatorPosition::TopRight => egui::pos2(
+                indicator_rect.right(),
+                indicator_rect.bottom() + PANEL_SPACING,
+            ),
             IndicatorPosition::BottomLeft => {
-                // Panel above indicator, left aligned
                 egui::pos2(indicator_rect.left(), indicator_rect.top() - PANEL_SPACING)
             }
             IndicatorPosition::BottomRight => {
-                // Panel above indicator, right aligned
                 egui::pos2(indicator_rect.right(), indicator_rect.top() - PANEL_SPACING)
             }
         };

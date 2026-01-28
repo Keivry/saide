@@ -486,8 +486,12 @@ impl StreamPlayer {
     pub fn set_rotation(&mut self, rotation: u32) { self.video_rotation = rotation % 4; }
 
     fn draw_failed_overlay(&self, ui: &mut egui::Ui, err_msg: &str) {
+        use super::theme::AppColors;
+
         // General error overlay (decode errors, protocol errors, etc.)
         let ctx = ui.ctx();
+        let colors = AppColors::from_context(ctx);
+
         egui::Area::new(egui::Id::new("error_overlay"))
             .fixed_pos(egui::pos2(0.0, 0.0))
             .show(ui.ctx(), |ui| {
@@ -499,12 +503,8 @@ impl StreamPlayer {
                 );
                 {
                     let ui = &mut child_ui;
-                    // Semi-transparent background
-                    ui.painter().rect_filled(
-                        screen_rect,
-                        0.0,
-                        egui::Color32::from_black_alpha(200),
-                    );
+                    ui.painter()
+                        .rect_filled(screen_rect, 0.0, colors.error_overlay_bg);
 
                     // Center error message
                     ui.vertical_centered(|ui| {
@@ -513,7 +513,7 @@ impl StreamPlayer {
                         ui.label(
                             egui::RichText::new("⚠️ Stream Error")
                                 .size(36.0)
-                                .color(egui::Color32::from_rgb(255, 100, 100)),
+                                .color(colors.error_overlay_title),
                         );
 
                         ui.add_space(20.0);
@@ -521,7 +521,7 @@ impl StreamPlayer {
                         ui.label(
                             egui::RichText::new("An error occurred during streaming")
                                 .size(20.0)
-                                .color(egui::Color32::WHITE),
+                                .color(colors.error_overlay_text),
                         );
 
                         ui.add_space(15.0);
@@ -529,7 +529,7 @@ impl StreamPlayer {
                         ui.label(
                             egui::RichText::new("Please restart the application")
                                 .size(16.0)
-                                .color(egui::Color32::GRAY),
+                                .color(colors.error_overlay_hint),
                         );
 
                         ui.add_space(10.0);
@@ -537,7 +537,7 @@ impl StreamPlayer {
                         ui.label(
                             egui::RichText::new(format!("Details: {}", err_msg))
                                 .size(14.0)
-                                .color(egui::Color32::DARK_GRAY),
+                                .color(colors.error_overlay_details),
                         );
                     });
                 }
