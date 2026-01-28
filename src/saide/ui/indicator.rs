@@ -15,12 +15,6 @@ const INDICATOR_REFRESH_INTERVAL_MS: Duration = Duration::from_millis(1000 / IND
 const INDICATOR_PADDING: f32 = 8.0;
 const PANEL_SPACING: f32 = 4.0;
 
-const INDICATOR_COLOR_FROM_LATENCY: [(f32, (u8, u8, u8, u8)); 3] = [
-    (0.0, (100, 255, 100, 200)),  // Green for latency 0-19ms
-    (20.0, (255, 255, 100, 200)), // Yellow for latency 20-49
-    (50.0, (255, 100, 100, 200)), // Red for latency 50ms+
-];
-
 /// Floating panel trigger key
 const TRIGGER_MODIFIER: egui::Modifiers = egui::Modifiers::CTRL;
 
@@ -113,15 +107,14 @@ impl Indicator {
     }
 
     /// Get color based on latency value
-    fn get_color_from_latency(&self) -> egui::Color32 {
-        let color = INDICATOR_COLOR_FROM_LATENCY
-            .iter()
-            .rev()
-            .find(|(threshold, _)| self.video_stats.latency_ms >= *threshold)
-            .map(|(_, color)| *color)
-            .unwrap_or(INDICATOR_COLOR_FROM_LATENCY[0].1);
-
-        egui::Color32::from_rgba_unmultiplied(color.0, color.1, color.2, color.3)
+    fn get_color_from_latency(&self, colors: &AppColors) -> egui::Color32 {
+        if self.video_stats.latency_ms >= 50.0 {
+            colors.indicator_fps_high
+        } else if self.video_stats.latency_ms >= 20.0 {
+            colors.indicator_fps_medium
+        } else {
+            colors.indicator_fps_low
+        }
     }
 
     /// Get pivot point for indicator area based on position
@@ -174,7 +167,7 @@ impl Indicator {
                                     "FPS: {}",
                                     self.video_stats.fps.min(self.max_fps) as u32
                                 ))
-                                .color(self.get_color_from_latency())
+                                .color(self.get_color_from_latency(&colors))
                                 .size(14.0),
                             );
                         });

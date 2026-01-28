@@ -139,6 +139,11 @@ impl Toolbar {
 
     /// Draw a single button, return true if clicked
     fn draw_button(&self, btn: &ToolbarButton, ui: &mut egui::Ui, colors: &AppColors) -> bool {
+        let visuals = ui.visuals_mut();
+        visuals.widgets.inactive.weak_bg_fill = colors.toolbar_button_bg;
+        visuals.widgets.hovered.weak_bg_fill = colors.toolbar_button_bg_hovered;
+        visuals.widgets.active.weak_bg_fill = colors.toolbar_button_bg_active;
+
         let mut button = Button::new(
             RichText::new(btn.lable)
                 .color(colors.toolbar_fg)

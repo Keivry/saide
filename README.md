@@ -473,6 +473,28 @@ Or in `config.toml`:
 level = "debug"
 ```
 
+**Theme Override (Debug/Testing):**
+
+Force light or dark theme regardless of system settings:
+
+```bash
+# Force dark mode
+SAIDE_THEME=dark cargo run
+
+# Force light mode
+SAIDE_THEME=light cargo run
+
+# Use system theme (default)
+SAIDE_THEME=auto cargo run
+# Or omit SAIDE_THEME entirely
+cargo run
+```
+
+This is useful for:
+- Testing UI appearance in both themes without changing OS settings
+- Debugging theme-specific rendering issues
+- Screenshots/documentation with consistent colors
+
 ### Known Issues
 
 #### Windows-Specific (v0.3 - Experimental)
