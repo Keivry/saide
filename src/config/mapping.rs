@@ -248,6 +248,14 @@ impl Deref for KeyMapping {
     fn deref(&self) -> &Self::Target { &self.inner }
 }
 
+impl Default for KeyMapping {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
 /// Profile for a specific device and rotation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
