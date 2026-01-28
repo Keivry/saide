@@ -390,6 +390,10 @@ impl SAideApp {
         if let Some(profile_name) = keyboard_mapper.create_profile(device_serial, device_rotation) {
             info!("Profile created: {}", profile_name);
 
+            keyboard_mapper.refresh_profiles(device_serial, device_rotation);
+            self.indicator
+                .update_active_profile(keyboard_mapper.get_active_profile_name());
+
             if let Err(e) = self.config_state.config_manager.save() {
                 error!("Failed to save config: {}", e);
             } else {
@@ -408,6 +412,12 @@ impl SAideApp {
 
         if keyboard_mapper.delete_active_profile() {
             info!("Active profile deleted");
+
+            let device_serial = self.app_state.device_serial();
+            let device_rotation = self.app_state.device_orientation();
+            keyboard_mapper.refresh_profiles(device_serial, device_rotation);
+            self.indicator
+                .update_active_profile(keyboard_mapper.get_active_profile_name());
 
             if let Err(e) = self.config_state.config_manager.save() {
                 error!("Failed to save config: {}", e);
