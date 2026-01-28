@@ -16,8 +16,22 @@ use {
     egui::Key,
     parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc},
-    tracing::{info, trace},
+    tracing::{info, trace, warn},
 };
+
+#[derive(Debug, Clone)]
+pub enum ProfileOperationResult {
+    Success(String),
+    Conflict(String),
+}
+
+impl ProfileOperationResult {
+    pub fn name(&self) -> &str {
+        match self {
+            ProfileOperationResult::Success(name) | ProfileOperationResult::Conflict(name) => name,
+        }
+    }
+}
 
 lazy_static::lazy_static! {
     pub static ref EGUI_TO_ANDROID_KEY: HashMap<Key, u8> = {
@@ -156,6 +170,19 @@ impl KeyboardMapper {
             self.scrcpy_mappings.write().clear();
         } else {
             avail_profiles.sort_by_key(|b| std::cmp::Reverse(b.last_modified));
+
+            // Remove duplicate profiles with same name (keep most recent by last_modified)
+            let original_count = avail_profiles.len();
+            let mut seen = std::collections::HashSet::new();
+            avail_profiles.retain(|p| seen.insert(p.name.clone()));
+
+            if avail_profiles.len() < original_count {
+                let removed = original_count - avail_profiles.len();
+                warn!(
+                    "Found {} duplicate profile(s) with same name in config file. Using most recent.",
+                    removed
+                );
+            }
 
             info!(
                 "Found {} matching profiles for device serial '{}' with rotation {}.",
@@ -469,16 +496,26 @@ impl KeyboardMapper {
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
     ///
     /// # Returns
-    /// - `Some(profile_name)` if profile created successfully
+    /// - `Some(ProfileOperationResult::Success(name))` if profile created successfully
+    /// - `Some(ProfileOperationResult::Conflict(name))` if profile name already exists
     /// - `None` if device info is invalid
-    pub fn create_profile(&self, device_serial: &str, device_rotation: u32) -> Option<String> {
+    pub fn create_profile(
+        &self,
+        device_serial: &str,
+        device_rotation: u32,
+    ) -> Option<ProfileOperationResult> {
         if device_serial.is_empty() || device_rotation > 3 {
             return None;
         }
 
-        // Generate profile name with timestamp
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let profile_name = format!("{}_{}_r{}", device_serial, timestamp, device_rotation);
+
+        let profiles = self.config.profiles.read();
+        if profiles.iter().any(|p| p.name == profile_name) {
+            return Some(ProfileOperationResult::Conflict(profile_name));
+        }
+        drop(profiles);
 
         let new_profile = Arc::new(Profile {
             name: profile_name.clone(),
@@ -488,19 +525,49 @@ impl KeyboardMapper {
             mappings: Arc::new(KeyMapping::default()),
         });
 
-        // Add to config
         self.config.add_profile(Arc::clone(&new_profile));
 
-        // Set as active profile
         self.active_profile.store(Arc::new(Some(new_profile)));
         self.scrcpy_mappings.write().clear();
 
-        // Refresh available profiles
         let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
         *self.avail_profiles.write() = avail_profiles;
 
         info!("Created new profile: {}", profile_name);
-        Some(profile_name)
+        Some(ProfileOperationResult::Success(profile_name))
+    }
+
+    pub fn create_profile_with_name(
+        &self,
+        device_serial: &str,
+        device_rotation: u32,
+        profile_name: &str,
+    ) -> Option<String> {
+        if device_serial.is_empty() || device_rotation > 3 || profile_name.is_empty() {
+            return None;
+        }
+
+        // Remove existing profile with same name if any, then add new one
+        self.config.remove_profile(profile_name);
+
+        let new_profile = Arc::new(Profile {
+            name: profile_name.to_string(),
+            device_serial: device_serial.to_string(),
+            rotation: device_rotation,
+            last_modified: chrono::Utc::now(),
+            mappings: Arc::new(KeyMapping::default()),
+        });
+
+        self.config.add_profile(Arc::clone(&new_profile));
+
+        self.active_profile.store(Arc::new(Some(new_profile)));
+        self.scrcpy_mappings.write().clear();
+
+        let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
+        *self.avail_profiles.write() = avail_profiles;
+
+        info!("Force created profile (overwrite): {}", profile_name);
+        Some(profile_name.to_string())
     }
 
     /// Delete the active profile
@@ -526,7 +593,51 @@ impl KeyboardMapper {
         true
     }
 
-    pub fn rename_active_profile(&self, new_name: &str) -> bool {
+    pub fn rename_active_profile(&self, new_name: &str) -> ProfileOperationResult {
+        if new_name.trim().is_empty() {
+            return ProfileOperationResult::Conflict(String::new());
+        }
+
+        let Some(active_profile) = self.get_active_profile() else {
+            return ProfileOperationResult::Conflict(String::new());
+        };
+
+        let old_name = active_profile.name.clone();
+
+        let profiles = self.config.profiles.read();
+        if profiles
+            .iter()
+            .any(|p| p.name == new_name && p.name != old_name)
+        {
+            return ProfileOperationResult::Conflict(new_name.to_string());
+        }
+        drop(profiles);
+
+        if !self.config.rename_profile(&old_name, new_name) {
+            return ProfileOperationResult::Conflict(new_name.to_string());
+        }
+
+        let updated_profile = Arc::new(Profile {
+            name: new_name.to_string(),
+            device_serial: active_profile.device_serial.clone(),
+            rotation: active_profile.rotation,
+            last_modified: chrono::Utc::now(),
+            mappings: Arc::clone(&active_profile.mappings),
+        });
+
+        self.active_profile
+            .store(Arc::new(Some(updated_profile.clone())));
+
+        let device_serial = &active_profile.device_serial;
+        let device_rotation = active_profile.rotation;
+        let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
+        *self.avail_profiles.write() = avail_profiles;
+
+        info!("Renamed profile from '{}' to '{}'", old_name, new_name);
+        ProfileOperationResult::Success(new_name.to_string())
+    }
+
+    pub fn rename_active_profile_force(&self, new_name: &str) -> bool {
         if new_name.trim().is_empty() {
             return false;
         }
@@ -536,6 +647,10 @@ impl KeyboardMapper {
         };
 
         let old_name = active_profile.name.clone();
+
+        // Remove any existing profile with the target name to avoid duplicates
+        // rename_profile doesn't check for name conflicts
+        self.config.remove_profile(new_name);
 
         if !self.config.rename_profile(&old_name, new_name) {
             return false;
@@ -557,7 +672,10 @@ impl KeyboardMapper {
         let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
         *self.avail_profiles.write() = avail_profiles;
 
-        info!("Renamed profile from '{}' to '{}'", old_name, new_name);
+        info!(
+            "Force renamed profile from '{}' to '{}'",
+            old_name, new_name
+        );
         true
     }
 
@@ -568,11 +686,25 @@ impl KeyboardMapper {
         }
 
         let current_name = self.get_active_profile().map(|p| p.name.clone());
+
+        let profile_names: Vec<String> = avail.iter().map(|p| p.name.clone()).collect();
+        trace!(
+            "switch_profile_next: available_profiles={:?}, current={}",
+            profile_names,
+            current_name.as_deref().unwrap_or("None")
+        );
+
         if let Some(name) = current_name
             && let Some(idx) = avail.iter().position(|p| p.name == name)
         {
             let next_idx = (idx + 1) % avail.len();
             let next_profile = avail[next_idx].clone();
+
+            trace!(
+                "switch_profile_next: current_idx={}, next_idx={}, next_profile={}",
+                idx, next_idx, next_profile.name
+            );
+
             drop(avail);
 
             self.active_profile
@@ -591,11 +723,25 @@ impl KeyboardMapper {
         }
 
         let current_name = self.get_active_profile().map(|p| p.name.clone());
+
+        let profile_names: Vec<String> = avail.iter().map(|p| p.name.clone()).collect();
+        trace!(
+            "switch_profile_prev: available_profiles={:?}, current={}",
+            profile_names,
+            current_name.as_deref().unwrap_or("None")
+        );
+
         if let Some(name) = current_name
             && let Some(idx) = avail.iter().position(|p| p.name == name)
         {
             let prev_idx = if idx == 0 { avail.len() - 1 } else { idx - 1 };
             let prev_profile = avail[prev_idx].clone();
+
+            trace!(
+                "switch_profile_prev: current_idx={}, prev_idx={}, prev_profile={}",
+                idx, prev_idx, prev_profile.name
+            );
+
             drop(avail);
 
             self.active_profile
@@ -629,4 +775,6 @@ impl KeyboardMapper {
             .map(|p| p.name.clone())
             .collect()
     }
+
+    pub fn remove_profile(&self, profile_name: &str) { self.config.remove_profile(profile_name); }
 }

@@ -25,7 +25,6 @@ use {
 pub struct MappingDrawParams<'a> {
     pub mappings: &'a KeyMapping,
     pub profile_name: Option<&'a str>,
-    pub available_profiles: &'a [String],
     pub video_rect: egui::Rect,
     pub visual_coords: &'a VisualCoordSys,
     pub scrcpy_coords: &'a ScrcpyCoordSys,
@@ -43,7 +42,7 @@ pub enum MappingConfigEvent {
     RequestDeleteProfile,
     RequestSaveAsProfile,
     RequestShowHelp,
-    SwitchProfile(String),
+    RequestSwitchProfileDialog,
     SwitchProfileNext,
     SwitchProfilePrev,
 }
@@ -76,6 +75,16 @@ pub struct MappingConfigWindow {
 
     /// Help dialog state
     help_dialog: ModalDialog,
+
+    /// Profile switch dialog state
+    profile_switch_visible: bool,
+    selected_profile_idx: usize,
+
+    /// Conflict confirmation dialog state
+    conflict_confirm_dialog: ModalDialog,
+    conflict_profile_name: Option<String>,
+    /// Conflict type: create or rename
+    conflict_is_rename: bool,
 }
 
 impl MappingConfigWindow {
@@ -107,6 +116,14 @@ impl MappingConfigWindow {
 
             help_dialog: ModalDialog::new("help_dialog")
                 .with_title(&t!("mapping-config-help-title")),
+
+            profile_switch_visible: false,
+            selected_profile_idx: 0,
+
+            conflict_confirm_dialog: ModalDialog::new("conflict_confirm_dialog")
+                .with_title(&t!("mapping-config-dialog-conflict-title")),
+            conflict_profile_name: None,
+            conflict_is_rename: false,
         }
     }
 
@@ -140,6 +157,13 @@ impl MappingConfigWindow {
         self.rename_dialog.reset();
 
         self.help_dialog.reset();
+
+        self.profile_switch_visible = false;
+        self.selected_profile_idx = 0;
+
+        self.conflict_confirm_dialog.reset();
+        self.conflict_profile_name = None;
+        self.conflict_is_rename = false;
     }
 
     pub fn is_visible(&self) -> bool { self.visible }
@@ -232,42 +256,6 @@ impl MappingConfigWindow {
                 }
             });
 
-        if let Some(name) = params.profile_name
-            && params.available_profiles.len() > 1
-        {
-            egui::Window::new("profile_selector_window")
-                .title_bar(false)
-                .resizable(false)
-                .fixed_pos(Pos2::new(
-                    params.video_rect.center().x - 100.0,
-                    params.video_rect.top() + 120.0,
-                ))
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        let mut selected_profile = name.to_string();
-                        egui::ComboBox::from_id_salt("profile_selector")
-                            .selected_text(&selected_profile)
-                            .show_ui(ui, |ui| {
-                                for profile_name in params.available_profiles {
-                                    if ui
-                                        .selectable_value(
-                                            &mut selected_profile,
-                                            profile_name.clone(),
-                                            profile_name,
-                                        )
-                                        .clicked()
-                                        && selected_profile != name
-                                    {
-                                        event = MappingConfigEvent::SwitchProfile(
-                                            selected_profile.clone(),
-                                        );
-                                    }
-                                }
-                            });
-                    });
-                });
-        }
-
         ctx.input(|input| {
             if input.pointer.primary_clicked()
                 && !self.any_dialog_open()
@@ -326,6 +314,11 @@ impl MappingConfigWindow {
                             egui::Key::F5 if modifiers.is_none() => {
                                 event = MappingConfigEvent::RequestSaveAsProfile;
                                 input.consume_key(Modifiers::NONE, egui::Key::F5);
+                                break;
+                            }
+                            egui::Key::F6 if modifiers.is_none() => {
+                                event = MappingConfigEvent::RequestSwitchProfileDialog;
+                                input.consume_key(Modifiers::NONE, egui::Key::F6);
                                 break;
                             }
                             egui::Key::F7 if modifiers.is_none() => {
@@ -473,6 +466,8 @@ impl MappingConfigWindow {
             || self.override_mapping_dialog.is_visible()
             || self.rename_dialog.is_visible()
             || self.help_dialog.is_visible()
+            || self.profile_switch_visible
+            || self.conflict_confirm_dialog.is_visible()
     }
 
     pub fn is_input_dialog_open(&self) -> bool { self.key_input_dialog.is_visible() }
@@ -484,6 +479,13 @@ impl MappingConfigWindow {
     pub fn is_rename_dialog_open(&self) -> bool { self.rename_dialog.is_visible() }
 
     pub fn is_help_dialog_open(&self) -> bool { self.help_dialog.is_visible() }
+
+    pub fn is_profile_switch_dialog_open(&self) -> bool { self.profile_switch_visible }
+
+    pub fn request_profile_switch_dialog(&mut self) {
+        self.profile_switch_visible = true;
+        self.selected_profile_idx = 0;
+    }
 
     pub fn get_pos(&self) -> Option<MappingPos> { self.pos }
 
@@ -583,4 +585,116 @@ impl MappingConfigWindow {
 
         should_close
     }
+
+    pub fn show_profile_switch_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        available_profiles: &[String],
+        current_profile: Option<&str>,
+    ) -> Option<String> {
+        if !self.profile_switch_visible {
+            return None;
+        }
+
+        let mut result = None;
+
+        egui::Window::new(t!("mapping-config-dialog-switch-title"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(t!("mapping-config-dialog-switch-message"));
+                ui.separator();
+
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        for (idx, profile_name) in available_profiles.iter().enumerate() {
+                            let is_current = current_profile == Some(profile_name.as_str());
+                            let text = if is_current {
+                                format!("● {}", profile_name)
+                            } else {
+                                profile_name.clone()
+                            };
+
+                            if ui
+                                .selectable_label(self.selected_profile_idx == idx, text)
+                                .clicked()
+                            {
+                                self.selected_profile_idx = idx;
+                                result = Some(profile_name.clone());
+                            }
+                        }
+                    });
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(t!("dialog-button-cancel")).clicked() {
+                        self.profile_switch_visible = false;
+                    }
+                });
+            });
+
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                self.profile_switch_visible = false;
+            }
+        });
+
+        if result.is_some() {
+            self.profile_switch_visible = false;
+        }
+
+        result
+    }
+
+    pub fn is_conflict_confirm_dialog_open(&self) -> bool {
+        self.conflict_confirm_dialog.is_visible()
+    }
+
+    pub fn request_conflict_confirm_dialog(&mut self, profile_name: String, is_rename: bool) {
+        self.conflict_confirm_dialog
+            .set_message(&tf!(
+                "mapping-config-dialog-conflict-message",
+                "name" => &profile_name
+            ))
+            .set_visible(true);
+        self.conflict_profile_name = Some(profile_name);
+        self.conflict_is_rename = is_rename;
+    }
+
+    pub fn show_conflict_confirm_dialog(&mut self, ctx: &egui::Context) -> Option<bool> {
+        if !self.conflict_confirm_dialog.is_visible() {
+            return None;
+        }
+
+        let mut should_close = false;
+        let mut result = None;
+
+        match self.conflict_confirm_dialog.show(ctx) {
+            ModalDialogResult::Confirmed => {
+                result = Some(true);
+                should_close = true;
+            }
+            ModalDialogResult::Canceled => {
+                result = Some(false);
+                should_close = true;
+            }
+            _ => {}
+        }
+
+        if should_close {
+            self.conflict_confirm_dialog.reset();
+            self.conflict_profile_name = None;
+            self.conflict_is_rename = false;
+        }
+
+        result
+    }
+
+    pub fn get_conflict_profile_name(&self) -> Option<&str> {
+        self.conflict_profile_name.as_deref()
+    }
+
+    pub fn is_conflict_rename(&self) -> bool { self.conflict_is_rename }
 }

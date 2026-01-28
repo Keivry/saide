@@ -42,7 +42,6 @@ indicator-panel-profile-none = 不可用
 mapping-config-title = 映射配置模式
 mapping-config-profile-label = 配置名称：
 mapping-config-instruction-help = F1 - 显示帮助
-mapping-config-instruction-switch = F7/F8 - 切换配置
 mapping-config-instruction-exit = 按 ESC 退出
 mapping-config-dialog-create-title = 创建映射
 mapping-config-dialog-create-message =
@@ -58,6 +57,10 @@ mapping-config-dialog-override-message =
     覆盖到新位置（{$new_x}, {$new_y}）？
 mapping-config-dialog-rename-title = 重命名配置
 mapping-config-dialog-rename-placeholder = 输入新名称...
+mapping-config-dialog-switch-title = 切换配置
+mapping-config-dialog-switch-message = 选择要切换的配置：
+mapping-config-dialog-conflict-title = 配置已存在
+mapping-config-dialog-conflict-message = 配置 "{$name}" 已存在。是否覆盖？
 mapping-config-help-title = 快捷键帮助
 mapping-config-help-message =
     可用快捷键：
@@ -67,6 +70,7 @@ mapping-config-help-message =
     F3 - 新建配置
     F4 - 删除当前配置
     F5 - 另存为
+    F6 - 切换配置
     F7 - 切换到上一个配置
     F8 - 切换到下一个配置
 

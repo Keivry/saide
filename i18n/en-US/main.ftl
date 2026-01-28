@@ -42,7 +42,6 @@ indicator-panel-profile-none = Not Available
 mapping-config-title = Mapping Configuration Mode
 mapping-config-profile-label = Profile Name:
 mapping-config-instruction-help = F1 - Show help
-mapping-config-instruction-switch = F7/F8 - Switch profile
 mapping-config-instruction-exit = Press ESC to exit
 mapping-config-dialog-create-title = Create Mapping
 mapping-config-dialog-create-message =
@@ -58,6 +57,10 @@ mapping-config-dialog-override-message =
     Override to new position ({$new_x}, {$new_y})?
 mapping-config-dialog-rename-title = Rename Profile
 mapping-config-dialog-rename-placeholder = Enter new name...
+mapping-config-dialog-switch-title = Switch Profile
+mapping-config-dialog-switch-message = Select a profile to switch to:
+mapping-config-dialog-conflict-title = Profile Exists
+mapping-config-dialog-conflict-message = Profile "{$name}" already exists. Overwrite?
 mapping-config-help-title = Keyboard Shortcuts Help
 mapping-config-help-message =
     Available Keyboard Shortcuts:
@@ -67,6 +70,7 @@ mapping-config-help-message =
     F3 - Create New Profile
     F4 - Delete Current Profile
     F5 - Save As
+    F6 - Switch profile
     F7 - Switch to previous profile
     F8 - Switch to next profile
 

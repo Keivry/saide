@@ -340,7 +340,13 @@ impl Mappings {
             .collect()
     }
 
-    pub fn add_profile(&self, profile: Arc<Profile>) { self.profiles.write().push(profile); }
+    pub fn add_profile(&self, profile: Arc<Profile>) {
+        let mut profiles = self.profiles.write();
+        if profiles.iter().any(|p| p.name == profile.name) {
+            profiles.retain(|p| p.name != profile.name);
+        }
+        profiles.push(profile);
+    }
 
     pub fn remove_profile(&self, profile_name: &str) {
         self.profiles

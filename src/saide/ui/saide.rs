@@ -21,7 +21,7 @@ use {
     },
     crate::{
         config::mapping::{Key, KeyMapping, MappingAction, MouseButton, WheelDirection},
-        controller::mouse::MouseState,
+        controller::{keyboard::ProfileOperationResult, mouse::MouseState},
         error::Result,
         t,
     },
@@ -387,20 +387,27 @@ impl SAideApp {
         let device_serial = self.app_state.device_serial();
         let device_rotation = self.app_state.device_orientation();
 
-        if let Some(profile_name) = keyboard_mapper.create_profile(device_serial, device_rotation) {
-            info!("Profile created: {}", profile_name);
+        match keyboard_mapper.create_profile(device_serial, device_rotation) {
+            Some(ProfileOperationResult::Success(profile_name)) => {
+                info!("Profile created: {}", profile_name);
 
-            keyboard_mapper.refresh_profiles(device_serial, device_rotation);
-            self.indicator
-                .update_active_profile(keyboard_mapper.get_active_profile_name());
+                keyboard_mapper.refresh_profiles(device_serial, device_rotation);
+                self.indicator
+                    .update_active_profile(keyboard_mapper.get_active_profile_name());
 
-            if let Err(e) = self.config_state.config_manager.save() {
-                error!("Failed to save config: {}", e);
-            } else {
-                info!("Profile saved to config file");
+                if let Err(e) = self.config_state.config_manager.save() {
+                    error!("Failed to save config: {}", e);
+                } else {
+                    info!("Profile saved to config file");
+                }
             }
-        } else {
-            error!("Failed to create profile");
+            Some(ProfileOperationResult::Conflict(profile_name)) => {
+                self.mapping_config_window
+                    .request_conflict_confirm_dialog(profile_name, false);
+            }
+            None => {
+                error!("Failed to create profile");
+            }
         }
     }
 
@@ -435,18 +442,22 @@ impl SAideApp {
             return;
         };
 
-        if keyboard_mapper.rename_active_profile(&new_name) {
-            info!("Profile renamed to: {}", new_name);
+        match keyboard_mapper.rename_active_profile(&new_name) {
+            ProfileOperationResult::Success(_) => {
+                info!("Profile renamed to: {}", new_name);
 
-            self.indicator.update_active_profile(Some(new_name));
+                self.indicator.update_active_profile(Some(new_name));
 
-            if let Err(e) = self.config_state.config_manager.save() {
-                error!("Failed to save config: {}", e);
-            } else {
-                info!("Config saved after profile rename");
+                if let Err(e) = self.config_state.config_manager.save() {
+                    error!("Failed to save config: {}", e);
+                } else {
+                    info!("Config saved after profile rename");
+                }
             }
-        } else {
-            error!("Failed to rename profile");
+            ProfileOperationResult::Conflict(_) => {
+                self.mapping_config_window
+                    .request_conflict_confirm_dialog(new_name, true);
+            }
         }
     }
 
@@ -558,7 +569,6 @@ impl SAideApp {
             .get_active_mappings()
             .unwrap_or_else(|| Arc::new(KeyMapping::default()));
         let profile_name = keyboard_mapper.get_active_profile_name();
-        let available_profiles = keyboard_mapper.get_available_profile_names();
 
         let video_rect = self.player.video_rect();
         let event = self.mapping_config_window.draw(
@@ -566,7 +576,6 @@ impl SAideApp {
             crate::saide::ui::mapping::MappingDrawParams {
                 mappings: &mappings,
                 profile_name: profile_name.as_deref(),
-                available_profiles: &available_profiles,
                 video_rect,
                 visual_coords: self.ui_state.visual_coords(),
                 scrcpy_coords: self.app_state.scrcpy_coords(),
@@ -652,19 +661,26 @@ impl SAideApp {
                     let device_serial = self.app_state.device_serial();
                     let device_rotation = self.app_state.device_orientation();
 
-                    if let Some(profile_name) =
-                        keyboard_mapper.create_profile(device_serial, device_rotation)
-                    {
-                        info!("Profile saved as: {}", profile_name);
+                    match keyboard_mapper.create_profile(device_serial, device_rotation) {
+                        Some(ProfileOperationResult::Success(profile_name)) => {
+                            info!("Profile saved as: {}", profile_name);
 
-                        keyboard_mapper.refresh_profiles(device_serial, device_rotation);
-                        self.indicator
-                            .update_active_profile(keyboard_mapper.get_active_profile_name());
+                            keyboard_mapper.refresh_profiles(device_serial, device_rotation);
+                            self.indicator
+                                .update_active_profile(keyboard_mapper.get_active_profile_name());
 
-                        if let Err(e) = self.config_state.config_manager.save() {
-                            error!("Failed to save config: {}", e);
-                        } else {
-                            info!("Profile saved to config file");
+                            if let Err(e) = self.config_state.config_manager.save() {
+                                error!("Failed to save config: {}", e);
+                            } else {
+                                info!("Profile saved to config file");
+                            }
+                        }
+                        Some(ProfileOperationResult::Conflict(profile_name)) => {
+                            self.mapping_config_window
+                                .request_conflict_confirm_dialog(profile_name, false);
+                        }
+                        None => {
+                            error!("Failed to create profile");
                         }
                     }
                 }
@@ -672,14 +688,8 @@ impl SAideApp {
             MappingConfigEvent::RequestShowHelp => {
                 self.mapping_config_window.request_help_dialog();
             }
-            MappingConfigEvent::SwitchProfile(profile_name) => {
-                if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
-                    && keyboard_mapper.switch_to_profile(&profile_name)
-                {
-                    self.indicator
-                        .update_active_profile(keyboard_mapper.get_active_profile_name());
-                    info!("Switched to profile: {}", profile_name);
-                }
+            MappingConfigEvent::RequestSwitchProfileDialog => {
+                self.mapping_config_window.request_profile_switch_dialog();
             }
             MappingConfigEvent::SwitchProfileNext => {
                 if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
@@ -741,6 +751,59 @@ impl SAideApp {
         }
         if self.mapping_config_window.is_help_dialog_open() {
             self.mapping_config_window.show_help_dialog(ctx);
+        }
+
+        if self.mapping_config_window.is_profile_switch_dialog_open()
+            && let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
+        {
+            let available_profiles = keyboard_mapper.get_available_profile_names();
+            let current_profile = keyboard_mapper.get_active_profile_name();
+
+            if let Some(selected_name) = self.mapping_config_window.show_profile_switch_dialog(
+                ctx,
+                &available_profiles,
+                current_profile.as_deref(),
+            ) && keyboard_mapper.switch_to_profile(&selected_name)
+            {
+                self.indicator
+                    .update_active_profile(keyboard_mapper.get_active_profile_name());
+            }
+        }
+
+        if self.mapping_config_window.is_conflict_confirm_dialog_open()
+            && let Some(result) = self.mapping_config_window.show_conflict_confirm_dialog(ctx)
+            && result
+            && let Some(target_name) = self.mapping_config_window.get_conflict_profile_name()
+        {
+            let device_serial = self.app_state.device_serial();
+            let device_rotation = self.app_state.device_orientation();
+            if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper {
+                let is_rename = self.mapping_config_window.is_conflict_rename();
+
+                if is_rename {
+                    // Rename conflict: force rename to target_name
+                    if keyboard_mapper.rename_active_profile_force(target_name) {
+                        let new_name = keyboard_mapper.get_active_profile_name();
+                        self.indicator.update_active_profile(new_name);
+                        if let Err(e) = self.config_state.config_manager.save() {
+                            error!("Failed to save config: {}", e);
+                        }
+                    }
+                } else {
+                    // Create conflict: force create with the conflicting name (overwrite existing)
+                    if keyboard_mapper
+                        .create_profile_with_name(device_serial, device_rotation, target_name)
+                        .is_some()
+                    {
+                        keyboard_mapper.refresh_profiles(device_serial, device_rotation);
+                        self.indicator
+                            .update_active_profile(keyboard_mapper.get_active_profile_name());
+                        if let Err(e) = self.config_state.config_manager.save() {
+                            error!("Failed to save config: {}", e);
+                        }
+                    }
+                }
+            }
         }
     }
 
