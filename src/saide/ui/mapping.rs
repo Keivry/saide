@@ -25,6 +25,7 @@ use {
 pub struct MappingDrawParams<'a> {
     pub mappings: &'a KeyMapping,
     pub profile_name: Option<&'a str>,
+    pub available_profiles: &'a [String],
     pub video_rect: egui::Rect,
     pub visual_coords: &'a VisualCoordSys,
     pub scrcpy_coords: &'a ScrcpyCoordSys,
@@ -42,6 +43,9 @@ pub enum MappingConfigEvent {
     RequestDeleteProfile,
     RequestSaveAsProfile,
     RequestShowHelp,
+    SwitchProfile(String),
+    SwitchProfileNext,
+    SwitchProfilePrev,
 }
 
 /// Mapping configuration UI state
@@ -228,6 +232,42 @@ impl MappingConfigWindow {
                 }
             });
 
+        if let Some(name) = params.profile_name
+            && params.available_profiles.len() > 1
+        {
+            egui::Window::new("profile_selector_window")
+                .title_bar(false)
+                .resizable(false)
+                .fixed_pos(Pos2::new(
+                    params.video_rect.center().x - 100.0,
+                    params.video_rect.top() + 120.0,
+                ))
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let mut selected_profile = name.to_string();
+                        egui::ComboBox::from_id_salt("profile_selector")
+                            .selected_text(&selected_profile)
+                            .show_ui(ui, |ui| {
+                                for profile_name in params.available_profiles {
+                                    if ui
+                                        .selectable_value(
+                                            &mut selected_profile,
+                                            profile_name.clone(),
+                                            profile_name,
+                                        )
+                                        .clicked()
+                                        && selected_profile != name
+                                    {
+                                        event = MappingConfigEvent::SwitchProfile(
+                                            selected_profile.clone(),
+                                        );
+                                    }
+                                }
+                            });
+                    });
+                });
+        }
+
         ctx.input(|input| {
             if input.pointer.primary_clicked()
                 && !self.any_dialog_open()
@@ -286,6 +326,16 @@ impl MappingConfigWindow {
                             egui::Key::F5 if modifiers.is_none() => {
                                 event = MappingConfigEvent::RequestSaveAsProfile;
                                 input.consume_key(Modifiers::NONE, egui::Key::F5);
+                                break;
+                            }
+                            egui::Key::F7 if modifiers.is_none() => {
+                                event = MappingConfigEvent::SwitchProfilePrev;
+                                input.consume_key(Modifiers::NONE, egui::Key::F7);
+                                break;
+                            }
+                            egui::Key::F8 if modifiers.is_none() => {
+                                event = MappingConfigEvent::SwitchProfileNext;
+                                input.consume_key(Modifiers::NONE, egui::Key::F8);
                                 break;
                             }
                             _ => {}

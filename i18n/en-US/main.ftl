@@ -42,6 +42,7 @@ indicator-panel-profile-none = Not Available
 mapping-config-title = Mapping Configuration Mode
 mapping-config-profile-label = Profile Name:
 mapping-config-instruction-help = F1 - Show help
+mapping-config-instruction-switch = F7/F8 - Switch profile
 mapping-config-instruction-exit = Press ESC to exit
 mapping-config-dialog-create-title = Create Mapping
 mapping-config-dialog-create-message =
@@ -66,6 +67,8 @@ mapping-config-help-message =
     F3 - Create New Profile
     F4 - Delete Current Profile
     F5 - Save As
+    F7 - Switch to previous profile
+    F8 - Switch to next profile
 
     ESC - Close configuration window
 

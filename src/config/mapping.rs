@@ -6,6 +6,7 @@
 
 use {
     crate::saide::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, ScrcpyPos},
+    chrono::{DateTime, Utc},
     eframe::egui::{self, PointerButton},
     parking_lot::RwLock,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -267,10 +268,16 @@ pub struct Profile {
     /// Rotation this profile is associated with
     pub rotation: u32,
 
+    /// Last modified timestamp (UTC)
+    #[serde(default = "default_last_modified")]
+    pub last_modified: DateTime<Utc>,
+
     /// Key mappings
     #[serde(serialize_with = "serialize_arc", deserialize_with = "deserialize_arc")]
     pub mappings: Arc<KeyMapping>,
 }
+
+fn default_last_modified() -> DateTime<Utc> { Utc::now() }
 
 impl Profile {
     /// Add a mapping to the profile, returning a new profile
@@ -348,6 +355,7 @@ impl Mappings {
                 name: new_name.to_string(),
                 device_serial: profile.device_serial.clone(),
                 rotation: profile.rotation,
+                last_modified: Utc::now(),
                 mappings: Arc::clone(&profile.mappings),
             });
             true

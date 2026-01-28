@@ -143,7 +143,7 @@ impl KeyboardMapper {
     /// - `device_serial`: current device serial
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
     pub fn refresh_profiles(&self, device_serial: &str, device_rotation: u32) {
-        let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
+        let mut avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
 
         if avail_profiles.is_empty() {
             info!(
@@ -155,6 +155,8 @@ impl KeyboardMapper {
             self.active_profile.store(Arc::new(None));
             self.scrcpy_mappings.write().clear();
         } else {
+            avail_profiles.sort_by_key(|b| std::cmp::Reverse(b.last_modified));
+
             info!(
                 "Found {} matching profiles for device serial '{}' with rotation {}.",
                 avail_profiles.len(),
@@ -162,12 +164,10 @@ impl KeyboardMapper {
                 device_rotation
             );
 
-            // Set active profile (keeping percentage coordinates)
             let profile = avail_profiles[0].clone();
             self.active_profile.store(Arc::new(Some(profile.clone())));
             info!("Active profile set to: {}", profile.name);
 
-            // Convert percentage to pixels for runtime use
             self.apply_active_profile();
         }
 
@@ -409,13 +409,14 @@ impl KeyboardMapper {
 
             let (video_width, video_height) = self.sender.get_screen_size();
 
-            // Create coordinate systems for conversion
             let mapping_sys = MappingCoordSys::new(active_profile.rotation);
             let scrcpy_sys =
                 ScrcpyCoordSys::new(video_width, video_height, self.capture_orientation);
             let scrcpy_action =
                 ScrcpyAction::from_mapping_action(&action, &scrcpy_sys, &mapping_sys);
             self.add_scrcpy_mapping(key, scrcpy_action);
+
+            self.update_profile_last_modified(&active_profile.name);
         }
     }
 
@@ -425,6 +426,31 @@ impl KeyboardMapper {
             active_profile.mappings.write().remove(key);
 
             self.delete_scrcpy_mapping(key);
+
+            self.update_profile_last_modified(&active_profile.name);
+        }
+    }
+
+    fn update_profile_last_modified(&self, profile_name: &str) {
+        use chrono::Utc;
+
+        let mut profiles = self.config.profiles.write();
+        if let Some(profile) = profiles.iter_mut().find(|p| p.name == profile_name) {
+            let updated_profile = Arc::new(Profile {
+                name: profile.name.clone(),
+                device_serial: profile.device_serial.clone(),
+                rotation: profile.rotation,
+                last_modified: Utc::now(),
+                mappings: Arc::clone(&profile.mappings),
+            });
+
+            *profile = Arc::clone(&updated_profile);
+
+            if let Some(active) = self.get_active_profile()
+                && active.name == profile_name
+            {
+                self.active_profile.store(Arc::new(Some(updated_profile)));
+            }
         }
     }
 
@@ -454,11 +480,11 @@ impl KeyboardMapper {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let profile_name = format!("{}_{}_r{}", device_serial, timestamp, device_rotation);
 
-        // Create new profile with empty mappings
         let new_profile = Arc::new(Profile {
             name: profile_name.clone(),
             device_serial: device_serial.to_string(),
             rotation: device_rotation,
+            last_modified: chrono::Utc::now(),
             mappings: Arc::new(KeyMapping::default()),
         });
 
@@ -519,6 +545,7 @@ impl KeyboardMapper {
             name: new_name.to_string(),
             device_serial: active_profile.device_serial.clone(),
             rotation: active_profile.rotation,
+            last_modified: chrono::Utc::now(),
             mappings: Arc::clone(&active_profile.mappings),
         });
 
@@ -532,5 +559,74 @@ impl KeyboardMapper {
 
         info!("Renamed profile from '{}' to '{}'", old_name, new_name);
         true
+    }
+
+    pub fn switch_profile_next(&self) -> bool {
+        let avail = self.avail_profiles.read();
+        if avail.len() <= 1 {
+            return false;
+        }
+
+        let current_name = self.get_active_profile().map(|p| p.name.clone());
+        if let Some(name) = current_name
+            && let Some(idx) = avail.iter().position(|p| p.name == name)
+        {
+            let next_idx = (idx + 1) % avail.len();
+            let next_profile = avail[next_idx].clone();
+            drop(avail);
+
+            self.active_profile
+                .store(Arc::new(Some(next_profile.clone())));
+            self.apply_active_profile();
+            info!("Switched to next profile: {}", next_profile.name);
+            return true;
+        }
+        false
+    }
+
+    pub fn switch_profile_prev(&self) -> bool {
+        let avail = self.avail_profiles.read();
+        if avail.len() <= 1 {
+            return false;
+        }
+
+        let current_name = self.get_active_profile().map(|p| p.name.clone());
+        if let Some(name) = current_name
+            && let Some(idx) = avail.iter().position(|p| p.name == name)
+        {
+            let prev_idx = if idx == 0 { avail.len() - 1 } else { idx - 1 };
+            let prev_profile = avail[prev_idx].clone();
+            drop(avail);
+
+            self.active_profile
+                .store(Arc::new(Some(prev_profile.clone())));
+            self.apply_active_profile();
+            info!("Switched to previous profile: {}", prev_profile.name);
+            return true;
+        }
+        false
+    }
+
+    pub fn switch_to_profile(&self, profile_name: &str) -> bool {
+        let avail = self.avail_profiles.read();
+        if let Some(profile) = avail.iter().find(|p| p.name == profile_name) {
+            let target_profile = profile.clone();
+            drop(avail);
+
+            self.active_profile
+                .store(Arc::new(Some(target_profile.clone())));
+            self.apply_active_profile();
+            info!("Switched to profile: {}", target_profile.name);
+            return true;
+        }
+        false
+    }
+
+    pub fn get_available_profile_names(&self) -> Vec<String> {
+        self.avail_profiles
+            .read()
+            .iter()
+            .map(|p| p.name.clone())
+            .collect()
     }
 }

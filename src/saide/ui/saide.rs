@@ -558,6 +558,7 @@ impl SAideApp {
             .get_active_mappings()
             .unwrap_or_else(|| Arc::new(KeyMapping::default()));
         let profile_name = keyboard_mapper.get_active_profile_name();
+        let available_profiles = keyboard_mapper.get_available_profile_names();
 
         let video_rect = self.player.video_rect();
         let event = self.mapping_config_window.draw(
@@ -565,6 +566,7 @@ impl SAideApp {
             crate::saide::ui::mapping::MappingDrawParams {
                 mappings: &mappings,
                 profile_name: profile_name.as_deref(),
+                available_profiles: &available_profiles,
                 video_rect,
                 visual_coords: self.ui_state.visual_coords(),
                 scrcpy_coords: self.app_state.scrcpy_coords(),
@@ -577,6 +579,24 @@ impl SAideApp {
                 self.mapping_config_window.hide();
             }
             MappingConfigEvent::RequestAddMapping(screen_pos) => {
+                if keyboard_mapper.get_active_profile().is_none() {
+                    let device_serial = self.app_state.device_serial();
+                    let device_rotation = self.app_state.device_orientation();
+
+                    info!("No active profile, creating one...");
+                    if let Some(_profile_name) =
+                        keyboard_mapper.create_profile(device_serial, device_rotation)
+                    {
+                        keyboard_mapper.refresh_profiles(device_serial, device_rotation);
+                        self.indicator
+                            .update_active_profile(keyboard_mapper.get_active_profile_name());
+
+                        if let Err(e) = self.config_state.config_manager.save() {
+                            error!("Failed to save config: {}", e);
+                        }
+                    }
+                }
+
                 let video_rect = self.player.video_rect();
                 if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
                     &screen_pos,
@@ -651,6 +671,31 @@ impl SAideApp {
             }
             MappingConfigEvent::RequestShowHelp => {
                 self.mapping_config_window.request_help_dialog();
+            }
+            MappingConfigEvent::SwitchProfile(profile_name) => {
+                if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
+                    && keyboard_mapper.switch_to_profile(&profile_name)
+                {
+                    self.indicator
+                        .update_active_profile(keyboard_mapper.get_active_profile_name());
+                    info!("Switched to profile: {}", profile_name);
+                }
+            }
+            MappingConfigEvent::SwitchProfileNext => {
+                if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
+                    && keyboard_mapper.switch_profile_next()
+                {
+                    self.indicator
+                        .update_active_profile(keyboard_mapper.get_active_profile_name());
+                }
+            }
+            MappingConfigEvent::SwitchProfilePrev => {
+                if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
+                    && keyboard_mapper.switch_profile_prev()
+                {
+                    self.indicator
+                        .update_active_profile(keyboard_mapper.get_active_profile_name());
+                }
             }
             MappingConfigEvent::None => {}
         }
