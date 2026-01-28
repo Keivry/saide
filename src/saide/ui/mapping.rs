@@ -165,13 +165,12 @@ impl MappingConfigWindow {
                     Pos2::new(params.video_rect.center().x, params.video_rect.top() + 20.0),
                     egui::Align2::CENTER_TOP,
                     t!("mapping-config-title"),
-                    FontId::proportional(20.0),
+                    FontId::proportional(18.0),
                     Color32::WHITE,
                 );
 
                 let instructions = [
-                    t!("mapping-config-instruction-add"),
-                    t!("mapping-config-instruction-delete"),
+                    t!("mapping-config-instruction-help"),
                     t!("mapping-config-instruction-exit"),
                 ];
                 instructions.iter().enumerate().for_each(|(i, text)| {
@@ -182,7 +181,7 @@ impl MappingConfigWindow {
                         ),
                         egui::Align2::CENTER_TOP,
                         text,
-                        FontId::proportional(14.0),
+                        FontId::proportional(12.0),
                         Color32::LIGHT_GRAY,
                     );
                 });
@@ -213,26 +212,21 @@ impl MappingConfigWindow {
                         );
                     }
                 });
-            });
 
-        if let Some(name) = params.profile_name {
-            egui::Window::new("profile_name_panel")
-                .title_bar(false)
-                .resizable(false)
-                .fixed_pos(Pos2::new(
-                    params.video_rect.left() + 10.0,
-                    params.video_rect.top() + 120.0,
-                ))
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(&t!("mapping-config-profile-label"));
-                        ui.label(name);
-                        if ui.button(&t!("mapping-config-rename-button")).clicked() {
-                            event = MappingConfigEvent::RequestRenameProfile;
-                        }
-                    });
-                });
-        }
+                if let Some(name) = params.profile_name {
+                    let profile_text = format!("{} {}", t!("mapping-config-profile-label"), name);
+                    painter.text(
+                        Pos2::new(
+                            params.video_rect.center().x,
+                            params.video_rect.top() + 100.0,
+                        ),
+                        egui::Align2::CENTER_TOP,
+                        &profile_text,
+                        FontId::proportional(14.0),
+                        Color32::LIGHT_GRAY,
+                    );
+                }
+            });
 
         ctx.input(|input| {
             if input.pointer.primary_clicked()

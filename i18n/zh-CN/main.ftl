@@ -41,9 +41,7 @@ indicator-panel-profile-none = 不可用
 ## UI - 映射配置
 mapping-config-title = 映射配置模式
 mapping-config-profile-label = 配置名称：
-mapping-config-rename-button = 重命名
-mapping-config-instruction-add = 左键：添加按键映射
-mapping-config-instruction-delete = 右键：删除最近映射
+mapping-config-instruction-help = F1 - 显示帮助
 mapping-config-instruction-exit = 按 ESC 退出
 mapping-config-dialog-create-title = 创建映射
 mapping-config-dialog-create-message =
@@ -67,10 +65,8 @@ mapping-config-help-message =
     F2 - 重命名配置
     F3 - 新建配置
     F4 - 删除当前配置
-    F5 - 另存为（创建副本）
-    
-    左键 - 添加按键映射
-    右键 - 删除最近的映射
+    F5 - 另存为
+
     ESC - 关闭配置窗口
 
 ## UI - 通用对话框按钮

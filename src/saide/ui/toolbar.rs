@@ -167,11 +167,13 @@ impl Toolbar {
             button = button.selected(true);
         }
 
-        let response = ui.add_enabled_ui(enabled, |ui| {
-            ui.add_sized(TOOLBAR_BTN_SIZE, button)
-                .on_hover_text(t!(btn.tooltip_key))
-        });
+        let response = ui.add_enabled_ui(enabled, |ui| ui.add_sized(TOOLBAR_BTN_SIZE, button));
 
-        response.inner.clicked()
+        let response = response
+            .inner
+            .on_hover_text(t!(btn.tooltip_key))
+            .on_disabled_hover_text(t!(btn.tooltip_key));
+
+        response.clicked()
     }
 }
