@@ -16,6 +16,7 @@ pub enum ModalDialogResult {
     Canceled,
     CapturedKey(Key),
     TextInput(String),
+    ListSelection(usize),
 }
 
 pub struct ModalDialog {
@@ -33,6 +34,11 @@ pub struct ModalDialog {
     pub text_input: Option<String>,
     /// Placeholder text for text input
     pub text_placeholder: String,
+
+    /// List selection mode
+    pub list_items: Vec<String>,
+    pub list_selected_idx: Option<usize>,
+    pub list_max_height: f32,
 }
 
 impl ModalDialog {
@@ -50,6 +56,10 @@ impl ModalDialog {
             capture: false,
             text_input: None,
             text_placeholder: String::new(),
+
+            list_items: Vec::new(),
+            list_selected_idx: None,
+            list_max_height: 300.0,
         }
     }
 
@@ -114,6 +124,27 @@ impl ModalDialog {
         self.text_input = Some(initial_value.into());
         self
     }
+
+    /// Set list items for list selection mode
+    #[allow(dead_code)]
+    pub fn set_list(&mut self, items: Vec<String>, selected_idx: Option<usize>) -> &mut Self {
+        self.list_items = items;
+        self.list_selected_idx = selected_idx;
+        self.confirm = None;
+        self.cancel = Some(t!("dialog-button-cancel"));
+        self
+    }
+
+    /// Set max height for list scroll area
+    #[allow(dead_code)]
+    pub fn set_list_max_height(&mut self, height: f32) -> &mut Self {
+        self.list_max_height = height;
+        self
+    }
+
+    /// Get selected list index
+    #[allow(dead_code)]
+    pub fn list_selected_idx(&self) -> Option<usize> { self.list_selected_idx }
 
     /// Set the dialog title
     pub fn with_title(mut self, title: &str) -> Self {
@@ -193,6 +224,22 @@ impl ModalDialog {
 
                     // Auto-focus the text input
                     response.request_focus();
+                }
+
+                // Draw list if enabled
+                if !self.list_items.is_empty() {
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(self.list_max_height)
+                        .show(ui, |ui| {
+                            for (idx, item) in self.list_items.iter().enumerate() {
+                                let is_selected = self.list_selected_idx == Some(idx);
+                                if ui.selectable_label(is_selected, item.as_str()).clicked() {
+                                    self.list_selected_idx = Some(idx);
+                                    result = ModalDialogResult::ListSelection(idx);
+                                }
+                            }
+                        });
                 }
 
                 // Draw buttons if any

@@ -77,8 +77,7 @@ pub struct MappingConfigWindow {
     help_dialog: ModalDialog,
 
     /// Profile switch dialog state
-    profile_switch_visible: bool,
-    selected_profile_idx: usize,
+    profile_switch_dialog: ModalDialog,
 
     /// Conflict confirmation dialog state
     conflict_confirm_dialog: ModalDialog,
@@ -117,8 +116,8 @@ impl MappingConfigWindow {
             help_dialog: ModalDialog::new("help_dialog")
                 .with_title(&t!("mapping-config-help-title")),
 
-            profile_switch_visible: false,
-            selected_profile_idx: 0,
+            profile_switch_dialog: ModalDialog::new("profile_switch_dialog")
+                .with_title(&t!("mapping-config-dialog-switch-title")),
 
             conflict_confirm_dialog: ModalDialog::new("conflict_confirm_dialog")
                 .with_title(&t!("mapping-config-dialog-conflict-title")),
@@ -158,8 +157,7 @@ impl MappingConfigWindow {
 
         self.help_dialog.reset();
 
-        self.profile_switch_visible = false;
-        self.selected_profile_idx = 0;
+        self.profile_switch_dialog.reset();
 
         self.conflict_confirm_dialog.reset();
         self.conflict_profile_name = None;
@@ -466,7 +464,7 @@ impl MappingConfigWindow {
             || self.override_mapping_dialog.is_visible()
             || self.rename_dialog.is_visible()
             || self.help_dialog.is_visible()
-            || self.profile_switch_visible
+            || self.profile_switch_dialog.is_visible()
             || self.conflict_confirm_dialog.is_visible()
     }
 
@@ -480,11 +478,10 @@ impl MappingConfigWindow {
 
     pub fn is_help_dialog_open(&self) -> bool { self.help_dialog.is_visible() }
 
-    pub fn is_profile_switch_dialog_open(&self) -> bool { self.profile_switch_visible }
+    pub fn is_profile_switch_dialog_open(&self) -> bool { self.profile_switch_dialog.is_visible() }
 
     pub fn request_profile_switch_dialog(&mut self) {
-        self.profile_switch_visible = true;
-        self.selected_profile_idx = 0;
+        self.profile_switch_dialog.set_visible(true);
     }
 
     pub fn get_pos(&self) -> Option<MappingPos> { self.pos }
@@ -592,60 +589,46 @@ impl MappingConfigWindow {
         available_profiles: &[String],
         current_profile: Option<&str>,
     ) -> Option<String> {
-        if !self.profile_switch_visible {
+        if !self.profile_switch_dialog.is_visible() {
             return None;
         }
 
-        let mut result = None;
+        // Prepare list items with current profile indicator
+        let list_items: Vec<String> = available_profiles
+            .iter()
+            .map(|p| {
+                if current_profile == Some(p.as_str()) {
+                    format!("● {}", p)
+                } else {
+                    p.clone()
+                }
+            })
+            .collect();
 
-        egui::Window::new(t!("mapping-config-dialog-switch-title"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.label(t!("mapping-config-dialog-switch-message"));
-                ui.separator();
+        // Find current index for selection
+        let current_idx = current_profile
+            .and_then(|curr| available_profiles.iter().position(|p| p.as_str() == curr));
 
-                egui::ScrollArea::vertical()
-                    .max_height(300.0)
-                    .show(ui, |ui| {
-                        for (idx, profile_name) in available_profiles.iter().enumerate() {
-                            let is_current = current_profile == Some(profile_name.as_str());
-                            let text = if is_current {
-                                format!("● {}", profile_name)
-                            } else {
-                                profile_name.clone()
-                            };
+        let msg = t!("mapping-config-dialog-switch-message");
+        self.profile_switch_dialog
+            .set_message(&msg)
+            .set_list(list_items, current_idx);
 
-                            if ui
-                                .selectable_label(self.selected_profile_idx == idx, text)
-                                .clicked()
-                            {
-                                self.selected_profile_idx = idx;
-                                result = Some(profile_name.clone());
-                            }
-                        }
-                    });
-
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button(t!("dialog-button-cancel")).clicked() {
-                        self.profile_switch_visible = false;
-                    }
-                });
-            });
-
-        ctx.input(|i| {
-            if i.key_pressed(egui::Key::Escape) {
-                self.profile_switch_visible = false;
+        // Show dialog and handle result
+        match self.profile_switch_dialog.show(ctx) {
+            ModalDialogResult::ListSelection(idx) => {
+                if idx < available_profiles.len() {
+                    self.profile_switch_dialog.reset();
+                    return Some(available_profiles[idx].clone());
+                }
             }
-        });
-
-        if result.is_some() {
-            self.profile_switch_visible = false;
+            ModalDialogResult::Canceled => {
+                self.profile_switch_dialog.reset();
+            }
+            _ => {}
         }
 
-        result
+        None
     }
 
     pub fn is_conflict_confirm_dialog_open(&self) -> bool {

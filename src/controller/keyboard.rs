@@ -473,11 +473,28 @@ impl KeyboardMapper {
 
             *profile = Arc::clone(&updated_profile);
 
+            // Also update avail_profiles cache to keep it in sync
+            let device_serial = profile.device_serial.clone();
+            let device_rotation = profile.rotation;
+            drop(profiles);
+
+            let mut avail = self.avail_profiles.write();
+            if let Some(idx) = avail.iter().position(|p| p.name == profile_name) {
+                avail[idx] = Arc::clone(&updated_profile);
+            }
+            drop(avail);
+
+            // Also update active_profile if this is the active profile
             if let Some(active) = self.get_active_profile()
                 && active.name == profile_name
             {
                 self.active_profile.store(Arc::new(Some(updated_profile)));
             }
+
+            trace!(
+                "Updated last_modified for profile '{}' (device: {}, rotation: {})",
+                profile_name, device_serial, device_rotation
+            );
         }
     }
 
@@ -547,6 +564,15 @@ impl KeyboardMapper {
             return None;
         }
 
+        // Check if profile exists and log overwrite
+        let existed = {
+            let profiles = self.config.profiles.read();
+            profiles.iter().any(|p| p.name == profile_name)
+        };
+        if existed {
+            warn!("Profile '{}' already exists, overwriting...", profile_name);
+        }
+
         // Remove existing profile with same name if any, then add new one
         self.config.remove_profile(profile_name);
 
@@ -566,7 +592,11 @@ impl KeyboardMapper {
         let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
         *self.avail_profiles.write() = avail_profiles;
 
-        info!("Force created profile (overwrite): {}", profile_name);
+        if existed {
+            info!("Overwrote existing profile: {}", profile_name);
+        } else {
+            info!("Created new profile: {}", profile_name);
+        }
         Some(profile_name.to_string())
     }
 
