@@ -1428,8 +1428,8 @@ impl SAideApp {
 
     fn process_dialog_result(&mut self, _ctx: &egui::Context) {
         let Some(dialog) = &mut self.dialog else {
-            if let Some(event) = self.pending_dialog_events.pop_front() {
-                self.show_dialog_for_event(event);
+            if let Some(event) = self.pending_dialog_events.front() {
+                self.show_dialog_for_event(event.clone());
             }
             return;
         };
