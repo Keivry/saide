@@ -623,6 +623,28 @@ impl SAideApp {
                         .update_active_profile(keyboard_mapper.get_active_profile_name());
                 }
             }
+            MappingConfigEvent::AddMapping(pos) => {
+                if self.mapping_config_overlay.is_some() && self.dialog.is_none() {
+                    self.pending_dialog_events.push_back(event.clone());
+                    self.show_add_mapping_dialog(&pos);
+                }
+            }
+            MappingConfigEvent::DeleteMapping(pos) => {
+                if self.mapping_config_overlay.is_some() && self.dialog.is_none() {
+                    self.pending_dialog_events.push_back(event.clone());
+                    self.show_delete_mapping_dialog(&pos);
+                }
+            }
+            MappingConfigEvent::SwitchProfile => {
+                if self.mapping_config_overlay.is_some() {
+                    if self.dialog.is_none() {
+                        self.pending_dialog_events.push_back(event.clone());
+                        self.show_switch_profile_dialog();
+                    }
+                } else if self.dialog.is_none() {
+                    self.pending_dialog_events.push_back(event);
+                }
+            }
             _ => {
                 // Only enqueue dialog events if no dialog is currently open
                 if self.dialog.is_none() {
