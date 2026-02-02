@@ -56,25 +56,28 @@ mapping-config-dialog-override-message =
     
     覆盖到新位置（{$new_x}, {$new_y}）？
 mapping-config-dialog-rename-title = 重命名配置
-mapping-config-dialog-rename-placeholder = 输入新名称...
-mapping-config-dialog-switch-title = 切换配置
-mapping-config-dialog-switch-message = 选择要切换的配置：
-mapping-config-dialog-conflict-title = 配置已存在
+mapping-config-dialog-rename-placeholder = 新名称
+mapping-config-dialog-new-title = 创建新配置
+mapping-config-dialog-saveas-title = 另存为配置
+mapping-config-dialog-saveas-placeholder = 新配置名称
+mapping-config-dialog-switch-title = 选择要启用的配置
+mapping-config-dialog-profile-exists-title = 配置已存在
+mapping-config-dialog-conflict-title = 覆盖配置
 mapping-config-dialog-conflict-message = 配置 "{$name}" 已存在。是否覆盖？
-mapping-config-help-title = 快捷键帮助
+mapping-config-help-title = 帮助
 mapping-config-help-message =
     可用快捷键：
     
-    F1 - 显示此帮助
-    F2 - 重命名配置
-    F3 - 新建配置
-    F4 - 删除当前配置
-    F5 - 另存为
-    F6 - 切换配置
-    F7 - 切换到上一个配置
-    F8 - 切换到下一个配置
+    F1  - 显示此帮助      
+    F2  - 重命名配置      
+    F3  - 新建配置        
+    F4  - 删除当前配置    
+    F5  - 另存为          
+    F6  - 切换配置        
+    F7  - 切换到上一个配置
+    F8  - 切换到下一个配置
 
-    ESC - 关闭配置窗口
+    ESC - 关闭配置窗口    
 
 ## UI - 通用对话框按钮
 dialog-button-confirm = 确认

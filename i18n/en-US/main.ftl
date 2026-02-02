@@ -56,23 +56,26 @@ mapping-config-dialog-override-message =
     
     Override to new position ({$new_x}, {$new_y})?
 mapping-config-dialog-rename-title = Rename Profile
-mapping-config-dialog-rename-placeholder = Enter new name...
-mapping-config-dialog-switch-title = Switch Profile
-mapping-config-dialog-switch-message = Select a profile to switch to:
-mapping-config-dialog-conflict-title = Profile Exists
+mapping-config-dialog-rename-placeholder = New Name
+mapping-config-dialog-new-title = Create New Profile
+mapping-config-dialog-saveas-title = Save Profile As
+mapping-config-dialog-saveas-placeholder = New Profile Name
+mapping-config-dialog-switch-title = Select Profile to Enable
+mapping-config-dialog-profile-exists-title = Profile Already Exists
+mapping-config-dialog-conflict-title = Overwrite Profile
 mapping-config-dialog-conflict-message = Profile "{$name}" already exists. Overwrite?
-mapping-config-help-title = Keyboard Shortcuts Help
+mapping-config-help-title = Help
 mapping-config-help-message =
     Available Keyboard Shortcuts:
     
-    F1 - Show this help
-    F2 - Rename Profile
-    F3 - Create New Profile
-    F4 - Delete Current Profile
-    F5 - Save As
-    F6 - Switch profile
-    F7 - Switch to previous profile
-    F8 - Switch to next profile
+    F1  - Show this help            
+    F2  - Rename Profile            
+    F3  - Create New Profile        
+    F4  - Delete Current Profile    
+    F5  - Save As                   
+    F6  - Switch profile            
+    F7  - Switch to previous profile
+    F8  - Switch to next profile    
 
     ESC - Close configuration window
 

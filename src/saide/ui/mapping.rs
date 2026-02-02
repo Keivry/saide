@@ -1,7 +1,7 @@
 //! Mapping configuration UI
 //!
-//! Handles displaying existing mappings and adding/removing mappings
-//! through user interaction. Includes modal dialogs for key input and confirmations.
+//! This module provides the UI overlay for configuring key mappings on the device screen.
+//! It allows users to add, delete, and manage key mappings visually.
 
 use {
     super::{
@@ -9,18 +9,14 @@ use {
             coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
             utils::extract_position,
         },
-        dialog::{ModalDialog, ModalDialogResult},
         theme::AppColors,
     },
-    crate::{
-        config::mapping::{Key, KeyMapping},
-        saide::coords::MappingPos,
-        t,
-        tf,
-    },
+    crate::{config::mapping::KeyMapping, t},
     eframe::egui::{self, Color32, FontId, Pos2, Stroke},
     egui::Modifiers,
 };
+
+const MAPPING_WINDOW_ID: &str = "mapping_config_overlay";
 
 pub struct MappingDrawParams<'a> {
     pub mappings: &'a KeyMapping,
@@ -35,146 +31,29 @@ pub struct MappingDrawParams<'a> {
 pub enum MappingConfigEvent {
     None,
     Close,
-    RequestAddMapping(Pos2),
-    RequestDeleteMapping(Pos2),
-    RequestRenameProfile,
-    RequestCreateProfile,
-    RequestDeleteProfile,
-    RequestSaveAsProfile,
-    RequestShowHelp,
-    RequestSwitchProfileDialog,
-    SwitchProfileNext,
-    SwitchProfilePrev,
+    AddMapping(Pos2),
+    DeleteMapping(Pos2),
+    RenameProfile,
+    NewProfile,
+    DeleteProfile,
+    SaveAsProfile,
+    ShowHelp,
+    SwitchProfile,
+    NextProfile,
+    PrevProfile,
 }
 
-/// Mapping configuration UI state
-pub struct MappingConfigWindow {
-    /// Whether the config window is visible
-    pub visible: bool,
+/// Mapping configuration overlay UI
+pub struct MappingConfigOverlay {}
 
-    /// Pending key input position (percentage coordinates 0.0-1.0)
-    pos: Option<MappingPos>,
-
-    /// Input dialog state
-    key_input_dialog: ModalDialog,
-    key: Option<Key>,
-
-    /// Delete confirmation dialog state
-    delete_mapping_dialog: ModalDialog,
-    delete_target_key: Option<Key>,
-    delete_target_pos: Option<MappingPos>,
-
-    /// Override confirmation dialog state
-    override_mapping_dialog: ModalDialog,
-    override_key: Option<Key>,
-    override_pos: Option<MappingPos>,
-    override_new_pos: Option<MappingPos>,
-
-    /// Rename profile dialog state
-    rename_dialog: ModalDialog,
-
-    /// Help dialog state
-    help_dialog: ModalDialog,
-
-    /// Profile switch dialog state
-    profile_switch_dialog: ModalDialog,
-
-    /// Conflict confirmation dialog state
-    conflict_confirm_dialog: ModalDialog,
-    conflict_profile_name: Option<String>,
-    /// Conflict type: create or rename
-    conflict_is_rename: bool,
-}
-
-impl MappingConfigWindow {
-    pub fn new() -> Self {
-        Self {
-            visible: false,
-
-            pos: None,
-
-            key_input_dialog: ModalDialog::new("key_input_dialog")
-                .with_title(&t!("mapping-config-dialog-create-title"))
-                .with_key_capture(true),
-            key: None,
-
-            delete_mapping_dialog: ModalDialog::new("delete_mapping_dialog")
-                .with_title(&t!("mapping-config-dialog-delete-title")),
-            delete_target_key: None,
-            delete_target_pos: None,
-
-            override_mapping_dialog: ModalDialog::new("override_mapping_dialog")
-                .with_title(&t!("mapping-config-dialog-override-title")),
-            override_key: None,
-            override_pos: None,
-            override_new_pos: None,
-
-            rename_dialog: ModalDialog::new("rename_profile_dialog")
-                .with_title(&t!("mapping-config-dialog-rename-title"))
-                .with_text_input(&t!("mapping-config-dialog-rename-placeholder")),
-
-            help_dialog: ModalDialog::new("help_dialog")
-                .with_title(&t!("mapping-config-help-title")),
-
-            profile_switch_dialog: ModalDialog::new("profile_switch_dialog")
-                .with_title(&t!("mapping-config-dialog-switch-title")),
-
-            conflict_confirm_dialog: ModalDialog::new("conflict_confirm_dialog")
-                .with_title(&t!("mapping-config-dialog-conflict-title")),
-            conflict_profile_name: None,
-            conflict_is_rename: false,
-        }
-    }
-
-    pub fn toggle(&mut self) {
-        self.visible = !self.visible;
-        if !self.visible {
-            self.reset();
-        }
-    }
-
-    pub fn hide(&mut self) {
-        self.visible = false;
-        self.reset();
-    }
-
-    fn reset(&mut self) {
-        self.pos = None;
-
-        self.key_input_dialog.reset();
-        self.key = None;
-
-        self.delete_mapping_dialog.reset();
-        self.delete_target_key = None;
-        self.delete_target_pos = None;
-
-        self.override_mapping_dialog.reset();
-        self.override_key = None;
-        self.override_pos = None;
-        self.override_new_pos = None;
-
-        self.rename_dialog.reset();
-
-        self.help_dialog.reset();
-
-        self.profile_switch_dialog.reset();
-
-        self.conflict_confirm_dialog.reset();
-        self.conflict_profile_name = None;
-        self.conflict_is_rename = false;
-    }
-
-    pub fn is_visible(&self) -> bool { self.visible }
+impl MappingConfigOverlay {
+    pub fn new() -> Self { Self {} }
 
     pub fn draw(&mut self, ctx: &egui::Context, params: MappingDrawParams) -> MappingConfigEvent {
-        if !self.visible {
-            return MappingConfigEvent::None;
-        }
-
         let mut event = MappingConfigEvent::None;
         let colors = AppColors::from_context(ctx);
 
-        egui::Area::new(egui::Id::new("mapping_config_overlay"))
+        egui::Area::new(egui::Id::new(MAPPING_WINDOW_ID))
             .fixed_pos(params.video_rect.min)
             .interactable(false)
             .order(egui::Order::Middle)
@@ -256,428 +135,82 @@ impl MappingConfigWindow {
 
         ctx.input(|input| {
             if input.pointer.primary_clicked()
-                && !self.any_dialog_open()
                 && let Some(click_pos) = input.pointer.interact_pos()
                 && params.video_rect.contains(click_pos)
             {
-                event = MappingConfigEvent::RequestAddMapping(click_pos);
+                event = MappingConfigEvent::AddMapping(click_pos);
             }
 
             if input.pointer.secondary_clicked()
-                && !self.any_dialog_open()
                 && let Some(click_pos) = input.pointer.interact_pos()
                 && params.video_rect.contains(click_pos)
             {
-                event = MappingConfigEvent::RequestDeleteMapping(click_pos);
+                event = MappingConfigEvent::DeleteMapping(click_pos);
             }
         });
 
-        if !self.any_dialog_open() {
-            ctx.input_mut(|input| {
-                for e in &input.events {
-                    if let egui::Event::Key {
-                        key,
-                        pressed: true,
-                        repeat: false,
-                        modifiers,
-                        ..
-                    } = e
-                    {
-                        match key {
-                            egui::Key::Escape if modifiers.is_none() => {
-                                event = MappingConfigEvent::Close;
-                                input.consume_key(Modifiers::NONE, egui::Key::Escape);
-                                break;
-                            }
-                            egui::Key::F1 if modifiers.is_none() => {
-                                event = MappingConfigEvent::RequestShowHelp;
-                                input.consume_key(Modifiers::NONE, egui::Key::F1);
-                                break;
-                            }
-                            egui::Key::F2 if modifiers.is_none() => {
-                                event = MappingConfigEvent::RequestRenameProfile;
-                                input.consume_key(Modifiers::NONE, egui::Key::F2);
-                                break;
-                            }
-                            egui::Key::F3 if modifiers.is_none() => {
-                                event = MappingConfigEvent::RequestCreateProfile;
-                                input.consume_key(Modifiers::NONE, egui::Key::F3);
-                                break;
-                            }
-                            egui::Key::F4 if modifiers.is_none() => {
-                                event = MappingConfigEvent::RequestDeleteProfile;
-                                input.consume_key(Modifiers::NONE, egui::Key::F4);
-                                break;
-                            }
-                            egui::Key::F5 if modifiers.is_none() => {
-                                event = MappingConfigEvent::RequestSaveAsProfile;
-                                input.consume_key(Modifiers::NONE, egui::Key::F5);
-                                break;
-                            }
-                            egui::Key::F6 if modifiers.is_none() => {
-                                event = MappingConfigEvent::RequestSwitchProfileDialog;
-                                input.consume_key(Modifiers::NONE, egui::Key::F6);
-                                break;
-                            }
-                            egui::Key::F7 if modifiers.is_none() => {
-                                event = MappingConfigEvent::SwitchProfilePrev;
-                                input.consume_key(Modifiers::NONE, egui::Key::F7);
-                                break;
-                            }
-                            egui::Key::F8 if modifiers.is_none() => {
-                                event = MappingConfigEvent::SwitchProfileNext;
-                                input.consume_key(Modifiers::NONE, egui::Key::F8);
-                                break;
-                            }
-                            _ => {}
+        ctx.input_mut(|input| {
+            for e in &input.events {
+                if let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                    ..
+                } = e
+                {
+                    match key {
+                        egui::Key::Escape if modifiers.is_none() => {
+                            event = MappingConfigEvent::Close;
+                            input.consume_key(Modifiers::NONE, egui::Key::Escape);
+                            break;
                         }
+                        egui::Key::F1 if modifiers.is_none() => {
+                            event = MappingConfigEvent::ShowHelp;
+                            input.consume_key(Modifiers::NONE, egui::Key::F1);
+                            break;
+                        }
+                        egui::Key::F2 if modifiers.is_none() => {
+                            event = MappingConfigEvent::RenameProfile;
+                            input.consume_key(Modifiers::NONE, egui::Key::F2);
+                            break;
+                        }
+                        egui::Key::F3 if modifiers.is_none() => {
+                            event = MappingConfigEvent::NewProfile;
+                            input.consume_key(Modifiers::NONE, egui::Key::F3);
+                            break;
+                        }
+                        egui::Key::F4 if modifiers.is_none() => {
+                            event = MappingConfigEvent::DeleteProfile;
+                            input.consume_key(Modifiers::NONE, egui::Key::F4);
+                            break;
+                        }
+                        egui::Key::F5 if modifiers.is_none() => {
+                            event = MappingConfigEvent::SaveAsProfile;
+                            input.consume_key(Modifiers::NONE, egui::Key::F5);
+                            break;
+                        }
+                        egui::Key::F6 if modifiers.is_none() => {
+                            event = MappingConfigEvent::SwitchProfile;
+                            input.consume_key(Modifiers::NONE, egui::Key::F6);
+                            break;
+                        }
+                        egui::Key::F7 if modifiers.is_none() => {
+                            event = MappingConfigEvent::PrevProfile;
+                            input.consume_key(Modifiers::NONE, egui::Key::F7);
+                            break;
+                        }
+                        egui::Key::F8 if modifiers.is_none() => {
+                            event = MappingConfigEvent::NextProfile;
+                            input.consume_key(Modifiers::NONE, egui::Key::F8);
+                            break;
+                        }
+                        _ => {}
                     }
                 }
-            });
-        }
+            }
+        });
 
         event
     }
-
-    /// Show key input dialog
-    pub fn show_key_input_dialog(&mut self, ctx: &egui::Context, pos: &MappingPos) -> Option<Key> {
-        if !self.key_input_dialog.is_visible() {
-            return None;
-        }
-
-        let mut should_close = false;
-        let mut captured_key = None;
-
-        match self
-            .key_input_dialog
-            .set_message(&tf!(
-                "mapping-config-dialog-create-message",
-                "x" => pos.x,
-                "y" => pos.y
-            ))
-            .show(ctx)
-        {
-            ModalDialogResult::CapturedKey(key) => {
-                captured_key = Some(key);
-                should_close = true;
-            }
-            ModalDialogResult::Canceled => {
-                should_close = true;
-            }
-            _ => {}
-        }
-
-        if should_close {
-            self.key_input_dialog.reset();
-        }
-        captured_key
-    }
-
-    /// Show delete confirmation dialog
-    pub fn show_delete_confirm_dialog(
-        &mut self,
-        ctx: &egui::Context,
-        key: Key,
-        pos: &MappingPos,
-    ) -> Option<bool> {
-        if !self.delete_mapping_dialog.is_visible() {
-            return None;
-        }
-
-        let mut should_close = false;
-        let mut result = None;
-
-        match self
-            .delete_mapping_dialog
-            .set_message(&tf!(
-                "mapping-config-dialog-delete-message",
-                "key" => format!("{:?}", key),
-                "x" => pos.x.to_string(),
-                "y" => pos.y.to_string()
-            ))
-            .show(ctx)
-        {
-            ModalDialogResult::Confirmed => {
-                result = Some(true);
-                should_close = true;
-            }
-            ModalDialogResult::Canceled => {
-                result = Some(false);
-                should_close = true;
-            }
-            _ => {}
-        }
-
-        if should_close {
-            self.delete_mapping_dialog.reset();
-        }
-        result
-    }
-
-    /// Show override confirmation dialog
-    pub fn show_override_confirm_dialog(
-        &mut self,
-        ctx: &egui::Context,
-        key: Key,
-        pos: &MappingPos,
-        new_pos: &MappingPos,
-    ) -> Option<bool> {
-        if !self.override_mapping_dialog.is_visible() {
-            return None;
-        }
-
-        let mut should_close = false;
-        let mut result = None;
-
-        match self
-            .override_mapping_dialog
-            .set_message(&tf!(
-                "mapping-config-dialog-override-message",
-                "key" => format!("{:?}", key),
-                "old_x" => pos.x.to_string(),
-                "old_y" => pos.y.to_string(),
-                "new_x" => new_pos.x.to_string(),
-                "new_y" => new_pos.y.to_string()
-            ))
-            .show(ctx)
-        {
-            ModalDialogResult::Confirmed => {
-                result = Some(true);
-                should_close = true;
-            }
-            ModalDialogResult::Canceled => {
-                result = Some(false);
-                should_close = true;
-            }
-            _ => {}
-        }
-
-        if should_close {
-            self.override_mapping_dialog.reset();
-        }
-        result
-    }
-
-    pub fn any_dialog_open(&self) -> bool {
-        self.key_input_dialog.is_visible()
-            || self.delete_mapping_dialog.is_visible()
-            || self.override_mapping_dialog.is_visible()
-            || self.rename_dialog.is_visible()
-            || self.help_dialog.is_visible()
-            || self.profile_switch_dialog.is_visible()
-            || self.conflict_confirm_dialog.is_visible()
-    }
-
-    pub fn is_input_dialog_open(&self) -> bool { self.key_input_dialog.is_visible() }
-
-    pub fn is_delete_dialog_open(&self) -> bool { self.delete_mapping_dialog.is_visible() }
-
-    pub fn is_override_dialog_open(&self) -> bool { self.override_mapping_dialog.is_visible() }
-
-    pub fn is_rename_dialog_open(&self) -> bool { self.rename_dialog.is_visible() }
-
-    pub fn is_help_dialog_open(&self) -> bool { self.help_dialog.is_visible() }
-
-    pub fn is_profile_switch_dialog_open(&self) -> bool { self.profile_switch_dialog.is_visible() }
-
-    pub fn request_profile_switch_dialog(&mut self) {
-        self.profile_switch_dialog.set_visible(true);
-    }
-
-    pub fn get_pos(&self) -> Option<MappingPos> { self.pos }
-
-    pub fn get_delete_target(&self) -> Option<(Key, MappingPos)> {
-        self.delete_target_key
-            .and_then(|key| self.delete_target_pos.map(|pos| (key, pos)).or(None))
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub fn get_override_target(&self) -> Option<(Key, MappingPos, MappingPos)> {
-        self.override_key.and_then(|key| {
-            self.override_pos.and_then(|pos| {
-                self.override_new_pos
-                    .map(|new_pos| (key, pos, new_pos))
-                    .or(None)
-            })
-        })
-    }
-
-    /// Request to show input dialog (expects percentage coordinates 0.0-1.0)
-    pub fn request_input_dialog(&mut self, pos: &MappingPos) {
-        self.pos = Some(*pos);
-        self.key_input_dialog.set_visible(true);
-    }
-
-    /// Request to show delete dialog (expects percentage coordinates 0.0-1.0)
-    pub fn request_delete_dialog(&mut self, key: Key, pos: &MappingPos) {
-        self.delete_target_key = Some(key);
-        self.delete_target_pos = Some(*pos);
-        self.delete_mapping_dialog.set_visible(true);
-    }
-
-    /// Request to show override confirmation dialog (expects percentage coordinates 0.0-1.0)
-    pub fn request_override_dialog(&mut self, key: Key, pos: &MappingPos, new_pos: &MappingPos) {
-        self.override_key = Some(key);
-        self.override_pos = Some(*pos);
-        self.override_new_pos = Some(*new_pos);
-        self.override_mapping_dialog.set_visible(true);
-    }
-
-    pub fn request_rename_dialog(&mut self, current_name: &str) {
-        self.rename_dialog
-            .set_message(&t!("mapping-config-profile-label"))
-            .set_text_input(current_name)
-            .set_visible(true);
-    }
-
-    pub fn show_rename_dialog(&mut self, ctx: &egui::Context) -> Option<String> {
-        if !self.rename_dialog.is_visible() {
-            return None;
-        }
-
-        let mut should_close = false;
-        let mut result = None;
-
-        match self.rename_dialog.show(ctx) {
-            ModalDialogResult::TextInput(new_name) => {
-                result = Some(new_name);
-                should_close = true;
-            }
-            ModalDialogResult::Canceled => {
-                should_close = true;
-            }
-            _ => {}
-        }
-
-        if should_close {
-            self.rename_dialog.reset();
-        }
-
-        result
-    }
-
-    pub fn request_help_dialog(&mut self) {
-        self.help_dialog
-            .set_message(&t!("mapping-config-help-message"))
-            .set_visible(true);
-    }
-
-    pub fn show_help_dialog(&mut self, ctx: &egui::Context) -> bool {
-        if !self.help_dialog.is_visible() {
-            return false;
-        }
-
-        let mut should_close = false;
-
-        match self.help_dialog.show(ctx) {
-            ModalDialogResult::Confirmed | ModalDialogResult::Canceled => {
-                should_close = true;
-            }
-            _ => {}
-        }
-
-        if should_close {
-            self.help_dialog.reset();
-        }
-
-        should_close
-    }
-
-    pub fn show_profile_switch_dialog(
-        &mut self,
-        ctx: &egui::Context,
-        available_profiles: &[String],
-        current_profile: Option<&str>,
-    ) -> Option<String> {
-        if !self.profile_switch_dialog.is_visible() {
-            return None;
-        }
-
-        // Prepare list items with current profile indicator
-        let list_items: Vec<String> = available_profiles
-            .iter()
-            .map(|p| {
-                if current_profile == Some(p.as_str()) {
-                    format!("● {}", p)
-                } else {
-                    p.clone()
-                }
-            })
-            .collect();
-
-        // Find current index for selection
-        let current_idx = current_profile
-            .and_then(|curr| available_profiles.iter().position(|p| p.as_str() == curr));
-
-        let msg = t!("mapping-config-dialog-switch-message");
-        self.profile_switch_dialog
-            .set_message(&msg)
-            .set_list(list_items, current_idx);
-
-        // Show dialog and handle result
-        match self.profile_switch_dialog.show(ctx) {
-            ModalDialogResult::ListSelection(idx) => {
-                if idx < available_profiles.len() {
-                    self.profile_switch_dialog.reset();
-                    return Some(available_profiles[idx].clone());
-                }
-            }
-            ModalDialogResult::Canceled => {
-                self.profile_switch_dialog.reset();
-            }
-            _ => {}
-        }
-
-        None
-    }
-
-    pub fn is_conflict_confirm_dialog_open(&self) -> bool {
-        self.conflict_confirm_dialog.is_visible()
-    }
-
-    pub fn request_conflict_confirm_dialog(&mut self, profile_name: String, is_rename: bool) {
-        self.conflict_confirm_dialog
-            .set_message(&tf!(
-                "mapping-config-dialog-conflict-message",
-                "name" => &profile_name
-            ))
-            .set_visible(true);
-        self.conflict_profile_name = Some(profile_name);
-        self.conflict_is_rename = is_rename;
-    }
-
-    pub fn show_conflict_confirm_dialog(&mut self, ctx: &egui::Context) -> Option<bool> {
-        if !self.conflict_confirm_dialog.is_visible() {
-            return None;
-        }
-
-        let mut should_close = false;
-        let mut result = None;
-
-        match self.conflict_confirm_dialog.show(ctx) {
-            ModalDialogResult::Confirmed => {
-                result = Some(true);
-                should_close = true;
-            }
-            ModalDialogResult::Canceled => {
-                result = Some(false);
-                should_close = true;
-            }
-            _ => {}
-        }
-
-        if should_close {
-            self.conflict_confirm_dialog.reset();
-            self.conflict_profile_name = None;
-            self.conflict_is_rename = false;
-        }
-
-        result
-    }
-
-    pub fn get_conflict_profile_name(&self) -> Option<&str> {
-        self.conflict_profile_name.as_deref()
-    }
-
-    pub fn is_conflict_rename(&self) -> bool { self.conflict_is_rename }
 }
