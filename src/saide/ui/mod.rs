@@ -1,8 +1,10 @@
+mod action;
 mod dialog;
 mod indicator;
 mod mapping;
 mod player;
 mod saide;
+mod shortcut;
 mod state;
 mod theme;
 mod toolbar;
