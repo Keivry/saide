@@ -53,7 +53,7 @@ pub struct SAideApp {
 
     mapping_config_overlay: Option<MappingConfigOverlay>,
     dialog: Option<ModalDialog>,
-    pending_dialog_events: VecDeque<MappingConfigEvent>,
+    pending_events: VecDeque<MappingConfigEvent>,
 
     app_state: AppState,
     config_state: ConfigState,
@@ -67,6 +67,8 @@ pub struct SAideApp {
 }
 
 impl SAideApp {
+    pub fn test(&mut self, _key: &Key, _pos: &egui::Pos2) {}
+
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         serial: &str,
@@ -101,7 +103,7 @@ impl SAideApp {
             ),
             mapping_config_overlay: None,
             dialog: None,
-            pending_dialog_events: VecDeque::new(),
+            pending_events: VecDeque::new(),
 
             app_state: AppState::new(serial.to_owned(), cancel_token),
             config_state: ConfigState::new(config_manager),
@@ -394,7 +396,7 @@ impl SAideApp {
         );
     }
 
-    fn create_profile(&mut self, profile_name: &str) {
+    pub(crate) fn create_profile(&mut self, profile_name: &str) {
         let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             error!("Keyboard mapper not initialized");
             return;
@@ -419,7 +421,7 @@ impl SAideApp {
         }
     }
 
-    fn delete_profile(&mut self) {
+    pub(crate) fn delete_profile(&mut self) {
         let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             error!("Keyboard mapper not initialized");
             return;
@@ -444,7 +446,7 @@ impl SAideApp {
         }
     }
 
-    fn rename_profile(&mut self, new_name: String) {
+    pub fn rename_profile(&mut self, new_name: &str) {
         let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             error!("Keyboard mapper not initialized");
             return;
@@ -454,7 +456,8 @@ impl SAideApp {
             ProfileOperationResult::Success => {
                 info!("Profile renamed to: {}", new_name);
 
-                self.indicator.update_active_profile(Some(new_name));
+                self.indicator
+                    .update_active_profile(Some(new_name.to_string()));
 
                 if let Err(e) = self.config_state.config_manager.save() {
                     error!("Failed to save config: {}", e);
@@ -560,7 +563,7 @@ impl SAideApp {
         }
     }
 
-    fn process_mapping_config_events(&mut self, ctx: &egui::Context) {
+    fn draw_mapping_config_overlay(&mut self, ctx: &egui::Context) {
         if self.init_state != InitState::Ready {
             debug!("Skipping mapping config processing - not initialized");
             return;
@@ -593,8 +596,13 @@ impl SAideApp {
             },
         );
 
-        self.handle_mapping_event(event);
-        self.process_dialog_result(ctx);
+        match event {
+            MappingConfigEvent::None => {}
+            MappingConfigEvent::Close => {
+                self.mapping_config_overlay.take();
+            }
+            _ => self.pending_events.push_back(event),
+        }
     }
 
     fn handle_mapping_event(&mut self, event: MappingConfigEvent) {
@@ -602,7 +610,7 @@ impl SAideApp {
             MappingConfigEvent::None => {}
             MappingConfigEvent::Close => {
                 self.mapping_config_overlay.take();
-                self.pending_dialog_events.clear();
+                self.pending_events.clear();
             }
             MappingConfigEvent::DeleteProfile => {
                 self.delete_profile();
@@ -625,30 +633,30 @@ impl SAideApp {
             }
             MappingConfigEvent::AddMapping(pos) => {
                 if self.mapping_config_overlay.is_some() && self.dialog.is_none() {
-                    self.pending_dialog_events.push_back(event.clone());
+                    self.pending_events.push_back(event.clone());
                     self.show_add_mapping_dialog(&pos);
                 }
             }
             MappingConfigEvent::DeleteMapping(pos) => {
                 if self.mapping_config_overlay.is_some() && self.dialog.is_none() {
-                    self.pending_dialog_events.push_back(event.clone());
+                    self.pending_events.push_back(event.clone());
                     self.show_delete_mapping_dialog(&pos);
                 }
             }
             MappingConfigEvent::SwitchProfile => {
                 if self.mapping_config_overlay.is_some() {
                     if self.dialog.is_none() {
-                        self.pending_dialog_events.push_back(event.clone());
+                        self.pending_events.push_back(event.clone());
                         self.show_switch_profile_dialog();
                     }
                 } else if self.dialog.is_none() {
-                    self.pending_dialog_events.push_back(event);
+                    self.pending_events.push_back(event);
                 }
             }
             _ => {
                 // Only enqueue dialog events if no dialog is currently open
                 if self.dialog.is_none() {
-                    self.pending_dialog_events.push_back(event);
+                    self.pending_events.push_back(event);
                 }
             }
         }
@@ -1237,14 +1245,19 @@ impl SAideApp {
         }
     }
 
-    fn show_dialog_for_event(&mut self, event: MappingConfigEvent) {
+    fn process_event(&mut self) {
+        if self.pending_events.is_empty() {
+            return;
+        }
+
+        let event = self.pending_events.pop_front().unwrap();
         match event {
             MappingConfigEvent::AddMapping(pos) => self.show_add_mapping_dialog(&pos),
             MappingConfigEvent::DeleteMapping(pos) => self.show_delete_mapping_dialog(&pos),
             MappingConfigEvent::RenameProfile => self.show_rename_profile_dialog(),
             MappingConfigEvent::NewProfile => self.show_new_profile_dialog(),
             MappingConfigEvent::SaveAsProfile => self.show_save_as_profile_dialog(),
-            MappingConfigEvent::ShowHelp => self.show_help_dialog(),
+            // MappingConfigEvent::ShowHelp => self.show_help_dialog(),
             MappingConfigEvent::SwitchProfile => self.show_switch_profile_dialog(),
             _ => {}
         }
@@ -1320,33 +1333,6 @@ impl SAideApp {
         self.dialog.replace(dialog);
     }
 
-    fn show_rename_profile_dialog(&mut self) {
-        if self.dialog.is_some() {
-            return;
-        }
-
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            return;
-        };
-
-        let current_name = keyboard_mapper
-            .get_active_profile_name()
-            .unwrap_or_default();
-
-        let mut dialog = ModalDialog::new(
-            "rename_profile_dialog",
-            &t!("mapping-config-dialog-rename-title"),
-        );
-        dialog.add_text_input(
-            "name",
-            Some(&t!("mapping-config-dialog-rename-placeholder")),
-            Some(&current_name),
-            true,
-        );
-
-        self.dialog = Some(dialog);
-    }
-
     fn show_new_profile_dialog(&mut self) {
         if self.dialog.is_some() {
             return;
@@ -1386,15 +1372,38 @@ impl SAideApp {
         self.dialog = Some(dialog);
     }
 
-    fn show_help_dialog(&mut self) {
-        if self.dialog.is_some() {
-            return;
-        }
-
+    pub fn show_help_dialog(&mut self, ctx: &egui::Context) {
         let mut dialog = ModalDialog::new("help_dialog", &t!("mapping-config-help-title"));
         dialog.add_message(&t!("mapping-config-help-message"));
 
-        self.dialog = Some(dialog);
+        dialog.draw(ctx);
+    }
+
+    pub fn show_rename_profile_dialog(&mut self, ctx: &egui::Context) -> Option<String> {
+        let current_name = self
+            .app_state
+            .keyboard_mapper
+            .as_ref()
+            .and_then(|mapper| mapper.get_active_profile_name());
+
+        let mut dialog = ModalDialog::new("rename_dialog", &t!("mapping-config-rename-title"));
+        dialog.add_text_input(
+            "name",
+            Some(&t!("mapping-config-rename-placeholder")),
+            current_name.as_deref(),
+            true,
+        );
+
+        match dialog.draw(ctx) {
+            DialogState::WidgetsState(states) => {
+                if let Some(WidgetState::TextInput(name)) = states.get("name") {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     fn show_switch_profile_dialog(&mut self) {
@@ -1426,17 +1435,14 @@ impl SAideApp {
         self.dialog = Some(dialog);
     }
 
-    fn process_dialog_result(&mut self, _ctx: &egui::Context) {
+    fn draw_dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.dialog else {
-            if let Some(event) = self.pending_dialog_events.front() {
-                self.show_dialog_for_event(event.clone());
-            }
             return;
         };
 
-        match dialog.draw(_ctx) {
+        match dialog.draw(ctx) {
             DialogState::WidgetsState(states) => {
-                if let Some(event) = self.pending_dialog_events.pop_front() {
+                if let Some(event) = self.pending_events.pop_front() {
                     match event {
                         MappingConfigEvent::RenameProfile => {
                             if let Some(WidgetState::TextInput(name)) = states.get("name") {
@@ -1516,7 +1522,7 @@ impl SAideApp {
             }
             DialogState::CapturedKey(key) => {
                 if let Some(MappingConfigEvent::AddMapping(screen_pos)) =
-                    self.pending_dialog_events.pop_front()
+                    self.pending_events.pop_front()
                 {
                     let video_rect = self.player.video_rect();
                     if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
@@ -1532,16 +1538,10 @@ impl SAideApp {
                 self.dialog = None;
             }
             DialogState::Cancelled => {
-                self.pending_dialog_events.pop_front();
+                self.pending_events.pop_front();
                 self.dialog = None;
             }
             _ => {}
-        }
-
-        if self.dialog.is_none()
-            && let Some(event) = self.pending_dialog_events.pop_front()
-        {
-            self.show_dialog_for_event(event);
         }
     }
 }
@@ -1655,10 +1655,12 @@ impl eframe::App for SAideApp {
                     self.ui_state.set_ui_initialized();
                 }
 
+                self.process_event();
+
                 if self.mapping_config_overlay.is_some() {
-                    self.process_mapping_config_events(ctx);
+                    self.draw_mapping_config_overlay(ctx);
                 } else {
-                    self.process_dialog_result(ctx);
+                    self.draw_dialog(ctx);
                     if self.dialog.is_none() {
                         self.process_input_events(ctx);
                     }
