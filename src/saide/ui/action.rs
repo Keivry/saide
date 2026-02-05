@@ -1,16 +1,15 @@
-//! Helper module defining actions for SAideApp
+//! Helper module defining actions for egui-based applications.
 //!
-//! This module defines a flexible system for representing and executing actions
-//! within the SAideApp. Actions can be simple UI interactions or more complex
+//! This module defines a flexible system for representing and executing actions.
+//! Actions can be simple UI interactions or more complex
 //! functions that manipulate the application's state. The system supports
 //! chaining multiple actions together, allowing for complex workflows to be
 //! defined in a modular way.
 //!
-//! Initial designed for keyboard shortcuts in SAide.
+//! Initial designed for keyboard shortcuts.
 
 use {
-    super::SAideApp,
-    egui::{Context, Key},
+    egui::{Context, Key, Pos2},
     std::convert::TryFrom,
     thiserror::Error,
 };
@@ -36,16 +35,17 @@ pub enum ActionResult {
     Usize(usize),
     Key(Key),
 }
-
 pub type Result<T> = std::result::Result<T, ActionError>;
 
+/// Arguments passed to actions execution
 pub enum ActionArgs<'a> {
     None,
     Context(&'a Context),
     Key(Key),
-    KeyAndPos(Key, egui::Pos2),
     String(String),
     Usize(usize),
+    Pos2(Pos2),
+    Multi(Vec<ActionArgs<'a>>),
 }
 
 impl<'a> From<&'a Context> for ActionArgs<'a> {
@@ -56,12 +56,22 @@ impl<'a> From<Key> for ActionArgs<'a> {
     fn from(k: Key) -> Self { ActionArgs::Key(k) }
 }
 
-impl<'a> From<(Key, egui::Pos2)> for ActionArgs<'a> {
-    fn from(kp: (Key, egui::Pos2)) -> Self { ActionArgs::KeyAndPos(kp.0, kp.1) }
+impl<'a> From<(Key, Pos2)> for ActionArgs<'a> {
+    fn from(kp: (Key, Pos2)) -> Self {
+        ActionArgs::Multi(vec![ActionArgs::Key(kp.0), ActionArgs::Pos2(kp.1)])
+    }
 }
 
 impl<'a> From<String> for ActionArgs<'a> {
     fn from(s: String) -> Self { ActionArgs::String(s) }
+}
+
+impl From<&String> for ActionArgs<'_> {
+    fn from(s: &String) -> Self { ActionArgs::String(s.clone()) }
+}
+
+impl<'a> From<&'a str> for ActionArgs<'a> {
+    fn from(s: &'a str) -> Self { ActionArgs::String(s.to_string()) }
 }
 
 impl<'a> From<usize> for ActionArgs<'a> {
@@ -71,9 +81,10 @@ impl<'a> From<usize> for ActionArgs<'a> {
 impl<'a> TryFrom<ActionResult> for ActionArgs<'a> {
     type Error = ActionError;
 
+    /// Convert ActionResult to ActionArgs for serial action execution
     fn try_from(value: ActionResult) -> std::result::Result<Self, Self::Error> {
         match value {
-            ActionResult::None => Err(ActionError::InvalidArgType),
+            ActionResult::None => Err(ActionError::Terminated),
             ActionResult::Bool(b) => {
                 if b {
                     Ok(ActionArgs::None)
@@ -88,164 +99,141 @@ impl<'a> TryFrom<ActionResult> for ActionArgs<'a> {
     }
 }
 
-pub trait Function {
-    fn execute(&self, app: &mut SAideApp, arg: &ActionArgs) -> Result<ActionResult>;
+/// Trait for Action execution
+pub trait Execute<App>: Send + Sync + 'static {
+    fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult>;
 }
 
-#[macro_export]
-macro_rules! expect_arg {
-    ($arg:expr, $pat:pat => $body:expr) => {
-        match $arg {
-            $pat => $body,
-            _ => Err(ActionError::InvalidArgType),
+/// Callback type for UI actions
+pub type UiCallback<App, T> = Box<dyn Fn(&mut App, &Context) -> T + Sync + Send + 'static>;
+
+/// Show UI dialogs and return results
+pub enum ShowUi<App> {
+    /// Show a UI dialog that does not return a value
+    Null(UiCallback<App, ()>),
+
+    /// Show a UI dialog that returns a bool
+    Bool(UiCallback<App, bool>),
+
+    /// Show a UI dialog that returns an optional usize
+    Usize(UiCallback<App, Option<usize>>),
+
+    /// Show a UI dialog that returns an optional Key
+    Key(UiCallback<App, Option<Key>>),
+
+    /// Show a UI dialog that returns an optional string
+    String(UiCallback<App, Option<String>>),
+}
+
+impl<App> Execute<App> for ShowUi<App>
+where
+    App: 'static,
+{
+    fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult> {
+        /// Macro to match and extract argument from ActionArgs
+        macro_rules! expect_arg {
+            ($arg:expr, $pat:pat => $body:expr) => {
+                match $arg {
+                    $pat => $body,
+                    _ => Err(ActionError::InvalidArgType),
+                }
+            };
         }
-    };
-}
 
-pub enum ShowUi {
-    /// Show help dialog
-    Help(Box<dyn Fn(&mut SAideApp, &Context)>),
-
-    /// Show add profile dialog, returns the profile name
-    AddProfile(Box<dyn Fn(&mut SAideApp, &Context) -> Option<String>>),
-
-    /// Show rename profile dialog, returns the new profile name
-    RenameProfile(Box<dyn Fn(&mut SAideApp, &Context) -> Option<String>>),
-
-    /// Show switch profile dialog, returns the profile index
-    SwitchProfile(Box<dyn Fn(&mut SAideApp, &Context) -> Option<usize>>),
-
-    /// Show add mapping dialog, returns the key to be mapped
-    AddMapping(Box<dyn Fn(&mut SAideApp, &Context) -> Option<Key>>),
-
-    /// Show delete mapping dialog
-    DeleteMapping(Box<dyn Fn(&mut SAideApp, &Context) -> bool>),
-}
-
-impl Function for ShowUi {
-    fn execute(&self, app: &mut SAideApp, arg: &ActionArgs) -> Result<ActionResult> {
         match self {
-            ShowUi::Help(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
+            ShowUi::Null(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
                 f(app, ctx);
                 Ok(ActionResult::None)
             }),
-            ShowUi::AddProfile(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
-                Ok(f(app, ctx)
-                    .map(ActionResult::String)
-                    .unwrap_or(ActionResult::None))
+            ShowUi::Bool(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
+                Ok(ActionResult::Bool(f(app, ctx)))
             }),
-            ShowUi::RenameProfile(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
-                Ok(f(app, ctx)
-                    .map(ActionResult::String)
-                    .unwrap_or(ActionResult::None))
-            }),
-            ShowUi::SwitchProfile(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
+            ShowUi::Usize(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
                 Ok(f(app, ctx)
                     .map(ActionResult::Usize)
                     .unwrap_or(ActionResult::None))
             }),
-            ShowUi::AddMapping(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
+            ShowUi::Key(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
                 Ok(f(app, ctx)
                     .map(ActionResult::Key)
                     .unwrap_or(ActionResult::None))
             }),
-            ShowUi::DeleteMapping(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
-                Ok(ActionResult::Bool(f(app, ctx)))
+            ShowUi::String(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
+                Ok(f(app, ctx)
+                    .map(ActionResult::String)
+                    .unwrap_or(ActionResult::None))
             }),
         }
     }
 }
 
-type StdResult = std::result::Result<(), Box<dyn std::error::Error>>;
-
-pub enum MappingFunc {
-    /// Add a new profile with the given name
-    AddProfile(Box<dyn Fn(&mut SAideApp, &str) -> StdResult>),
-
-    /// Delete the current profile
-    DeleteProfile(Box<dyn Fn(&mut SAideApp) -> StdResult>),
-
-    /// Rename the current profile to the given name
-    RenameProfile(Box<dyn Fn(&mut SAideApp, &str) -> StdResult>),
-
-    /// Save current profile as a new profile with the given name
-    SaveProfileAs(Box<dyn Fn(&mut SAideApp, &str) -> StdResult>),
-
-    /// Switch to the next profile
-    NextProfile(Box<dyn Fn(&mut SAideApp) -> StdResult>),
-
-    /// Switch to the previous profile
-    PreviousProfile(Box<dyn Fn(&mut SAideApp) -> StdResult>),
-
-    /// Switch to the profile at the given index
-    SwitchProfile(Box<dyn Fn(&mut SAideApp, usize) -> StdResult>),
-
-    /// Add a new mapping for the given key at the given position
-    AddMapping(Box<dyn Fn(&mut SAideApp, &Key, &egui::Pos2) -> StdResult>),
-
-    /// Delete the mapping for the given key
-    DeleteMapping(Box<dyn Fn(&mut SAideApp, &Key) -> StdResult>),
+/// Wraps a function/closure as an action
+pub struct Function<App, T> {
+    callback: Box<dyn Fn(&mut App, &ActionArgs) -> T + Send + Sync + 'static>,
 }
 
-impl Function for MappingFunc {
-    fn execute(&self, app: &mut SAideApp, arg: &ActionArgs) -> Result<ActionResult> {
-        match self {
-            MappingFunc::AddProfile(f) => expect_arg!(arg, ActionArgs::String(name) => {
-                map_result(f(app, name))
-            }),
-            MappingFunc::DeleteProfile(f) => expect_arg!(arg, ActionArgs::None => {
-                map_result(f(app))
-            }),
-            MappingFunc::RenameProfile(f) => expect_arg!(arg, ActionArgs::String(name) => {
-                map_result(f(app, name))
-            }),
-            MappingFunc::SaveProfileAs(f) => expect_arg!(arg, ActionArgs::String(name) => {
-                map_result(f(app, name))
-            }),
-            MappingFunc::NextProfile(f) => expect_arg!(arg, ActionArgs::None => {
-                map_result(f(app))
-            }),
-            MappingFunc::PreviousProfile(f) => expect_arg!(arg, ActionArgs::None => {
-                map_result(f(app))
-            }),
-            MappingFunc::SwitchProfile(f) => expect_arg!(arg, ActionArgs::Usize(index) => {
-                map_result(f(app, *index))
-            }),
-            MappingFunc::AddMapping(f) => expect_arg!(arg, ActionArgs::KeyAndPos(key, pos) => {
-                map_result(f(app, key, pos))
-            }),
-            MappingFunc::DeleteMapping(f) => expect_arg!(arg, ActionArgs::Key(key) => {
-                map_result(f(app, key))
-            }),
-        }
+impl<App, T> Function<App, T> {
+    pub fn new(callback: Box<dyn Fn(&mut App, &ActionArgs) -> T + Send + Sync + 'static>) -> Self {
+        Self { callback }
     }
 }
 
-/// An action that can be executed in SAideApp
-/// Can be a UI action, a mapping function, or a series of actions
-/// to be executed in sequence, passing the result of each action
-/// as the argument to the next action.
-/// If any action in the series returns Error or Terminated, the execution
-/// of the series is stopped.
-pub enum Action {
-    ShowUi(ShowUi),
-    Function(MappingFunc),
-    Serial(Vec<Action>),
+impl<App, T> Execute<App> for Function<App, T>
+where
+    App: 'static,
+    T: Into<Result<ActionResult>> + 'static,
+{
+    fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult> {
+        (self.callback)(app, arg).into()
+    }
 }
 
-impl From<ShowUi> for Action {
-    fn from(ui_action: ShowUi) -> Self { Action::ShowUi(ui_action) }
+/// Represents an action that can be executed
+pub enum Action<App> {
+    Action(Box<dyn Execute<App>>),
+    Serial(Vec<Box<dyn Execute<App>>>),
 }
 
-impl From<MappingFunc> for Action {
-    fn from(action: MappingFunc) -> Self { Action::Function(action) }
+impl<App> From<ShowUi<App>> for Action<App>
+where
+    App: 'static,
+{
+    fn from(ui: ShowUi<App>) -> Self { Action::Action(Box::new(ui)) }
 }
 
-impl Function for Action {
-    fn execute(&self, app: &mut SAideApp, arg: &ActionArgs) -> Result<ActionResult> {
+impl<App, T> From<Function<App, T>> for Action<App>
+where
+    App: 'static,
+    T: Into<Result<ActionResult>> + 'static,
+{
+    fn from(func: Function<App, T>) -> Self { Action::Action(Box::new(func)) }
+}
+
+impl<App> From<Vec<Action<App>>> for Action<App>
+where
+    App: 'static,
+{
+    fn from(actions: Vec<Action<App>>) -> Self {
+        let boxed_actions = actions
+            .into_iter()
+            .map(|action| match action {
+                Action::Action(a) => a,
+                Action::Serial(_) => {
+                    panic!("Nested serial actions are not supported");
+                }
+            })
+            .collect();
+        Action::Serial(boxed_actions)
+    }
+}
+
+impl<App> Action<App>
+where
+    App: 'static,
+{
+    pub fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult> {
         match self {
-            Action::ShowUi(ui_action) => ui_action.execute(app, arg),
-            Action::Function(action) => action.execute(app, arg),
+            Action::Action(action) => action.execute(app, arg),
             Action::Serial(actions) => {
                 let mut last_result = ActionResult::None;
                 for action in actions {
@@ -257,8 +245,156 @@ impl Function for Action {
     }
 }
 
-/// Helper function to map StdResult to Action Result for MappingFunc
-fn map_result(r: StdResult) -> Result<ActionResult> {
-    r.map(|_| ActionResult::None)
-        .map_err(|e| ActionError::ExecutionFailed(e.to_string()))
+pub trait IntoAction<App> {
+    fn into_action(self) -> Action<App>;
+}
+
+/// Any Execute can be used directly
+impl<App, E> IntoAction<App> for E
+where
+    E: Execute<App> + 'static,
+{
+    fn into_action(self) -> Action<App> { Action::Action(Box::new(self)) }
+}
+
+/// Macro to import action-related types
+macro_rules! with_action_types {
+    ($($tt:tt)*) => {{
+        #[allow(unused_imports)]
+        use $crate::saide::ui::action::{ActionArgs, ActionResult, ActionError, Function, Action, ShowUi, IntoAction};
+        $($tt)*
+    }};
+}
+
+/// Macro to create actions in different modes
+//// Modes:
+/// - ui: for UI dialogs, with optional return types
+/// - func: for functions with optional argument types
+/// - serial: for chaining multiple actions, action results are passed as arguments to the next
+///   action
+/// - default: for any expression implementing Execute
+///
+/// Usage examples:
+/// ```ignore
+/// action!(ui App::show_help_dialog);
+/// action!(ui bool App::show_confirm_dialog);
+/// action!(func App::delete_item);
+/// action!(func bool App::set_verbose_mode);
+/// action!(func key pos App::handle_key_at_position);
+/// action!(serial [action1, action2, ...]);
+/// action!(custom_execute);
+/// ```
+#[macro_export]
+macro_rules! action {
+    // --- ui mode ---
+    // Usage: action!(ui <return type> <function>)
+    (ui $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(ShowUi::Null(Box::new($f))))
+        }
+    };
+    (ui bool $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(ShowUi::Bool(Box::new($f))))
+        }
+    };
+    (ui usize $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(ShowUi::Usize(Box::new($f))))
+        }
+    };
+    (ui string $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(ShowUi::String(Box::new($f))))
+        }
+    };
+    (ui key $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(ShowUi::Key(Box::new($f))))
+        }
+    };
+
+    // --- func mode ---
+    // Usage: action!(func [argument type] <function>)
+    (func $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(Function::new(Box::new(|app, _| {
+                ($f)(app);
+                Ok(ActionResult::None)
+            }))))
+        }
+    };
+    (func bool $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
+                match arg {
+                    ActionArgs::Bool(b) => { ($f)(app, *b); Ok(ActionResult::None) }
+                    _ => Err(ActionError::InvalidArgType),
+                }
+            }))))
+        }
+    };
+    (func usize $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
+                match arg {
+                    ActionArgs::Usize(u) => { ($f)(app, *u); Ok(ActionResult::None) }
+                    _ => Err(ActionError::InvalidArgType),
+                }
+            }))))
+        }
+    };
+    (func string $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
+                match arg {
+                    ActionArgs::String(s) => { ($f)(app, s); Ok(ActionResult::None) }
+                    _ => Err(ActionError::InvalidArgType),
+                }
+            }))))
+        }
+    };
+    (func key $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
+                match arg {
+                    ActionArgs::Key(k) => { ($f)(app, k); Ok(ActionResult::None) }
+                    _ => Err(ActionError::InvalidArgType),
+                }
+            }))))
+        }
+    };
+    (func key pos $f:expr) => {
+        with_action_types!{
+            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
+                match arg {
+                    ActionArgs::Multi(v) if v.len() == 2 => {
+                        if let (ActionArgs::Key(k), ActionArgs::Pos2(p)) = (&v[0], &v[1]) {
+                            ($f)(app, k, p);
+                            Ok(ActionResult::None)
+                        } else {
+                            Err(ActionError::InvalidArgType)
+                        }
+                    }
+                    _ => Err(ActionError::InvalidArgType),
+                }
+            }))))
+        }
+    };
+
+    // --- serial mode ---
+    // Usage: action!(serial [<action1>, <action2>, ...])
+    (serial [$($a:expr),* $(,)?]) => {
+        with_action_types!{
+            Action::from(vec![$($a),*])
+        }
+    };
+
+    // --- default mode ---
+    // Usage: action!(<expression implementing Execute>)
+    ($e:expr) => {
+        with_action_types!{
+            IntoAction::into_action($e)
+        }
+    };
 }

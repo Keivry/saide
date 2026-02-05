@@ -3,8 +3,7 @@
 //! Allows for defining global and scoped shortcuts, handling input, and
 //! dispatching actions based on user input.
 use {
-    super::action::{Action, ActionArgs, Function},
-    crate::saide::SAideApp,
+    super::super::action::{Action, ActionArgs},
     egui::{Context, Key, Modifiers},
     std::collections::HashMap,
     thiserror::Error,
@@ -26,21 +25,21 @@ pub struct Shortcut {
 }
 
 /// Type alias for a mapping of shortcuts to actions.
-pub type ShortcutMap = HashMap<Shortcut, Action>;
+pub type ShortcutMap<App> = HashMap<Shortcut, Action<App>>;
 
 /// Represents a scope of shortcuts, which can be pushed and popped from a stack.
 /// Scopes allow for context-specific shortcuts that can override global ones.
-pub struct ShortcutScope {
+pub struct ShortcutScope<App> {
     pub name: &'static str,
-    pub shortcuts: ShortcutMap,
+    pub shortcuts: ShortcutMap<App>,
 
     /// If true, shortcuts in this scope will consume the input event,
     /// preventing it from being handled by lower scopes or global shortcuts.
     pub consume: bool,
 }
 
-impl ShortcutScope {
-    pub fn new(name: &'static str, shortcuts: ShortcutMap, consume: bool) -> Self {
+impl<App> ShortcutScope<App> {
+    pub fn new(name: &'static str, shortcuts: ShortcutMap<App>, consume: bool) -> Self {
         Self {
             name,
             shortcuts,
@@ -50,14 +49,14 @@ impl ShortcutScope {
 }
 
 /// Manages keyboard shortcuts and their associated actions.
-pub struct ShortcutManager {
-    global: ShortcutMap,
-    stack: Vec<ShortcutScope>,
+pub struct ShortcutManager<App> {
+    global: ShortcutMap<App>,
+    stack: Vec<ShortcutScope<App>>,
 }
 
-impl ShortcutManager {
+impl<App> ShortcutManager<App> {
     /// Creates a new ShortcutManager with the given global shortcuts.
-    pub fn new(global: ShortcutMap) -> Self {
+    pub fn new(global: ShortcutMap<App>) -> Self {
         Self {
             global,
             stack: Vec::new(),
@@ -65,17 +64,20 @@ impl ShortcutManager {
     }
 
     /// Pushes a new shortcut scope onto the stack.
-    pub fn push_scope(&mut self, scope: ShortcutScope) { self.stack.push(scope); }
+    pub fn push_scope(&mut self, scope: ShortcutScope<App>) { self.stack.push(scope); }
 
     /// Pops the top shortcut scope from the stack.
     pub fn pop_scope(&mut self) { self.stack.pop(); }
 
     /// Registers a global shortcut and its associated action.
-    pub fn register_global(&mut self, sc: Shortcut, action: Action) {
+    pub fn register_global(&mut self, sc: Shortcut, action: Action<App>) {
         self.global.insert(sc, action);
     }
 
-    pub fn dispatch(&self, app: &mut SAideApp, ctx: &Context) -> Result<(), ShortcutError> {
+    pub fn dispatch(&self, app: &mut App, ctx: &Context) -> Result<(), ShortcutError>
+    where
+        App: 'static,
+    {
         let mut result = Ok(());
 
         ctx.input_mut(|input| {
@@ -132,29 +134,54 @@ impl ShortcutManager {
     }
 }
 
-fn try_execute(action: &Action, app: &mut SAideApp, ctx: &Context) -> Result<(), ShortcutError> {
+fn try_execute<App>(action: &Action<App>, app: &mut App, ctx: &Context) -> Result<(), ShortcutError>
+where
+    App: 'static,
+{
     action
         .execute(app, &ActionArgs::Context(ctx))
         .map_err(|e| ShortcutError::ActionFailed(e.to_string()))?;
     Ok(())
 }
 
+/// Helper function to create a Shortcut from a string representation.
+pub fn shortcut(sc: &str) -> Shortcut {
+    let mut mods = Modifiers::default();
+    let mut key = None;
+
+    sc.split('+').for_each(|part| {
+        let part = part.trim();
+        match part.to_lowercase().as_str() {
+            "ctrl" | "control" => mods.ctrl = true,
+            "alt" => mods.alt = true,
+            "shift" => mods.shift = true,
+            "meta" | "cmd" | "command" => mods.mac_cmd = true,
+            k => key = Key::from_name(k),
+        }
+    });
+
+    let key = key.expect("Invalid key in shortcut string");
+    Shortcut { key, mods }
+}
+
+#[macro_export]
+macro_rules! sc {
+    ($s:literal) => {
+        $crate::saide::ui::shortcuts::shortcut($s)
+    };
+}
+
 /// Macro to create a ShortcutMap from a list of key-action pairs.
 #[macro_export]
 macro_rules! shortcuts {
-    ( $( $key:expr => [ $( $action:expr ),+ $(,)? ] );* $(;)? ) => {{
-
-        let mut map = $crate::saide::ui::shortcut::ShortcutMap::new();
+    (
         $(
-            let actions = vec![ $( $action.into() ),* ];
-            debug_assert!(!actions.is_empty(), "Shortcut must have at least one action");
-
-            let action = if actions.len() == 1 {
-                actions.into_iter().next().unwrap()
-            } else {
-                $crate::saide::ui::action::Action::Serial(actions)
-            };
-            map.insert($key, action);
+            $key:expr => $action:expr
+        );* $(;)?
+    ) => {{
+        let mut map = $crate::saide::ui::shortcuts::ShortcutMap::new();
+        $(
+            map.insert($key, $action);
         )*
         map
     }};

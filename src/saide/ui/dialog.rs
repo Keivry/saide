@@ -242,7 +242,6 @@ impl ModalDialog {
         self
     }
 
-    #[allow(dead_code)]
     /// Add text input widget with optional placeholder and initial value
     pub fn add_text_input<S>(
         &mut self,
