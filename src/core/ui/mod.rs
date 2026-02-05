@@ -1,21 +1,11 @@
-#[macro_use]
-mod action;
-
-mod dialog;
+mod editor;
 mod indicator;
-mod mapping;
+mod main;
 mod player;
-mod saide;
-mod shortcuts;
-mod state;
 mod theme;
 mod toolbar;
 
-pub use {
-    saide::SAideApp,
-    theme::{AppColors, ThemeMode},
-    toolbar::Toolbar,
-};
+pub use main::SAideApp;
 
 #[derive(Default)]
 pub struct VideoStats {

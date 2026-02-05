@@ -10,13 +10,12 @@ use {
                 InitEvent,
                 start_initialization,
             },
+            state::{AppState, ConfigState, UIState},
             utils::find_nearest_mapping,
         },
-        dialog::{DialogState, ModalDialog, WidgetState},
+        editor::{EditorEvent, EditorParams, MappingEditor},
         indicator::Indicator,
-        mapping::{MappingConfigEvent, MappingConfigOverlay},
         player::{PlayerState, StreamPlayer},
-        state::{AppState, ConfigState, UIState},
         theme::AppColors,
         toolbar::{Toolbar, ToolbarEvent},
     },
@@ -24,6 +23,7 @@ use {
         config::mapping::{Key, KeyMapping, MappingAction, MouseButton, WheelDirection},
         controller::{keyboard::ProfileOperationResult, mouse::MouseState},
         error::Result,
+        modal::{DialogState, ModalDialog, WidgetState},
         t,
         tf,
     },
@@ -51,9 +51,9 @@ pub struct SAideApp {
     indicator: Indicator,
     player: StreamPlayer,
 
-    mapping_config_overlay: Option<MappingConfigOverlay>,
+    mapping_config_overlay: Option<MappingEditor>,
     dialog: Option<ModalDialog>,
-    pending_events: VecDeque<MappingConfigEvent>,
+    pending_events: VecDeque<EditorEvent>,
 
     app_state: AppState,
     config_state: ConfigState,
@@ -365,7 +365,7 @@ impl SAideApp {
         if self.mapping_config_overlay.is_some() {
             self.mapping_config_overlay = None;
         } else {
-            self.mapping_config_overlay = Some(MappingConfigOverlay::new());
+            self.mapping_config_overlay = Some(MappingEditor::new());
         }
     }
 
@@ -586,7 +586,7 @@ impl SAideApp {
         let video_rect = self.player.video_rect();
         let event = mapping_config_window.draw(
             ctx,
-            crate::core::ui::mapping::MappingDrawParams {
+            EditorParams {
                 mappings: &mappings,
                 profile_name: profile_name.as_deref(),
                 video_rect,
@@ -597,25 +597,25 @@ impl SAideApp {
         );
 
         match event {
-            MappingConfigEvent::None => {}
-            MappingConfigEvent::Close => {
+            EditorEvent::None => {}
+            EditorEvent::Close => {
                 self.mapping_config_overlay.take();
             }
             _ => self.pending_events.push_back(event),
         }
     }
 
-    fn handle_mapping_event(&mut self, event: MappingConfigEvent) {
+    fn handle_mapping_event(&mut self, event: EditorEvent) {
         match event {
-            MappingConfigEvent::None => {}
-            MappingConfigEvent::Close => {
+            EditorEvent::None => {}
+            EditorEvent::Close => {
                 self.mapping_config_overlay.take();
                 self.pending_events.clear();
             }
-            MappingConfigEvent::DeleteProfile => {
+            EditorEvent::DeleteProfile => {
                 self.delete_profile();
             }
-            MappingConfigEvent::NextProfile => {
+            EditorEvent::NextProfile => {
                 if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
                     && keyboard_mapper.switch_profile_next()
                 {
@@ -623,7 +623,7 @@ impl SAideApp {
                         .update_active_profile(keyboard_mapper.get_active_profile_name());
                 }
             }
-            MappingConfigEvent::PrevProfile => {
+            EditorEvent::PrevProfile => {
                 if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
                     && keyboard_mapper.switch_profile_prev()
                 {
@@ -631,19 +631,19 @@ impl SAideApp {
                         .update_active_profile(keyboard_mapper.get_active_profile_name());
                 }
             }
-            MappingConfigEvent::AddMapping(pos) => {
+            EditorEvent::AddMapping(pos) => {
                 if self.mapping_config_overlay.is_some() && self.dialog.is_none() {
                     self.pending_events.push_back(event.clone());
                     self.show_add_mapping_dialog(&pos);
                 }
             }
-            MappingConfigEvent::DeleteMapping(pos) => {
+            EditorEvent::DeleteMapping(pos) => {
                 if self.mapping_config_overlay.is_some() && self.dialog.is_none() {
                     self.pending_events.push_back(event.clone());
                     self.show_delete_mapping_dialog(&pos);
                 }
             }
-            MappingConfigEvent::SwitchProfile => {
+            EditorEvent::SwitchProfile => {
                 if self.mapping_config_overlay.is_some() {
                     if self.dialog.is_none() {
                         self.pending_events.push_back(event.clone());
@@ -728,35 +728,35 @@ impl SAideApp {
 
         match key {
             egui::Key::F1 => {
-                self.handle_mapping_event(MappingConfigEvent::ShowHelp);
+                self.handle_mapping_event(EditorEvent::ShowHelp);
                 return Ok(true);
             }
             egui::Key::F2 if self.mapping_config_overlay.is_some() => {
-                self.handle_mapping_event(MappingConfigEvent::RenameProfile);
+                self.handle_mapping_event(EditorEvent::RenameProfile);
                 return Ok(true);
             }
             egui::Key::F3 if self.mapping_config_overlay.is_some() => {
-                self.handle_mapping_event(MappingConfigEvent::NewProfile);
+                self.handle_mapping_event(EditorEvent::NewProfile);
                 return Ok(true);
             }
             egui::Key::F4 if self.mapping_config_overlay.is_some() => {
-                self.handle_mapping_event(MappingConfigEvent::SaveAsProfile);
+                self.handle_mapping_event(EditorEvent::SaveAsProfile);
                 return Ok(true);
             }
             egui::Key::F5 if self.mapping_config_overlay.is_some() => {
-                self.handle_mapping_event(MappingConfigEvent::DeleteProfile);
+                self.handle_mapping_event(EditorEvent::DeleteProfile);
                 return Ok(true);
             }
             egui::Key::F6 => {
-                self.handle_mapping_event(MappingConfigEvent::SwitchProfile);
+                self.handle_mapping_event(EditorEvent::SwitchProfile);
                 return Ok(true);
             }
             egui::Key::F7 => {
-                self.handle_mapping_event(MappingConfigEvent::PrevProfile);
+                self.handle_mapping_event(EditorEvent::PrevProfile);
                 return Ok(true);
             }
             egui::Key::F8 => {
-                self.handle_mapping_event(MappingConfigEvent::NextProfile);
+                self.handle_mapping_event(EditorEvent::NextProfile);
                 return Ok(true);
             }
             _ => {}
@@ -1252,13 +1252,13 @@ impl SAideApp {
 
         let event = self.pending_events.pop_front().unwrap();
         match event {
-            MappingConfigEvent::AddMapping(pos) => self.show_add_mapping_dialog(&pos),
-            MappingConfigEvent::DeleteMapping(pos) => self.show_delete_mapping_dialog(&pos),
-            MappingConfigEvent::RenameProfile => self.show_rename_profile_dialog(),
-            MappingConfigEvent::NewProfile => self.show_new_profile_dialog(),
-            MappingConfigEvent::SaveAsProfile => self.show_save_as_profile_dialog(),
+            EditorEvent::AddMapping(pos) => self.show_add_mapping_dialog(&pos),
+            EditorEvent::DeleteMapping(pos) => self.show_delete_mapping_dialog(&pos),
+            EditorEvent::RenameProfile => self.show_rename_profile_dialog(),
+            EditorEvent::NewProfile => self.show_new_profile_dialog(),
+            EditorEvent::SaveAsProfile => self.show_save_as_profile_dialog(),
             // MappingConfigEvent::ShowHelp => self.show_help_dialog(),
-            MappingConfigEvent::SwitchProfile => self.show_switch_profile_dialog(),
+            EditorEvent::SwitchProfile => self.show_switch_profile_dialog(),
             _ => {}
         }
     }
@@ -1444,12 +1444,12 @@ impl SAideApp {
             DialogState::WidgetsState(states) => {
                 if let Some(event) = self.pending_events.pop_front() {
                     match event {
-                        MappingConfigEvent::RenameProfile => {
+                        EditorEvent::RenameProfile => {
                             if let Some(WidgetState::TextInput(name)) = states.get("name") {
-                                self.rename_profile(name.clone());
+                                self.rename_profile(name);
                             }
                         }
-                        MappingConfigEvent::NewProfile => {
+                        EditorEvent::NewProfile => {
                             if let Some(WidgetState::TextInput(name)) = states.get("name") {
                                 let profile_name = if name.is_empty() {
                                     let device_serial = self.app_state.device_serial();
@@ -1466,12 +1466,12 @@ impl SAideApp {
                                 self.create_profile(&profile_name);
                             }
                         }
-                        MappingConfigEvent::SaveAsProfile => {
+                        EditorEvent::SaveAsProfile => {
                             if let Some(WidgetState::TextInput(name)) = states.get("name") {
                                 self.create_profile(name);
                             }
                         }
-                        MappingConfigEvent::SwitchProfile => {
+                        EditorEvent::SwitchProfile => {
                             if let Some(WidgetState::ListSelection(idx)) = states.get("profile") {
                                 let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
                                     return;
@@ -1492,7 +1492,7 @@ impl SAideApp {
                                 }
                             }
                         }
-                        MappingConfigEvent::DeleteMapping(screen_pos) => {
+                        EditorEvent::DeleteMapping(screen_pos) => {
                             let video_rect = self.player.video_rect();
                             if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
                                 &screen_pos,
@@ -1521,9 +1521,7 @@ impl SAideApp {
                 self.dialog = None;
             }
             DialogState::CapturedKey(key) => {
-                if let Some(MappingConfigEvent::AddMapping(screen_pos)) =
-                    self.pending_events.pop_front()
-                {
+                if let Some(EditorEvent::AddMapping(screen_pos)) = self.pending_events.pop_front() {
                     let video_rect = self.player.video_rect();
                     if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
                         &screen_pos,

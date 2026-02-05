@@ -5,8 +5,8 @@ use {
     saide::{
         config::ConfigManager,
         controller::AdbShell,
+        core::ui::{SAideApp, ThemeMode, Toolbar},
         error::{Result, SAideError},
-        saide::ui::{SAideApp, ThemeMode, Toolbar},
     },
     tracing::info,
     tracing_subscriber::{EnvFilter, fmt, prelude::*},

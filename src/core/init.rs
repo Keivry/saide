@@ -8,7 +8,7 @@ use {
         config::SAideConfig,
         controller::{control_sender::ControlSender, keyboard::KeyboardMapper, mouse::MouseMapper},
         core::{
-            connection_service::{ConnectionResult, ConnectionService, InputManager},
+            connection::{ConnectionResult, ConnectionService, InputManager},
             device_monitor::DeviceMonitor,
         },
         error::SAideError,
