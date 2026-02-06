@@ -354,6 +354,17 @@ impl KeyboardMapper {
         self.active_profile.load().as_ref().clone()
     }
 
+    pub fn get_active_profile_idx(&self) -> Option<usize> {
+        let avail = self.avail_profiles.read();
+        let active_name = self.get_active_profile().map(|p| p.name.clone());
+
+        if let Some(name) = active_name {
+            avail.iter().position(|p| p.name == name)
+        } else {
+            None
+        }
+    }
+
     /// Get active profile name
     pub fn get_active_profile_name(&self) -> Option<String> {
         self.get_active_profile().map(|p| p.name.clone())
