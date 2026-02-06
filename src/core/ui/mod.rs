@@ -1,25 +1,27 @@
+mod app;
+mod dialog;
 mod editor;
+mod function;
 mod indicator;
-mod main;
 mod player;
 mod theme;
 mod toolbar;
 
-pub use main::SAideApp;
+pub use app::SAideApp;
 use {
-    crate::{sc, shortcut::ShortcutMap, shortcuts},
+    crate::{action::action, sc, shortcut::ShortcutMap, shortcuts},
     lazy_static::lazy_static,
 };
 
 lazy_static! {
     pub static ref DEFAULT_SHORTCUTS: ShortcutMap<SAideApp> = shortcuts! {
-        sc!("F1") => action!(ui SAideApp::show_help_dialog);
+        sc!("F1") => action!(null SAideApp::show_help_dialog);
         sc!("F6") => action!(serial [
-            action!(ui usize SAideApp::show_profile_selection),
-            action!(func usize SAideApp::switch_profile)
+            action!(usize show_profile_selection),
+            action!(SAideApp::switch_profile)
         ]);
-        sc!("F7") => action!(func SAideApp::prev_profile);
-        sc!("F8") => action!(func SAideApp::next_profile);
+        sc!("F7") => action!(SAideApp::prev_profile);
+        sc!("F8") => action!(SAideApp::next_profile);
     };
 }
 

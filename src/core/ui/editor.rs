@@ -9,7 +9,7 @@ use {
             coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
             utils::extract_position,
         },
-        main::SAideApp,
+        app::SAideApp,
         theme::AppColors,
     },
     crate::{config::mapping::KeyMapping, sc, shortcut::ShortcutMap, shortcuts, t},
@@ -20,20 +20,20 @@ use {
 lazy_static! {
     pub static ref MAPPING_EDITOR_SHORTCUTS: ShortcutMap<SAideApp> = shortcuts! {
         sc!("F2") => action!(serial [
-            action!(ui string SAideApp::show_rename_profile_dialog),
-            action!(func string SAideApp::rename_profile),
+            action!(string SAideApp::show_rename_profile_dialog),
+            action!(SAideApp::rename_profile),
         ]);
         sc!("F3") => action!(serial [
-            action!(ui string SAideApp::show_create_profile_dialog),
-            action!(func string SAideApp::create_profile),
+            action!(string SAideApp::show_create_profile_dialog),
+            action!(SAideApp::create_profile),
         ]);
         sc!("F4") => action!(serial [
-            action!(ui bool SAideApp::show_delete_profile_dialog),
-            action!(func SAideApp::delete_profile),
+            action!(bool SAideApp::show_delete_profile_dialog),
+            action!(SAideApp::delete_profile),
         ]);
         sc!("F5") => action!(serial [
-            action!(ui string SAideApp::show_save_profile_as_dialog),
-            action!(func string SAideApp::save_profile_as),
+            action!(string SAideApp::show_save_profile_as_dialog),
+            action!(SAideApp::save_profile_as),
         ]);
     };
 }

@@ -13,7 +13,7 @@ use {
             state::{AppState, ConfigState, UIState},
             utils::find_nearest_mapping,
         },
-        editor::{EditorEvent, EditorParams, MappingEditor},
+        editor::{EditorParams, MappingEditor},
         indicator::Indicator,
         player::{PlayerState, StreamPlayer},
         theme::AppColors,
@@ -51,9 +51,8 @@ pub struct SAideApp {
     indicator: Indicator,
     player: StreamPlayer,
 
-    mapping_config_overlay: Option<MappingEditor>,
     dialog: Option<ModalDialog>,
-    pending_events: VecDeque<EditorEvent>,
+    mapping_editor: Option<MappingEditor>,
 
     app_state: AppState,
     config_state: ConfigState,
@@ -67,8 +66,6 @@ pub struct SAideApp {
 }
 
 impl SAideApp {
-    pub fn test(&mut self, _key: &Key, _pos: &egui::Pos2) {}
-
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         serial: &str,
@@ -101,9 +98,9 @@ impl SAideApp {
                 audio_ring_capacity,
                 hwdecode,
             ),
-            mapping_config_overlay: None,
+
             dialog: None,
-            pending_events: VecDeque::new(),
+            mapping_editor: None,
 
             app_state: AppState::new(serial.to_owned(), cancel_token),
             config_state: ConfigState::new(config_manager),
@@ -135,6 +132,14 @@ impl SAideApp {
             self.app_state.cancel_token.clone(),
         );
     }
+
+    pub fn state(&self) -> &AppState { &self.app_state }
+
+    pub fn is_dialog_open(&self) -> bool { self.dialog.is_some() }
+
+    pub fn open_dialog(&mut self, dialog: ModalDialog) { self.dialog = Some(dialog); }
+
+    pub fn is_mapping_editor_open(&self) -> bool { self.mapping_editor.is_some() }
 
     /// Check initialization progress and update state
     fn check_init_stage(&mut self, _ctx: &egui::Context) {
@@ -362,10 +367,10 @@ impl SAideApp {
 
     /// Toggle mapping configuration window
     fn toggle_mapping_config(&mut self, _ctx: &egui::Context) {
-        if self.mapping_config_overlay.is_some() {
-            self.mapping_config_overlay = None;
+        if self.mapping_editor.is_some() {
+            self.mapping_editor = None;
         } else {
-            self.mapping_config_overlay = Some(MappingEditor::new());
+            self.mapping_editor = Some(MappingEditor::new());
         }
     }
 
@@ -394,6 +399,14 @@ impl SAideApp {
             "Mapping visualization toggled: {}",
             self.ui_state.mapping_visualization_enabled()
         );
+    }
+
+    pub fn get_active_profile_name(&self) -> Option<String> {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
+            return None;
+        };
+
+        keyboard_mapper.get_active_profile_name()
     }
 
     pub(crate) fn create_profile(&mut self, profile_name: &str) {
@@ -468,6 +481,38 @@ impl SAideApp {
             ProfileOperationResult::Conflict => {
                 warn!("Profile rename conflict: {}", new_name);
                 self.show_profile_exists_dialog(&new_name);
+            }
+        }
+    }
+
+    pub fn save_profile_as(&mut self, new_name: &str) {
+        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
+            error!("Keyboard mapper not initialized");
+            return;
+        };
+
+        match keyboard_mapper.save_active_profile_as(new_name) {
+            Some(ProfileOperationResult::Success) => {
+                info!("Profile saved as: {}", new_name);
+
+                let device_serial = self.app_state.device_serial();
+                let device_rotation = self.app_state.device_orientation();
+                keyboard_mapper.refresh_profiles(device_serial, device_rotation);
+                self.indicator
+                    .update_active_profile(keyboard_mapper.get_active_profile_name());
+
+                if let Err(e) = self.config_state.config_manager.save() {
+                    error!("Failed to save config: {}", e);
+                } else {
+                    info!("Config saved after profile save as");
+                }
+            }
+            Some(ProfileOperationResult::Conflict) => {
+                warn!("Profile save as conflict: {}", new_name);
+                self.show_profile_exists_dialog(&new_name);
+            }
+            None => {
+                error!("Failed to save profile as");
             }
         }
     }
@@ -569,7 +614,7 @@ impl SAideApp {
             return;
         }
 
-        let Some(mapping_config_window) = &mut self.mapping_config_overlay else {
+        let Some(mapping_config_window) = &mut self.mapping_editor else {
             return;
         };
 
@@ -599,7 +644,7 @@ impl SAideApp {
         match event {
             EditorEvent::None => {}
             EditorEvent::Close => {
-                self.mapping_config_overlay.take();
+                self.mapping_editor.take();
             }
             _ => self.pending_events.push_back(event),
         }
@@ -609,7 +654,7 @@ impl SAideApp {
         match event {
             EditorEvent::None => {}
             EditorEvent::Close => {
-                self.mapping_config_overlay.take();
+                self.mapping_editor.take();
                 self.pending_events.clear();
             }
             EditorEvent::DeleteProfile => {
@@ -632,19 +677,19 @@ impl SAideApp {
                 }
             }
             EditorEvent::AddMapping(pos) => {
-                if self.mapping_config_overlay.is_some() && self.dialog.is_none() {
+                if self.mapping_editor.is_some() && self.dialog.is_none() {
                     self.pending_events.push_back(event.clone());
                     self.show_add_mapping_dialog(&pos);
                 }
             }
             EditorEvent::DeleteMapping(pos) => {
-                if self.mapping_config_overlay.is_some() && self.dialog.is_none() {
+                if self.mapping_editor.is_some() && self.dialog.is_none() {
                     self.pending_events.push_back(event.clone());
                     self.show_delete_mapping_dialog(&pos);
                 }
             }
             EditorEvent::SwitchProfile => {
-                if self.mapping_config_overlay.is_some() {
+                if self.mapping_editor.is_some() {
                     if self.dialog.is_none() {
                         self.pending_events.push_back(event.clone());
                         self.show_switch_profile_dialog();
@@ -731,19 +776,19 @@ impl SAideApp {
                 self.handle_mapping_event(EditorEvent::ShowHelp);
                 return Ok(true);
             }
-            egui::Key::F2 if self.mapping_config_overlay.is_some() => {
+            egui::Key::F2 if self.mapping_editor.is_some() => {
                 self.handle_mapping_event(EditorEvent::RenameProfile);
                 return Ok(true);
             }
-            egui::Key::F3 if self.mapping_config_overlay.is_some() => {
+            egui::Key::F3 if self.mapping_editor.is_some() => {
                 self.handle_mapping_event(EditorEvent::NewProfile);
                 return Ok(true);
             }
-            egui::Key::F4 if self.mapping_config_overlay.is_some() => {
+            egui::Key::F4 if self.mapping_editor.is_some() => {
                 self.handle_mapping_event(EditorEvent::SaveAsProfile);
                 return Ok(true);
             }
-            egui::Key::F5 if self.mapping_config_overlay.is_some() => {
+            egui::Key::F5 if self.mapping_editor.is_some() => {
                 self.handle_mapping_event(EditorEvent::DeleteProfile);
                 return Ok(true);
             }
@@ -970,7 +1015,7 @@ impl SAideApp {
         }
 
         // Skip normal input processing if mapping config window is open or dialogs are open
-        if self.mapping_config_overlay.is_some() || self.dialog.is_some() {
+        if self.mapping_editor.is_some() || self.dialog.is_some() {
             return;
         }
 
@@ -1305,242 +1350,12 @@ impl SAideApp {
         }
     }
 
-    fn show_profile_exists_dialog(&mut self, profile_name: &str) {
-        if self.dialog.is_some() {
-            return;
-        }
-
-        let mut dialog = ModalDialog::new(
-            "profile_exists_dialog",
-            &t!("mapping-config-dialog-profile-exists-title"),
-        );
-        dialog.add_message(&tf!(
-            "mapping-config-dialog-profile-exists-message",
-            "profile_name" => profile_name
-        ));
-
-        self.dialog.replace(dialog);
-    }
-
-    #[allow(dead_code)]
-    fn show_error_dialog(&mut self, title: &str, error_msg: &str) {
-        if self.dialog.is_some() {
-            return;
-        }
-        let mut dialog = ModalDialog::new("saide_error_dialog", title).with_cancel::<String>(None);
-        dialog.add_message(error_msg);
-
-        self.dialog.replace(dialog);
-    }
-
-    fn show_new_profile_dialog(&mut self) {
-        if self.dialog.is_some() {
-            return;
-        }
-
-        let mut dialog =
-            ModalDialog::new("new_profile_dialog", &t!("mapping-config-dialog-new-title"));
-        dialog.add_text_input("name", Some(""), None, true);
-
-        self.dialog = Some(dialog);
-    }
-
-    fn show_save_as_profile_dialog(&mut self) {
-        if self.dialog.is_some() {
-            return;
-        }
-
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            return;
-        };
-
-        let current_name = keyboard_mapper
-            .get_active_profile_name()
-            .unwrap_or_default();
-
-        let mut dialog = ModalDialog::new(
-            "save_as_profile_dialog",
-            &t!("mapping-config-dialog-saveas-title"),
-        );
-        dialog.add_text_input(
-            "name",
-            Some(&t!("mapping-config-dialog-saveas-placeholder")),
-            Some(&current_name),
-            true,
-        );
-
-        self.dialog = Some(dialog);
-    }
-
-    pub fn show_help_dialog(&mut self, ctx: &egui::Context) {
-        let mut dialog = ModalDialog::new("help_dialog", &t!("mapping-config-help-title"));
-        dialog.add_message(&t!("mapping-config-help-message"));
-
-        dialog.draw(ctx);
-    }
-
-    pub fn show_rename_profile_dialog(&mut self, ctx: &egui::Context) -> Option<String> {
-        let current_name = self
-            .app_state
-            .keyboard_mapper
-            .as_ref()
-            .and_then(|mapper| mapper.get_active_profile_name());
-
-        let mut dialog = ModalDialog::new("rename_dialog", &t!("mapping-config-rename-title"));
-        dialog.add_text_input(
-            "name",
-            Some(&t!("mapping-config-rename-placeholder")),
-            current_name.as_deref(),
-            true,
-        );
-
-        match dialog.draw(ctx) {
-            DialogState::WidgetsState(states) => {
-                if let Some(WidgetState::TextInput(name)) = states.get("name") {
-                    Some(name.clone())
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-
-    fn show_switch_profile_dialog(&mut self) {
-        if self.dialog.is_some() {
-            return;
-        }
-
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            return;
-        };
-
-        let profiles = keyboard_mapper.get_avail_profiles();
-        if profiles.is_empty() {
-            warn!("No profiles available to switch to");
-            return;
-        }
-
-        let active_idx = keyboard_mapper
-            .get_active_profile_name()
-            .and_then(|active| profiles.iter().position(|p| p == &active))
-            .unwrap_or(0);
-
-        let mut dialog = ModalDialog::new(
-            "switch_profile_dialog",
-            &t!("mapping-config-dialog-switch-title"),
-        );
-        dialog.add_list_selection("profile", profiles.iter().map(|s| s.as_str()), active_idx);
-
-        self.dialog = Some(dialog);
-    }
-
-    fn draw_dialog(&mut self, ctx: &egui::Context) {
+    pub fn draw_dialog(&mut self, ctx: &egui::Context) -> DialogState {
         let Some(dialog) = &mut self.dialog else {
-            return;
+            return DialogState::None;
         };
 
-        match dialog.draw(ctx) {
-            DialogState::WidgetsState(states) => {
-                if let Some(event) = self.pending_events.pop_front() {
-                    match event {
-                        EditorEvent::RenameProfile => {
-                            if let Some(WidgetState::TextInput(name)) = states.get("name") {
-                                self.rename_profile(name);
-                            }
-                        }
-                        EditorEvent::NewProfile => {
-                            if let Some(WidgetState::TextInput(name)) = states.get("name") {
-                                let profile_name = if name.is_empty() {
-                                    let device_serial = self.app_state.device_serial();
-                                    let device_rotation = self.app_state.device_orientation();
-                                    format!(
-                                        "{}_{:?}_r{}",
-                                        device_serial,
-                                        std::time::SystemTime::now(),
-                                        device_rotation
-                                    )
-                                } else {
-                                    name.clone()
-                                };
-                                self.create_profile(&profile_name);
-                            }
-                        }
-                        EditorEvent::SaveAsProfile => {
-                            if let Some(WidgetState::TextInput(name)) = states.get("name") {
-                                self.create_profile(name);
-                            }
-                        }
-                        EditorEvent::SwitchProfile => {
-                            if let Some(WidgetState::ListSelection(idx)) = states.get("profile") {
-                                let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-                                    return;
-                                };
-
-                                let profiles = keyboard_mapper.get_avail_profiles();
-                                if *idx < profiles.len() {
-                                    let profile_name = &profiles[*idx];
-                                    keyboard_mapper.switch_to_profile(profile_name);
-                                    self.indicator.update_active_profile(
-                                        keyboard_mapper.get_active_profile_name(),
-                                    );
-                                    if let Err(e) = self.config_state.config_manager.save() {
-                                        error!("Failed to save config: {}", e);
-                                    } else {
-                                        info!("Config saved after profile switch");
-                                    }
-                                }
-                            }
-                        }
-                        EditorEvent::DeleteMapping(screen_pos) => {
-                            let video_rect = self.player.video_rect();
-                            if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
-                                &screen_pos,
-                                &video_rect,
-                                self.app_state.scrcpy_coords(),
-                                self.ui_state.mapping_coords(),
-                            ) {
-                                let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-                                    return;
-                                };
-                                let mappings = keyboard_mapper
-                                    .get_active_mappings()
-                                    .unwrap_or_else(|| Arc::new(KeyMapping::default()));
-
-                                if let Some((nearest_key, _)) =
-                                    find_nearest_mapping(&percent_pos, &mappings)
-                                {
-                                    self.delete_mapping(nearest_key);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                self.dialog = None;
-            }
-            DialogState::CapturedKey(key) => {
-                if let Some(EditorEvent::AddMapping(screen_pos)) = self.pending_events.pop_front() {
-                    let video_rect = self.player.video_rect();
-                    if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
-                        &screen_pos,
-                        &video_rect,
-                        self.app_state.scrcpy_coords(),
-                        self.ui_state.mapping_coords(),
-                    ) {
-                        let key = Key::try_from(key).unwrap_or(Key::F1);
-                        self.add_mapping(key, &percent_pos);
-                    }
-                }
-                self.dialog = None;
-            }
-            DialogState::Cancelled => {
-                self.pending_events.pop_front();
-                self.dialog = None;
-            }
-            _ => {}
-        }
+        dialog.draw(ctx)
     }
 }
 
@@ -1655,7 +1470,7 @@ impl eframe::App for SAideApp {
 
                 self.process_event();
 
-                if self.mapping_config_overlay.is_some() {
+                if self.mapping_editor.is_some() {
                     self.draw_mapping_config_overlay(ctx);
                 } else {
                     self.draw_dialog(ctx);
@@ -1743,3 +1558,5 @@ impl eframe::App for SAideApp {
         }
     }
 }
+
+mod dialog;
