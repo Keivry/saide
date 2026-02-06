@@ -48,6 +48,50 @@ pub enum ActionArgs<'a> {
     Multi(Vec<ActionArgs<'a>>),
 }
 
+impl<'a> ActionArgs<'a> {
+    pub fn as_context(&self) -> Option<&'a Context> {
+        match self {
+            ActionArgs::Context(ctx) => Some(ctx),
+            _ => None,
+        }
+    }
+
+    pub fn as_key(&self) -> Option<Key> {
+        match self {
+            ActionArgs::Key(k) => Some(*k),
+            _ => None,
+        }
+    }
+
+    pub fn as_string(&self) -> Option<&str> {
+        match self {
+            ActionArgs::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_usize(&self) -> Option<usize> {
+        match self {
+            ActionArgs::Usize(u) => Some(*u),
+            _ => None,
+        }
+    }
+
+    pub fn as_pos2(&self) -> Option<Pos2> {
+        match self {
+            ActionArgs::Pos2(p) => Some(*p),
+            _ => None,
+        }
+    }
+
+    pub fn idx(&self, index: usize) -> Option<&ActionArgs<'a>> {
+        match self {
+            ActionArgs::Multi(v) => v.get(index),
+            _ => None,
+        }
+    }
+}
+
 impl<'a> From<&'a Context> for ActionArgs<'a> {
     fn from(ctx: &'a Context) -> Self { ActionArgs::Context(ctx) }
 }
@@ -105,7 +149,7 @@ pub trait Execute<App>: Send + Sync + 'static {
 }
 
 /// Callback type for UI actions
-pub type UiCallback<App, T> = Box<dyn Fn(&mut App, &Context) -> T + Sync + Send + 'static>;
+pub type UiCallback<App, T> = Box<dyn Fn(&mut App, &ActionArgs) -> T + Sync + Send + 'static>;
 
 /// Show UI dialogs and return results
 pub enum ShowUi<App> {
@@ -130,39 +174,21 @@ where
     App: 'static,
 {
     fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult> {
-        /// Macro to match and extract argument from ActionArgs
-        macro_rules! expect_arg {
-            ($arg:expr, $pat:pat => $body:expr) => {
-                match $arg {
-                    $pat => $body,
-                    _ => Err(ActionError::InvalidArgType),
-                }
-            };
-        }
-
         match self {
-            ShowUi::Null(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
-                f(app, ctx);
+            ShowUi::Null(f) => {
+                f(app, arg);
                 Ok(ActionResult::None)
-            }),
-            ShowUi::Bool(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
-                Ok(ActionResult::Bool(f(app, ctx)))
-            }),
-            ShowUi::Usize(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
-                Ok(f(app, ctx)
-                    .map(ActionResult::Usize)
-                    .unwrap_or(ActionResult::None))
-            }),
-            ShowUi::Key(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
-                Ok(f(app, ctx)
-                    .map(ActionResult::Key)
-                    .unwrap_or(ActionResult::None))
-            }),
-            ShowUi::String(f) => expect_arg!(arg, ActionArgs::Context(ctx) => {
-                Ok(f(app, ctx)
-                    .map(ActionResult::String)
-                    .unwrap_or(ActionResult::None))
-            }),
+            }
+            ShowUi::Bool(f) => Ok(ActionResult::Bool(f(app, arg))),
+            ShowUi::Usize(f) => Ok(f(app, arg)
+                .map(ActionResult::Usize)
+                .unwrap_or(ActionResult::None)),
+            ShowUi::Key(f) => Ok(f(app, arg)
+                .map(ActionResult::Key)
+                .unwrap_or(ActionResult::None)),
+            ShowUi::String(f) => Ok(f(app, arg)
+                .map(ActionResult::String)
+                .unwrap_or(ActionResult::None)),
         }
     }
 }
@@ -255,6 +281,17 @@ where
     E: Execute<App> + 'static,
 {
     fn into_action(self) -> Action<App> { Action::Action(Box::new(self)) }
+}
+
+/// Helper macro to match action argument types
+#[macro_export]
+macro_rules! expect_arg {
+    ($arg:expr, $default:expr, $pat:pat => $body:expr) => {
+        match $arg {
+            $pat => $body,
+            _ => $default,
+        }
+    };
 }
 
 /// Macro to import action-related types
