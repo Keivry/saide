@@ -15,7 +15,7 @@ const BUTTON_SIZE: (f32, f32) = (80.0, 30.0);
 #[derive(PartialEq)]
 pub enum ButtonState {
     None,
-    Confirm,
+    Comfirmed,
     Cancelled,
 }
 
@@ -79,7 +79,7 @@ impl DialogBody {
         }
     }
 
-    fn state(&self) -> HashMap<String, WidgetState> {
+    fn state(&self) -> DialogState {
         let mut states = HashMap::new();
         if let DialogBody::Widgets(widgets) = self {
             for widget in widgets {
@@ -88,12 +88,27 @@ impl DialogBody {
                 }
             }
         }
-        states
+
+        // If no states were collected, return None
+        if states.is_empty() {
+            return DialogState::None;
+        }
+
+        // If all states are None, return None
+        if states
+            .iter()
+            .all(|(_, state)| matches!(state, WidgetState::None))
+        {
+            return DialogState::None;
+        }
+
+        DialogState::WidgetsState(states)
     }
 }
 
 pub enum DialogState {
     None,
+    Confirmed,
     Cancelled,
     CapturedKey(Key),
     WidgetsState(HashMap<String, WidgetState>),
@@ -329,7 +344,7 @@ impl ModalDialog {
 
                 let confirm_enabled = self.body.validate();
                 let button_state = self.draw_buttons(ui, confirm_enabled);
-                let mut confirm = button_state == ButtonState::Confirm;
+                let mut confirmed = button_state == ButtonState::Comfirmed;
 
                 ui.input_mut(|input| {
                     for event in &input.events {
@@ -348,7 +363,7 @@ impl ModalDialog {
                                 }
                                 egui::Key::Enter => {
                                     if confirm_enabled {
-                                        confirm = true;
+                                        confirmed = true;
                                     }
                                 }
                                 _ => {
@@ -366,8 +381,11 @@ impl ModalDialog {
 
                 if button_state == ButtonState::Cancelled {
                     state = DialogState::Cancelled;
-                } else if confirm {
-                    state = DialogState::WidgetsState(self.body.state());
+                } else if confirmed {
+                    state = self.body.state();
+                    if matches!(state, DialogState::None) {
+                        state = DialogState::Confirmed;
+                    }
                 }
             });
         });
@@ -453,7 +471,7 @@ impl ModalDialog {
                     )
                     .clicked()
                 {
-                    state = ButtonState::Confirm;
+                    state = ButtonState::Comfirmed;
                 }
 
                 if self.cancel.is_some() {
