@@ -167,7 +167,7 @@ pub fn shortcut(sc: &str) -> Shortcut {
 #[macro_export]
 macro_rules! sc {
     ($s:literal) => {
-        $crate::shortcuts::shortcut($s)
+        $crate::shortcut::shortcut($s)
     };
 }
 
@@ -179,7 +179,7 @@ macro_rules! shortcuts {
             $key:expr => $action:expr
         );* $(;)?
     ) => {{
-        let mut map = $crate::shortcuts::ShortcutMap::new();
+        let mut map = $crate::shortcut::ShortcutMap::new();
         $(
             map.insert($key, $action);
         )*

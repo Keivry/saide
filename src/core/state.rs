@@ -1,7 +1,7 @@
 //! SAide application state structures
 
 use {
-    super::super::{
+    super::{
         coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys, VisualPos},
         init::DeviceMonitorEvent,
     },
