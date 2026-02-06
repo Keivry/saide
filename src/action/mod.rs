@@ -41,10 +41,10 @@ pub type Result<T> = std::result::Result<T, ActionError>;
 pub enum ActionArgs<'a> {
     None,
     Context(&'a Context),
-    Key(Key),
-    String(String),
+    Key(&'a Key),
+    String(&'a str),
     Usize(usize),
-    Pos2(Pos2),
+    Pos2(&'a Pos2),
     Multi(Vec<ActionArgs<'a>>),
 }
 
@@ -56,9 +56,9 @@ impl<'a> ActionArgs<'a> {
         }
     }
 
-    pub fn as_key(&self) -> Option<Key> {
+    pub fn as_key(&self) -> Option<&Key> {
         match self {
-            ActionArgs::Key(k) => Some(*k),
+            ActionArgs::Key(k) => Some(k),
             _ => None,
         }
     }
@@ -77,9 +77,9 @@ impl<'a> ActionArgs<'a> {
         }
     }
 
-    pub fn as_pos2(&self) -> Option<Pos2> {
+    pub fn as_pos2(&self) -> Option<&Pos2> {
         match self {
-            ActionArgs::Pos2(p) => Some(*p),
+            ActionArgs::Pos2(p) => Some(p),
             _ => None,
         }
     }
@@ -96,50 +96,91 @@ impl<'a> From<&'a Context> for ActionArgs<'a> {
     fn from(ctx: &'a Context) -> Self { ActionArgs::Context(ctx) }
 }
 
-impl<'a> From<Key> for ActionArgs<'a> {
-    fn from(k: Key) -> Self { ActionArgs::Key(k) }
-}
-
-impl<'a> From<(Key, Pos2)> for ActionArgs<'a> {
-    fn from(kp: (Key, Pos2)) -> Self {
-        ActionArgs::Multi(vec![ActionArgs::Key(kp.0), ActionArgs::Pos2(kp.1)])
-    }
-}
-
-impl<'a> From<String> for ActionArgs<'a> {
-    fn from(s: String) -> Self { ActionArgs::String(s) }
-}
-
-impl From<&String> for ActionArgs<'_> {
-    fn from(s: &String) -> Self { ActionArgs::String(s.clone()) }
+impl<'a> From<&'a Key> for ActionArgs<'a> {
+    fn from(k: &'a Key) -> Self { ActionArgs::Key(k) }
 }
 
 impl<'a> From<&'a str> for ActionArgs<'a> {
-    fn from(s: &'a str) -> Self { ActionArgs::String(s.to_string()) }
+    fn from(s: &'a str) -> Self { ActionArgs::String(s) }
 }
 
 impl<'a> From<usize> for ActionArgs<'a> {
     fn from(u: usize) -> Self { ActionArgs::Usize(u) }
 }
 
-impl<'a> TryFrom<ActionResult> for ActionArgs<'a> {
+impl<'a> TryFrom<&'a ActionResult> for ActionArgs<'a> {
     type Error = ActionError;
 
     /// Convert ActionResult to ActionArgs for serial action execution
-    fn try_from(value: ActionResult) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: &'a ActionResult) -> std::result::Result<Self, Self::Error> {
         match value {
             ActionResult::None => Err(ActionError::Terminated),
             ActionResult::Bool(b) => {
-                if b {
+                if *b {
                     Ok(ActionArgs::None)
                 } else {
                     Err(ActionError::Terminated)
                 }
             }
             ActionResult::String(s) => Ok(ActionArgs::String(s)),
-            ActionResult::Usize(u) => Ok(ActionArgs::Usize(u)),
+            ActionResult::Usize(u) => Ok(ActionArgs::Usize(*u)),
             ActionResult::Key(k) => Ok(ActionArgs::Key(k)),
         }
+    }
+}
+
+impl<'a, T1, T2> From<(T1, T2)> for ActionArgs<'a>
+where
+    T1: Into<ActionArgs<'a>>,
+    T2: Into<ActionArgs<'a>>,
+{
+    fn from(value: (T1, T2)) -> Self { ActionArgs::Multi(vec![value.0.into(), value.1.into()]) }
+}
+
+impl<'a, T1, T2, T3> From<(T1, T2, T3)> for ActionArgs<'a>
+where
+    T1: Into<ActionArgs<'a>>,
+    T2: Into<ActionArgs<'a>>,
+    T3: Into<ActionArgs<'a>>,
+{
+    fn from(value: (T1, T2, T3)) -> Self {
+        ActionArgs::Multi(vec![value.0.into(), value.1.into(), value.2.into()])
+    }
+}
+
+impl<'a, T1, T2, T3, T4> From<(T1, T2, T3, T4)> for ActionArgs<'a>
+where
+    T1: Into<ActionArgs<'a>>,
+    T2: Into<ActionArgs<'a>>,
+    T3: Into<ActionArgs<'a>>,
+    T4: Into<ActionArgs<'a>>,
+{
+    fn from(value: (T1, T2, T3, T4)) -> Self {
+        ActionArgs::Multi(vec![
+            value.0.into(),
+            value.1.into(),
+            value.2.into(),
+            value.3.into(),
+        ])
+    }
+}
+
+impl<'a, T1, T2, T3, T4, T5> From<(T1, T2, T3, T4, T5)> for ActionArgs<'a>
+where
+    T1: Into<ActionArgs<'a>>,
+    T2: Into<ActionArgs<'a>>,
+    T3: Into<ActionArgs<'a>>,
+    T4: Into<ActionArgs<'a>>,
+    T5: Into<ActionArgs<'a>>,
+{
+    fn from(value: (T1, T2, T3, T4, T5)) -> Self {
+        ActionArgs::Multi(vec![
+            value.0.into(),
+            value.1.into(),
+            value.2.into(),
+            value.3.into(),
+            value.4.into(),
+        ])
     }
 }
 
@@ -263,7 +304,7 @@ where
             Action::Serial(actions) => {
                 let mut last_result = ActionResult::None;
                 for action in actions {
-                    last_result = action.execute(app, &ActionArgs::try_from(last_result)?)?;
+                    last_result = action.execute(app, &ActionArgs::try_from(&last_result)?)?;
                 }
                 Ok(last_result)
             }
