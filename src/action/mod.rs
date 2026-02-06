@@ -189,91 +189,60 @@ pub trait Execute<App>: Send + Sync + 'static {
     fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult>;
 }
 
-/// Callback type for UI actions
-pub type UiCallback<App, T> = Box<dyn Fn(&mut App, &ActionArgs) -> T + Sync + Send + 'static>;
+/// Callback type for actions
+pub type Callback<App, T> = Box<dyn Fn(&mut App, &ActionArgs) -> T + Sync + Send + 'static>;
 
-/// Show UI dialogs and return results
-pub enum ShowUi<App> {
-    /// Show a UI dialog that does not return a value
-    Null(UiCallback<App, ()>),
+/// Predefined command actions with various return types
+pub enum Command<App> {
+    Null(Callback<App, ()>),
 
-    /// Show a UI dialog that returns a bool
-    Bool(UiCallback<App, bool>),
+    Bool(Callback<App, bool>),
 
-    /// Show a UI dialog that returns an optional usize
-    Usize(UiCallback<App, Option<usize>>),
+    Usize(Callback<App, Option<usize>>),
 
-    /// Show a UI dialog that returns an optional Key
-    Key(UiCallback<App, Option<Key>>),
+    Key(Callback<App, Option<Key>>),
 
-    /// Show a UI dialog that returns an optional string
-    String(UiCallback<App, Option<String>>),
+    String(Callback<App, Option<String>>),
+
+    Result(Callback<App, Result<ActionResult>>),
 }
 
-impl<App> Execute<App> for ShowUi<App>
+impl<App> Execute<App> for Command<App>
 where
     App: 'static,
 {
     fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult> {
         match self {
-            ShowUi::Null(f) => {
+            Command::Null(f) => {
                 f(app, arg);
                 Ok(ActionResult::None)
             }
-            ShowUi::Bool(f) => Ok(ActionResult::Bool(f(app, arg))),
-            ShowUi::Usize(f) => Ok(f(app, arg)
+            Command::Bool(f) => Ok(ActionResult::Bool(f(app, arg))),
+            Command::Usize(f) => Ok(f(app, arg)
                 .map(ActionResult::Usize)
                 .unwrap_or(ActionResult::None)),
-            ShowUi::Key(f) => Ok(f(app, arg)
+            Command::Key(f) => Ok(f(app, arg)
                 .map(ActionResult::Key)
                 .unwrap_or(ActionResult::None)),
-            ShowUi::String(f) => Ok(f(app, arg)
+            Command::String(f) => Ok(f(app, arg)
                 .map(ActionResult::String)
                 .unwrap_or(ActionResult::None)),
+            Command::Result(f) => f(app, arg),
         }
-    }
-}
-
-/// Wraps a function/closure as an action
-pub struct Function<App, T> {
-    callback: Box<dyn Fn(&mut App, &ActionArgs) -> T + Send + Sync + 'static>,
-}
-
-impl<App, T> Function<App, T> {
-    pub fn new(callback: Box<dyn Fn(&mut App, &ActionArgs) -> T + Send + Sync + 'static>) -> Self {
-        Self { callback }
-    }
-}
-
-impl<App, T> Execute<App> for Function<App, T>
-where
-    App: 'static,
-    T: Into<Result<ActionResult>> + 'static,
-{
-    fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult> {
-        (self.callback)(app, arg).into()
     }
 }
 
 /// Represents an action that can be executed
 pub enum Action<App> {
-    Action(Box<dyn Execute<App>>),
+    Command(Box<dyn Execute<App>>),
     Serial(Vec<Box<dyn Execute<App>>>),
 }
 
-impl<App> From<ShowUi<App>> for Action<App>
+impl<App> From<Command<App>> for Action<App>
 where
     App: 'static,
 {
-    fn from(ui: ShowUi<App>) -> Self { Action::Action(Box::new(ui)) }
-}
-
-impl<App, T> From<Function<App, T>> for Action<App>
-where
-    App: 'static,
-    T: Into<Result<ActionResult>> + 'static,
-{
-    fn from(func: Function<App, T>) -> Self { Action::Action(Box::new(func)) }
+    fn from(cmd: Command<App>) -> Self { Action::Command(Box::new(cmd)) }
 }
 
 impl<App> From<Vec<Action<App>>> for Action<App>
@@ -284,7 +253,7 @@ where
         let boxed_actions = actions
             .into_iter()
             .map(|action| match action {
-                Action::Action(a) => a,
+                Action::Command(a) => a,
                 Action::Serial(_) => {
                     panic!("Nested serial actions are not supported");
                 }
@@ -300,7 +269,7 @@ where
 {
     pub fn execute(&self, app: &mut App, arg: &ActionArgs) -> Result<ActionResult> {
         match self {
-            Action::Action(action) => action.execute(app, arg),
+            Action::Command(cmd) => cmd.execute(app, arg),
             Action::Serial(actions) => {
                 let mut last_result = ActionResult::None;
                 for action in actions {
@@ -321,7 +290,7 @@ impl<App, E> IntoAction<App> for E
 where
     E: Execute<App> + 'static,
 {
-    fn into_action(self) -> Action<App> { Action::Action(Box::new(self)) }
+    fn into_action(self) -> Action<App> { Action::Command(Box::new(self)) }
 }
 
 /// Helper macro to match action argument types
@@ -339,124 +308,62 @@ macro_rules! expect_arg {
 macro_rules! with_action_types {
     ($($tt:tt)*) => {{
         #[allow(unused_imports)]
-        use $crate::action::{ActionArgs, ActionResult, ActionError, Function, Action, ShowUi, IntoAction};
+        use $crate::action::{ActionArgs, ActionResult, ActionError, Action, Command, IntoAction};
         $($tt)*
     }};
 }
 
 /// Macro to create actions in different modes
 //// Modes:
-/// - ui: for UI dialogs, with optional return types
-/// - func: for functions with optional argument types
+/// - bool, usize, string, key, result: for creating Command actions with specific return types
 /// - serial: for chaining multiple actions, action results are passed as arguments to the next
 ///   action
 /// - default: for any expression implementing Execute
 ///
 /// Usage examples:
 /// ```ignore
-/// action!(ui App::show_help_dialog);
-/// action!(ui bool App::show_confirm_dialog);
-/// action!(func App::delete_item);
-/// action!(func bool App::set_verbose_mode);
-/// action!(func key pos App::handle_key_at_position);
-/// action!(serial [action1, action2, ...]);
-/// action!(custom_execute);
+/// action!(bool |app, arg| {
+///     // app: &mut App, arg: &ActionArgs
+///     // return bool
+/// });
+/// action!(serial [
+///     action!(bool |app, arg| {
+///         // app: &mut App, arg: &ActionArgs
+///         // return bool
+///     }),
+///     action!(usize |app, arg| {
+///         // app: &mut App, arg: &ActionArgs
+///         // return Option<usize>
+///     }),
+///     // more actions...
+/// ]);
+/// action!(some_expression_implementing_Execute);
 /// ```
 #[macro_export]
 macro_rules! action {
-    // --- ui mode ---
-    // Usage: action!(ui <return type> <function>)
-    (ui $f:expr) => {
+    (bool $f:expr) => {
         with_action_types!{
-            Action::Action(Box::new(ShowUi::Null(Box::new($f))))
+            Action::Command(Box::new(Command::Bool(Box::new($f))))
         }
     };
-    (ui bool $f:expr) => {
+    (usize $f:expr) => {
         with_action_types!{
-            Action::Action(Box::new(ShowUi::Bool(Box::new($f))))
+            Action::Command(Box::new(Command::Usize(Box::new($f))))
         }
     };
-    (ui usize $f:expr) => {
+    (string $f:expr) => {
         with_action_types!{
-            Action::Action(Box::new(ShowUi::Usize(Box::new($f))))
+            Action::Command(Box::new(Command::String(Box::new($f))))
         }
     };
-    (ui string $f:expr) => {
+    (key $f:expr) => {
         with_action_types!{
-            Action::Action(Box::new(ShowUi::String(Box::new($f))))
+            Action::Command(Box::new(Command::Key(Box::new($f))))
         }
     };
-    (ui key $f:expr) => {
+    (result $f:expr) => {
         with_action_types!{
-            Action::Action(Box::new(ShowUi::Key(Box::new($f))))
-        }
-    };
-
-    // --- func mode ---
-    // Usage: action!(func [argument type] <function>)
-    (func $f:expr) => {
-        with_action_types!{
-            Action::Action(Box::new(Function::new(Box::new(|app, _| {
-                ($f)(app);
-                Ok(ActionResult::None)
-            }))))
-        }
-    };
-    (func bool $f:expr) => {
-        with_action_types!{
-            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
-                match arg {
-                    ActionArgs::Bool(b) => { ($f)(app, *b); Ok(ActionResult::None) }
-                    _ => Err(ActionError::InvalidArgType),
-                }
-            }))))
-        }
-    };
-    (func usize $f:expr) => {
-        with_action_types!{
-            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
-                match arg {
-                    ActionArgs::Usize(u) => { ($f)(app, *u); Ok(ActionResult::None) }
-                    _ => Err(ActionError::InvalidArgType),
-                }
-            }))))
-        }
-    };
-    (func string $f:expr) => {
-        with_action_types!{
-            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
-                match arg {
-                    ActionArgs::String(s) => { ($f)(app, s); Ok(ActionResult::None) }
-                    _ => Err(ActionError::InvalidArgType),
-                }
-            }))))
-        }
-    };
-    (func key $f:expr) => {
-        with_action_types!{
-            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
-                match arg {
-                    ActionArgs::Key(k) => { ($f)(app, k); Ok(ActionResult::None) }
-                    _ => Err(ActionError::InvalidArgType),
-                }
-            }))))
-        }
-    };
-    (func key pos $f:expr) => {
-        with_action_types!{
-            Action::Action(Box::new(Function::new(Box::new(|app, arg| {
-                match arg {
-                    ActionArgs::Multi(v) if v.len() == 2 => {
-                        if let (ActionArgs::Key(k), ActionArgs::Pos2(p)) = (&v[0], &v[1]) {
-                            ($f)(app, k, p);
-                            Ok(ActionResult::None)
-                        } else {
-                            Err(ActionError::InvalidArgType)
-                        }
-                    }
-                    _ => Err(ActionError::InvalidArgType),
-                }
-            }))))
+            Action::Command(Box::new(Command::Result(Box::new($f))))
         }
     };
 
