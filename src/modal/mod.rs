@@ -12,20 +12,36 @@ use {
 const LIST_MAX_HEIGHT: f32 = 300.0;
 const BUTTON_SIZE: (f32, f32) = (80.0, 30.0);
 
+/// Represents the state of the dialog buttons
 #[derive(PartialEq)]
 pub enum ButtonState {
-    None,
+    NoAction,
     Comfirmed,
     Cancelled,
 }
 
+// Represents the state of a widget in the dialog
+pub enum WidgetState {
+    Empty,
+    TextInput(String),
+    ListSelection(usize),
+}
+
+/// Represents the type of a widget in the dialog
 pub enum WidgetKind {
-    Message(String),
+    /// A static text widget, which has no state
+    Static(String),
+
+    /// A text input widget with optional placeholder and initial value,
+    /// which has text state
     TextInput {
         placeholder: Option<String>,
         text: RefCell<String>,
         required: bool,
     },
+
+    /// A list selection widget with items and optional selected index,
+    /// which has selected index state
     ListSelection {
         items: Vec<String>,
         selected_idx: RefCell<usize>,
@@ -33,6 +49,9 @@ pub enum WidgetKind {
 }
 
 impl WidgetKind {
+    /// Validate the widget state
+    /// For now only TextInput widget has validation logic
+    /// which checks if the text is empty when required is true
     fn validate(&self) -> bool {
         match self {
             Self::TextInput { text, required, .. } => {
@@ -42,76 +61,132 @@ impl WidgetKind {
         }
     }
 
+    /// Get the current state of the widget,
+    /// which is used to collect the dialog state when the dialog is confirmed
     fn state(&self) -> WidgetState {
         match self {
+            Self::Static(_) => WidgetState::Empty,
             Self::TextInput { text, .. } => WidgetState::TextInput(text.borrow().clone()),
             Self::ListSelection { selected_idx, .. } => {
                 WidgetState::ListSelection(*selected_idx.borrow())
             }
-            _ => WidgetState::None,
         }
     }
 }
 
+/// Represents a widget in the dialog
 pub struct Widget {
+    /// An optional identifier for the widget,
+    /// which is used to collect the widget state when the dialog is confirmed
     pub id: Option<String>,
+
+    /// The type of the widget,
+    /// which determines how it is drawn and what state it has
     pub kind: WidgetKind,
 }
 
-pub enum WidgetState {
+/// Represents the state of the dialog
+pub enum DialogState {
+    // Not initialized
     None,
-    TextInput(String),
-    ListSelection(usize),
+
+    /// The dialog is still open
+    NoAction,
+
+    /// Confirmed with no state
+    Comfirmed,
+
+    /// Cancelled by user action,
+    /// such as clicking cancel button or pressing Escape key
+    Cancelled,
+
+    /// Confirmed with usize state
+    Usize(usize),
+
+    /// Confirmed with String state
+    String(String),
+
+    /// Captured a key input
+    CapturedKey(Key),
+
+    /// Confirmed with multiple widget states, stored in a HashMap with widget id as key
+    WidgetsState(HashMap<String, WidgetState>),
 }
 
+/// Convert WidgetState to DialogState for single-widget dialogs, where the dialog state directly
+/// reflects the widget state without needing a HashMap wrapper.
+impl From<WidgetState> for DialogState {
+    fn from(state: WidgetState) -> Self {
+        match state {
+            WidgetState::Empty => DialogState::Comfirmed,
+            WidgetState::TextInput(text) => DialogState::String(text),
+            WidgetState::ListSelection(idx) => DialogState::Usize(idx),
+        }
+    }
+}
+
+/// Represents the body of the dialog
 pub enum DialogBody {
-    None,
+    /// A static dialog body with no interactive widgets, which is used for simple messages
+    Static,
+
+    /// A dialog body that captures key input, which is used for key binding dialogs
     KeyCapture(String),
+
+    /// A dialog body with interactive widgets, which is used for forms and selection dialogs
     Widgets(Vec<Widget>),
 }
 
 impl DialogBody {
     fn validate(&self) -> bool {
         match self {
-            DialogBody::None => true,
+            DialogBody::Static => true,
             DialogBody::KeyCapture(_) => true,
             DialogBody::Widgets(widgets) => widgets.iter().all(|widget| widget.kind.validate()),
         }
     }
 
+    /// Collect the state of all widgets in the dialog,
     fn state(&self) -> DialogState {
-        let mut states = HashMap::new();
-        if let DialogBody::Widgets(widgets) = self {
-            for widget in widgets {
-                if let Some(id) = &widget.id {
-                    states.insert(id.clone(), widget.kind.state());
+        match self {
+            DialogBody::Widgets(widgets) => match widgets.len() {
+                // Return confirmed state directly if there are no widgets,
+                // which is a common case for simple dialogs
+                0 => return DialogState::Comfirmed,
+
+                // If there's only one widget, return its state directly
+                // without wrapping in a HashMap
+                1 => return widgets[0].kind.state().into(),
+
+                // If there are multiple widgets, collect their states into a HashMap
+                _ => {
+                    let mut states = HashMap::new();
+                    for widget in widgets {
+                        if let Some(id) = &widget.id {
+                            states.insert(id.clone(), widget.kind.state());
+                        }
+                    }
+
+                    // If all widgets are in Empty state, return Empty state
+                    if states
+                        .iter()
+                        .all(|(_, state)| matches!(state, WidgetState::Empty))
+                    {
+                        return DialogState::Comfirmed;
+                    }
+
+                    DialogState::WidgetsState(states)
                 }
-            }
-        }
+            },
 
-        // If no states were collected, return None
-        if states.is_empty() {
-            return DialogState::None;
-        }
+            // Key capture disable confirm button,
+            // Unreachable state, so return None
+            DialogBody::KeyCapture(_) => DialogState::None,
 
-        // If all states are None, return None
-        if states
-            .iter()
-            .all(|(_, state)| matches!(state, WidgetState::None))
-        {
-            return DialogState::None;
+            // Static dialog has no state, so return Empty state
+            DialogBody::Static => DialogState::Comfirmed,
         }
-
-        DialogState::WidgetsState(states)
     }
-}
-
-pub enum DialogState {
-    None,
-    Confirmed,
-    Cancelled,
-    CapturedKey(Key),
-    WidgetsState(HashMap<String, WidgetState>),
 }
 
 pub struct ModalDialog {
@@ -134,7 +209,7 @@ impl ModalDialog {
             id: id.into(),
             title: title.into(),
 
-            body: DialogBody::None,
+            body: DialogBody::Static,
 
             confirm: Some(t!("dialog-button-confirm")),
             cancel: Some(t!("dialog-button-cancel")),
@@ -238,16 +313,16 @@ impl ModalDialog {
         S: Into<String>,
     {
         match &mut self.body {
-            DialogBody::None => {
+            DialogBody::Static => {
                 self.body = DialogBody::Widgets(vec![Widget {
                     id: None,
-                    kind: WidgetKind::Message(message.into()),
+                    kind: WidgetKind::Static(message.into()),
                 }]);
             }
             DialogBody::Widgets(widgets) => {
                 widgets.push(Widget {
                     id: None,
-                    kind: WidgetKind::Message(message.into()),
+                    kind: WidgetKind::Static(message.into()),
                 });
             }
             DialogBody::KeyCapture(_) => {
@@ -278,7 +353,7 @@ impl ModalDialog {
         };
 
         match &mut self.body {
-            DialogBody::None => {
+            DialogBody::Static => {
                 self.body = DialogBody::Widgets(vec![widget]);
             }
             DialogBody::Widgets(widgets) => {
@@ -307,7 +382,7 @@ impl ModalDialog {
         };
 
         match &mut self.body {
-            DialogBody::None => {
+            DialogBody::Static => {
                 self.body = DialogBody::Widgets(vec![widget]);
             }
             DialogBody::Widgets(widgets) => {
@@ -323,7 +398,7 @@ impl ModalDialog {
 
     /// Draw the modal dialog, returning the result
     pub fn draw(&mut self, ctx: &egui::Context) -> DialogState {
-        let mut state = DialogState::None;
+        let mut state = DialogState::NoAction;
 
         Modal::new(self.id.clone().into()).show(ctx, |ui| {
             ui.vertical_centered(|ui| {
@@ -333,7 +408,9 @@ impl ModalDialog {
 
                 // Draw dialog content
                 match &self.body {
-                    DialogBody::None => {}
+                    DialogBody::Static => {
+                        // No content to draw
+                    }
                     DialogBody::KeyCapture(message) => {
                         ui.label(message.as_str());
                     }
@@ -383,9 +460,6 @@ impl ModalDialog {
                     state = DialogState::Cancelled;
                 } else if confirmed {
                     state = self.body.state();
-                    if matches!(state, DialogState::None) {
-                        state = DialogState::Confirmed;
-                    }
                 }
             });
         });
@@ -396,7 +470,7 @@ impl ModalDialog {
     fn draw_widgets(&self, ui: &mut egui::Ui, widgets: &[Widget]) {
         for widget in widgets {
             match &widget.kind {
-                WidgetKind::Message(message) => {
+                WidgetKind::Static(message) => {
                     ui.label(message.as_str());
                 }
                 WidgetKind::TextInput {
@@ -448,12 +522,12 @@ impl ModalDialog {
     fn draw_buttons(&mut self, ui: &mut egui::Ui, confirm_enabled: bool) -> ButtonState {
         let button_count = self.button_count();
         if button_count == 0 {
-            return ButtonState::None;
+            return ButtonState::NoAction;
         }
 
         ui.separator();
 
-        let mut state = ButtonState::None;
+        let mut state = ButtonState::NoAction;
 
         // Confirm and Cancel buttons
         ui.horizontal(|ui| {
