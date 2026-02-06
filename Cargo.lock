@@ -1121,6 +1121,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-action"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "egui-action"
+version = "0.1.0"
+source = "git+https://github.com/Keivry/egui-action.git?branch=main#f791a45e71e73d785a47d4693a34159d13299abd"
+dependencies = [
+ "egui",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "egui-action-macro"
+version = "0.1.0"
+dependencies = [
+ "egui-action 0.1.0 (git+https://github.com/Keivry/egui-action.git?branch=main)",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3033,9 +3060,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.105"
+version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "535d180e0ecab6268a3e718bb9fd44db66bbbc256257165fc699dadf70d16fe7"
+checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
@@ -3082,9 +3109,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.43"
+version = "1.0.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc74d9a594b72ae6656596548f56f667211f8a97b3d4c3d467150794690dc40a"
+checksum = "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"
 dependencies = [
  "proc-macro2",
 ]
@@ -3285,6 +3312,8 @@ dependencies = [
  "directories",
  "eframe",
  "egui",
+ "egui-action 0.1.0",
+ "egui-action-macro",
  "egui_cjk_font",
  "ffmpeg-next",
  "fluent-bundle",

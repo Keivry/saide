@@ -3,8 +3,8 @@
 //! Allows for defining global and scoped shortcuts, handling input, and
 //! dispatching actions based on user input.
 use {
-    super::super::action::{Action, ActionArgs},
     egui::{Context, Key, Modifiers},
+    egui_action::{Action, ActionArgs},
     std::collections::HashMap,
     thiserror::Error,
 };

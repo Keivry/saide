@@ -97,6 +97,8 @@ sys-locale = "0.3"
 lru = "0.16"
 
 egui_cjk_font = { path = "crates/egui-cjk-font" }
+egui-action = { path = "crates/egui-action" }
+egui-action-macro = { path = "crates/egui-action-macro" }
 
 notify = "8"
 
