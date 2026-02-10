@@ -9,7 +9,7 @@ pub mod scrcpy;
 
 use {
     crate::{
-        config::{log::LogConfig, mapping::Mappings, scrcpy::ScrcpyConfig},
+        config::{log::LogConfig, mapping::MappingsConfig, scrcpy::ScrcpyConfig},
         constant::{self, SCRCPY_SERVER_VERSION_STRING},
         error::{Result, SAideError},
     },
@@ -204,7 +204,7 @@ pub struct SAideConfig {
     #[serde(default)]
     pub input: InputConfig,
     #[serde(default)]
-    pub mappings: Arc<Mappings>,
+    pub mappings: Arc<MappingsConfig>,
     #[serde(default)]
     pub logging: LogConfig,
 }

@@ -5,7 +5,7 @@ use {
     saide::{
         config::ConfigManager,
         controller::AdbShell,
-        core::ui::{SAideApp, ThemeMode, Toolbar},
+        core::ui::{SAideApp, ThemeMode},
         error::{Result, SAideError},
     },
     tracing::info,
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
 }
 
 fn start_ui(serial: &str, config_manager: ConfigManager, shutdown_rx: Receiver<()>) -> Result<()> {
-    let toolbar_width = Toolbar::width();
+    let toolbar_width = SAideApp::toolbar_width();
     let window_width = config_manager.config().general.window_width;
     let window_height = config_manager.config().general.window_height;
 

@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        config::mapping::{KeyMapping, MappingAction, Mappings, Modifiers, Profile, ScrcpyAction},
+        config::mapping::{Modifiers, ProfileRef, ScrcpyAction},
         controller::{
             android_keycode::{keycode as kc, metastate},
             control_sender::ControlSender,
@@ -12,18 +12,10 @@ use {
         core::coords::{MappingCoordSys, ScrcpyCoordSys},
         error::Result,
     },
-    arc_swap::ArcSwap,
     egui::Key,
-    parking_lot::RwLock,
-    std::{collections::HashMap, sync::Arc},
-    tracing::{info, trace, warn},
+    std::collections::HashMap,
+    tracing::trace,
 };
-
-#[derive(Debug, Clone)]
-pub enum ProfileOperationResult {
-    Success,
-    Conflict,
-}
 
 lazy_static::lazy_static! {
     pub static ref EGUI_TO_ANDROID_KEY: HashMap<Key, u8> = {
@@ -111,16 +103,10 @@ lazy_static::lazy_static! {
 
 /// Keyboard mapping state
 pub struct KeyboardMapper {
-    config: Arc<Mappings>,
-
     sender: ControlSender,
 
-    avail_profiles: RwLock<Vec<Arc<Profile>>>,
-
-    active_profile: ArcSwap<Option<Arc<Profile>>>,
-
     /// Active mappings for runtime use, converted to scrcpy video coordinates
-    scrcpy_mappings: RwLock<HashMap<Key, ScrcpyAction>>,
+    mappings: HashMap<Key, ScrcpyAction>,
 
     /// Scrcpy capture orientation state
     capture_orientation: Option<u32>,
@@ -128,69 +114,28 @@ pub struct KeyboardMapper {
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(
-        config: Arc<Mappings>,
-        sender: ControlSender,
-        capture_orientation: Option<u32>,
-    ) -> Self {
+    pub fn new(sender: ControlSender, capture_orientation: Option<u32>) -> Self {
         Self {
-            config,
             sender,
-            avail_profiles: RwLock::new(Vec::new()),
-            active_profile: ArcSwap::from_pointee(None),
-            scrcpy_mappings: RwLock::new(HashMap::new()),
+            mappings: HashMap::new(),
             capture_orientation,
         }
     }
 
-    /// Refresh available profiles based on device serial and rotation
-    ///
-    /// # Parameters
-    /// - `device_serial`: current device serial
-    /// - `device_rotation`: current device rotation (0, 1, 2, 3)
-    pub fn refresh_profiles(&self, device_serial: &str, device_rotation: u32) {
-        let mut avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
+    /// Update mappings from profile, converting to scrcpy video coordinates
+    pub fn update(
+        &mut self,
+        profile: &ProfileRef,
+        scrcpy_coords: &ScrcpyCoordSys,
+        mapping_coords: &MappingCoordSys,
+    ) {
+        let profile = profile.read();
+        let name = profile.name();
+        self.mappings = profile
+            .mappings()
+            .to_scrcpy_mapping(scrcpy_coords, mapping_coords);
 
-        if avail_profiles.is_empty() {
-            info!(
-                "No matching profiles found for device serial '{}' with rotation {}.",
-                device_serial, device_rotation
-            );
-            info!("Disable custom key mappings for this device/rotation.");
-
-            self.active_profile.store(Arc::new(None));
-            self.scrcpy_mappings.write().clear();
-        } else {
-            avail_profiles.sort_by_key(|b| std::cmp::Reverse(b.last_modified));
-
-            // Remove duplicate profiles with same name (keep most recent by last_modified)
-            let original_count = avail_profiles.len();
-            let mut seen = std::collections::HashSet::new();
-            avail_profiles.retain(|p| seen.insert(p.name.clone()));
-
-            if avail_profiles.len() < original_count {
-                let removed = original_count - avail_profiles.len();
-                warn!(
-                    "Found {} duplicate profile(s) with same name in config file. Using most recent.",
-                    removed
-                );
-            }
-
-            info!(
-                "Found {} matching profiles for device serial '{}' with rotation {}.",
-                avail_profiles.len(),
-                device_serial,
-                device_rotation
-            );
-
-            let profile = avail_profiles[0].clone();
-            self.active_profile.store(Arc::new(Some(profile.clone())));
-            info!("Active profile set to: {}", profile.name);
-
-            self.apply_active_profile();
-        }
-
-        *self.avail_profiles.write() = avail_profiles;
+        trace!("Updated keyboard mappings from profile '{name}'",);
     }
 
     /// Handle keyboard event, returns true if handled
@@ -266,7 +211,7 @@ impl KeyboardMapper {
     /// Handle custom key mapping event, returns true if handled
     pub fn handle_custom_keymapping_event(&self, key: &Key) -> Result<bool> {
         // Use pixel-converted mappings for control
-        if let Some(action) = self.scrcpy_mappings.read().get(key) {
+        if let Some(action) = self.mappings.get(key) {
             trace!(
                 "Handling custom key mapping event: {:?} -> {:?}",
                 key, action
@@ -341,469 +286,5 @@ impl KeyboardMapper {
             ScrcpyAction::Ignore => {}
         }
         Ok(())
-    }
-
-    /// Get list of available profiles
-    pub fn get_avail_profiles(&self) -> Vec<String> {
-        let avail_profiles = self.avail_profiles.read();
-        avail_profiles.iter().map(|p| p.name.clone()).collect()
-    }
-
-    /// Get active profile (for read-only access)
-    pub fn get_active_profile(&self) -> Option<Arc<Profile>> {
-        self.active_profile.load().as_ref().clone()
-    }
-
-    pub fn get_active_profile_idx(&self) -> Option<usize> {
-        let avail = self.avail_profiles.read();
-        let active_name = self.get_active_profile().map(|p| p.name.clone());
-
-        if let Some(name) = active_name {
-            avail.iter().position(|p| p.name == name)
-        } else {
-            None
-        }
-    }
-
-    /// Get active profile name
-    pub fn get_active_profile_name(&self) -> Option<String> {
-        self.get_active_profile().map(|p| p.name.clone())
-    }
-
-    /// Get active profile mappings (percentage coordinates)
-    pub fn get_active_mappings(&self) -> Option<Arc<KeyMapping>> {
-        self.active_profile
-            .load()
-            .as_ref()
-            .clone()
-            .map(|p| Arc::clone(&p.mappings))
-    }
-
-    /// Apply active profile by converting percentage mappings to pixel coordinates
-    pub fn apply_active_profile(&self) {
-        let active_profile = match self.get_active_profile() {
-            Some(p) => p,
-            None => {
-                trace!("No active profile to apply.");
-                return;
-            }
-        };
-        let mut active_mappings = HashMap::new();
-        let (video_width, video_height) = self.sender.get_screen_size();
-
-        // Create coordinate systems for conversion
-        let mapping_sys = MappingCoordSys::new(active_profile.rotation);
-        let scrcpy_sys = ScrcpyCoordSys::new(video_width, video_height, self.capture_orientation);
-
-        for (key, action) in active_profile.mappings.read().iter() {
-            let scrcpy_action =
-                ScrcpyAction::from_mapping_action(action, &scrcpy_sys, &mapping_sys);
-            active_mappings.insert(*key, scrcpy_action);
-        }
-
-        if let Some(capture_orientation) = self.capture_orientation {
-            trace!(
-                "Converted {} mappings from percentage (rotation={}) to {}x{} pixels (capture locked to {}°)",
-                active_mappings.len(),
-                active_profile.rotation,
-                video_width,
-                video_height,
-                capture_orientation * 90
-            );
-        } else {
-            trace!(
-                "Converted {} mappings from percentage to {}x{} pixels (no transform)",
-                active_mappings.len(),
-                video_width,
-                video_height
-            );
-        }
-
-        *self.scrcpy_mappings.write() = active_mappings;
-    }
-
-    /// Get mapping action for a given key from the active profile
-    pub fn get_mapping(&self, key: &Key) -> Option<MappingAction> {
-        if let Some(active_profile) = self.get_active_profile()
-            && let Some(action) = active_profile.mappings.read().get(key)
-        {
-            return Some(action.clone());
-        }
-        None
-    }
-
-    /// Add a new mapping to the active profile
-    pub fn add_mapping(&self, key: Key, action: MappingAction) {
-        if let Some(active_profile) = self.get_active_profile() {
-            active_profile.mappings.write().insert(key, action.clone());
-
-            let (video_width, video_height) = self.sender.get_screen_size();
-
-            let mapping_sys = MappingCoordSys::new(active_profile.rotation);
-            let scrcpy_sys =
-                ScrcpyCoordSys::new(video_width, video_height, self.capture_orientation);
-            let scrcpy_action =
-                ScrcpyAction::from_mapping_action(&action, &scrcpy_sys, &mapping_sys);
-            self.add_scrcpy_mapping(key, scrcpy_action);
-
-            self.update_profile_last_modified(&active_profile.name);
-        }
-    }
-
-    /// Delete a mapping from the active profile
-    pub fn delete_mapping(&self, key: &Key) {
-        if let Some(active_profile) = self.get_active_profile() {
-            active_profile.mappings.write().remove(key);
-
-            self.delete_scrcpy_mapping(key);
-
-            self.update_profile_last_modified(&active_profile.name);
-        }
-    }
-
-    fn update_profile_last_modified(&self, profile_name: &str) {
-        use chrono::Utc;
-
-        let mut profiles = self.config.profiles.write();
-        if let Some(profile) = profiles.iter_mut().find(|p| p.name == profile_name) {
-            let updated_profile = Arc::new(Profile {
-                name: profile.name.clone(),
-                device_serial: profile.device_serial.clone(),
-                rotation: profile.rotation,
-                last_modified: Utc::now(),
-                mappings: Arc::clone(&profile.mappings),
-            });
-
-            *profile = Arc::clone(&updated_profile);
-
-            // Also update avail_profiles cache to keep it in sync
-            let device_serial = profile.device_serial.clone();
-            let device_rotation = profile.rotation;
-            drop(profiles);
-
-            let mut avail = self.avail_profiles.write();
-            if let Some(idx) = avail.iter().position(|p| p.name == profile_name) {
-                avail[idx] = Arc::clone(&updated_profile);
-            }
-            drop(avail);
-
-            // Also update active_profile if this is the active profile
-            if let Some(active) = self.get_active_profile()
-                && active.name == profile_name
-            {
-                self.active_profile.store(Arc::new(Some(updated_profile)));
-            }
-
-            trace!(
-                "Updated last_modified for profile '{}' (device: {}, rotation: {})",
-                profile_name, device_serial, device_rotation
-            );
-        }
-    }
-
-    /// Add a new scrcpy mapping (pixel coordinates)
-    fn add_scrcpy_mapping(&self, key: Key, action: ScrcpyAction) {
-        self.scrcpy_mappings.write().insert(key, action);
-    }
-
-    /// Delete a scrcpy mapping (pixel coordinates)
-    fn delete_scrcpy_mapping(&self, key: &Key) { self.scrcpy_mappings.write().remove(key); }
-
-    /// Create a new profile for current device and rotation
-    ///
-    /// # Parameters
-    /// - `device_serial`: current device serial
-    /// - `device_rotation`: current device rotation (0, 1, 2, 3)
-    ///
-    /// # Returns
-    /// - `Some(ProfileOperationResult::Success(name))` if profile created successfully
-    /// - `Some(ProfileOperationResult::Conflict(name))` if profile name already exists
-    /// - `None` if device info is invalid
-    pub fn create_profile(
-        &self,
-        device_serial: &str,
-        device_rotation: u32,
-        profile_name: &str,
-    ) -> Option<ProfileOperationResult> {
-        if device_serial.is_empty() || device_rotation > 3 {
-            return None;
-        }
-
-        let profiles = self.config.profiles.read();
-        if profiles.iter().any(|p| p.name == profile_name) {
-            return Some(ProfileOperationResult::Conflict);
-        }
-        drop(profiles);
-
-        let new_profile = Arc::new(Profile {
-            name: profile_name.into(),
-            device_serial: device_serial.to_string(),
-            rotation: device_rotation,
-            last_modified: chrono::Utc::now(),
-            mappings: Arc::new(KeyMapping::default()),
-        });
-
-        self.config.add_profile(Arc::clone(&new_profile));
-
-        self.active_profile.store(Arc::new(Some(new_profile)));
-        self.scrcpy_mappings.write().clear();
-
-        let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
-        *self.avail_profiles.write() = avail_profiles;
-
-        info!("Created new profile: {}", profile_name);
-        Some(ProfileOperationResult::Success)
-    }
-
-    // pub fn create_profile_with_name(
-    //     &self,
-    //     device_serial: &str,
-    //     device_rotation: u32,
-    //     profile_name: &str,
-    // ) -> Option<String> {
-    //     if device_serial.is_empty() || device_rotation > 3 || profile_name.is_empty() {
-    //         return None;
-    //     }
-
-    //     // Check if profile exists and log overwrite
-    //     let existed = {
-    //         let profiles = self.config.profiles.read();
-    //         profiles.iter().any(|p| p.name == profile_name)
-    //     };
-    //     if existed {
-    //         warn!("Profile '{}' already exists, overwriting...", profile_name);
-    //     }
-
-    //     // Remove existing profile with same name if any, then add new one
-    //     self.config.remove_profile(profile_name);
-
-    //     let new_profile = Arc::new(Profile {
-    //         name: profile_name.to_string(),
-    //         device_serial: device_serial.to_string(),
-    //         rotation: device_rotation,
-    //         last_modified: chrono::Utc::now(),
-    //         mappings: Arc::new(KeyMapping::default()),
-    //     });
-
-    //     self.config.add_profile(Arc::clone(&new_profile));
-
-    //     self.active_profile.store(Arc::new(Some(new_profile)));
-    //     self.scrcpy_mappings.write().clear();
-
-    //     let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
-    //     *self.avail_profiles.write() = avail_profiles;
-
-    //     if existed {
-    //         info!("Overwrote existing profile: {}", profile_name);
-    //     } else {
-    //         info!("Created new profile: {}", profile_name);
-    //     }
-    //     Some(profile_name.to_string())
-    // }
-
-    /// Delete the active profile
-    ///
-    /// # Returns
-    /// - `true` if profile deleted successfully
-    /// - `false` if no active profile
-    pub fn delete_active_profile(&self) -> bool {
-        let Some(active_profile) = self.get_active_profile() else {
-            return false;
-        };
-
-        let profile_name = active_profile.name.clone();
-
-        // Remove from config
-        self.config.remove_profile(&profile_name);
-
-        // Clear active profile
-        self.active_profile.store(Arc::new(None));
-        self.scrcpy_mappings.write().clear();
-
-        info!("Deleted profile: {}", profile_name);
-        true
-    }
-
-    pub fn rename_active_profile(&self, new_name: &str) -> ProfileOperationResult {
-        if new_name.trim().is_empty() {
-            return ProfileOperationResult::Conflict;
-        }
-
-        let Some(active_profile) = self.get_active_profile() else {
-            return ProfileOperationResult::Conflict;
-        };
-
-        let old_name = active_profile.name.clone();
-
-        let profiles = self.config.profiles.read();
-        if profiles
-            .iter()
-            .any(|p| p.name == new_name && p.name != old_name)
-        {
-            return ProfileOperationResult::Conflict;
-        }
-        drop(profiles);
-
-        if !self.config.rename_profile(&old_name, new_name) {
-            return ProfileOperationResult::Conflict;
-        }
-
-        let updated_profile = Arc::new(Profile {
-            name: new_name.to_string(),
-            device_serial: active_profile.device_serial.clone(),
-            rotation: active_profile.rotation,
-            last_modified: chrono::Utc::now(),
-            mappings: Arc::clone(&active_profile.mappings),
-        });
-
-        self.active_profile
-            .store(Arc::new(Some(updated_profile.clone())));
-
-        let device_serial = &active_profile.device_serial;
-        let device_rotation = active_profile.rotation;
-        let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
-        *self.avail_profiles.write() = avail_profiles;
-
-        info!("Renamed profile from '{}' to '{}'", old_name, new_name);
-        ProfileOperationResult::Success
-    }
-
-    // pub fn rename_active_profile_force(&self, new_name: &str) -> bool {
-    //     if new_name.trim().is_empty() {
-    //         return false;
-    //     }
-
-    //     let Some(active_profile) = self.get_active_profile() else {
-    //         return false;
-    //     };
-
-    //     let old_name = active_profile.name.clone();
-
-    //     // Remove any existing profile with the target name to avoid duplicates
-    //     // rename_profile doesn't check for name conflicts
-    //     self.config.remove_profile(new_name);
-
-    //     if !self.config.rename_profile(&old_name, new_name) {
-    //         return false;
-    //     }
-
-    //     let updated_profile = Arc::new(Profile {
-    //         name: new_name.to_string(),
-    //         device_serial: active_profile.device_serial.clone(),
-    //         rotation: active_profile.rotation,
-    //         last_modified: chrono::Utc::now(),
-    //         mappings: Arc::clone(&active_profile.mappings),
-    //     });
-
-    //     self.active_profile
-    //         .store(Arc::new(Some(updated_profile.clone())));
-
-    //     let device_serial = &active_profile.device_serial;
-    //     let device_rotation = active_profile.rotation;
-    //     let avail_profiles = self.config.filter_profiles(device_serial, device_rotation);
-    //     *self.avail_profiles.write() = avail_profiles;
-
-    //     info!(
-    //         "Force renamed profile from '{}' to '{}'",
-    //         old_name, new_name
-    //     );
-    //     true
-    // }
-
-    pub fn switch_profile_next(&self) -> bool {
-        let avail = self.avail_profiles.read();
-        if avail.len() <= 1 {
-            return false;
-        }
-
-        let current_name = self.get_active_profile().map(|p| p.name.clone());
-
-        let profile_names: Vec<String> = avail.iter().map(|p| p.name.clone()).collect();
-        trace!(
-            "switch_profile_next: available_profiles={:?}, current={}",
-            profile_names,
-            current_name.as_deref().unwrap_or("None")
-        );
-
-        if let Some(name) = current_name
-            && let Some(idx) = avail.iter().position(|p| p.name == name)
-        {
-            let next_idx = (idx + 1) % avail.len();
-            let next_profile = avail[next_idx].clone();
-
-            trace!(
-                "switch_profile_next: current_idx={}, next_idx={}, next_profile={}",
-                idx, next_idx, next_profile.name
-            );
-
-            drop(avail);
-
-            self.active_profile
-                .store(Arc::new(Some(next_profile.clone())));
-            self.apply_active_profile();
-            info!("Switched to next profile: {}", next_profile.name);
-            return true;
-        }
-        false
-    }
-
-    pub fn switch_profile_prev(&self) -> bool {
-        let avail = self.avail_profiles.read();
-        if avail.len() <= 1 {
-            return false;
-        }
-
-        let current_name = self.get_active_profile().map(|p| p.name.clone());
-
-        let profile_names: Vec<String> = avail.iter().map(|p| p.name.clone()).collect();
-        trace!(
-            "switch_profile_prev: available_profiles={:?}, current={}",
-            profile_names,
-            current_name.as_deref().unwrap_or("None")
-        );
-
-        if let Some(name) = current_name
-            && let Some(idx) = avail.iter().position(|p| p.name == name)
-        {
-            let prev_idx = if idx == 0 { avail.len() - 1 } else { idx - 1 };
-            let prev_profile = avail[prev_idx].clone();
-
-            trace!(
-                "switch_profile_prev: current_idx={}, prev_idx={}, prev_profile={}",
-                idx, prev_idx, prev_profile.name
-            );
-
-            drop(avail);
-
-            self.active_profile
-                .store(Arc::new(Some(prev_profile.clone())));
-            self.apply_active_profile();
-            info!("Switched to previous profile: {}", prev_profile.name);
-            return true;
-        }
-        false
-    }
-
-    pub fn switch_to_profile(&self, profile_name: &str) -> bool {
-        let avail = self.avail_profiles.read();
-        if let Some(profile) = avail.iter().find(|p| p.name == profile_name) {
-            let target_profile = profile.clone();
-            drop(avail);
-
-            self.active_profile
-                .store(Arc::new(Some(target_profile.clone())));
-            self.apply_active_profile();
-            info!("Switched to profile: {}", target_profile.name);
-            return true;
-        }
-        false
-    }
-
-    pub fn get_available_profile_names(&self) -> Vec<String> {
-        self.avail_profiles
-            .read()
-            .iter()
-            .map(|p| p.name.clone())
-            .collect()
     }
 }
