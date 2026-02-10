@@ -1,3 +1,7 @@
+//! UI theme management, including color definitions and theme mode handling.
+//!
+//! Supports dark and light themes, with an option to automatically match the system theme. Colors
+//! for various UI elements are defined based on the active theme.
 use egui::Color32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
