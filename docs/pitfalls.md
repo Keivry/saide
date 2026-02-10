@@ -1044,6 +1044,124 @@ match rotation {
 
 ---
 
+## 过程宏类型推导陷阱 (Procedural Macro Type Inference Pitfalls)
+
+### ✅ FIXED: action! 宏闭包类型推导失败 (2026-02-09)
+
+**位置**: `crates/egui-action-macro/src/lib.rs:508-522` (已修复)  
+**问题**: `action!` 宏的闭包语法生成的代码使用 `&mut _` 类型占位符，导致编译器无法推导具体类型
+
+**症状**:
+
+```rust
+// 使用闭包语法时编译失败
+action!(null |app: &mut SAideApp, _arg| {});
+// error[E0308]: mismatched types
+//   expected `()`, found `Box<dyn Fn(&mut _, &...) + Send + Sync>`
+```
+
+**根本原因**:
+
+修复前的 `generate_typed_closure()` 直接使用闭包并强制类型转换：
+
+```rust
+Action::Command(Box::new(Command::#variant(Box::new(
+    #closure as Box<dyn Fn(&mut _, &ActionArgs) -> #return_type + Send + Sync + 'static>
+    //                     ^^^ 类型占位符，宏展开时无法推导
+))))
+```
+
+问题在于：
+1. `&mut _` 是类型占位符，期望编译器推导
+2. 在宏展开阶段，编译器还没有足够上下文推导具体类型
+3. 返回的是 `Box<dyn Fn>` 而不是 `Action<App>`
+
+**修复方案** (遵循 Oracle 建议):
+
+使用**类型化 shim 函数**模式（与 `generate_typed_path()` 一致）：
+
+```rust
+fn generate_typed_closure(mode: ActionMode, closure: ExprClosure) -> TokenStream {
+    let variant = mode.command_variant();
+    let return_type = mode.return_type();
+
+    // 从闭包的第一个参数提取显式类型注解
+    let first_param_type = closure.inputs.first().and_then(|pat| {
+        if let Pat::Type(pat_type) = pat {
+            Some(&pat_type.ty)  // 例如：&mut SAideApp
+        } else {
+            None
+        }
+    });
+
+    if let Some(app_type) = first_param_type {
+        // 从 &mut T 中提取 T
+        let inner_type = if let Type::Reference(type_ref) = &**app_type {
+            &type_ref.elem  // 提取 SAideApp
+        } else {
+            app_type
+        };
+
+        // 生成带显式类型的 shim 函数，在宏展开时固定 App = SAideApp
+        TokenStream::from(quote! {
+            {
+                #[allow(unused_imports)]
+                use egui_action::{ActionArgs, Action, Command};
+
+                fn __egui_action_closure_cb(app: &mut #inner_type, args: &ActionArgs) -> #return_type {
+                    (#closure)(app, args)
+                }
+
+                Action::from(Command::#variant(Box::new(__egui_action_closure_cb)))
+            }
+        })
+    } else {
+        // 如果无法提取类型，生成编译错误
+        TokenStream::from(quote! {
+            compile_error!("action! closure requires explicit type annotation on first parameter: |app: &mut YourType, args| {{ ... }}");
+        })
+    }
+}
+```
+
+**关键改进**:
+
+1. **从闭包参数提取类型**: 解析 `|app: &mut SAideApp, _arg|` 中的 `SAideApp`
+2. **生成 shim 函数**: `fn __egui_action_closure_cb(app: &mut SAideApp, args: &ActionArgs)` 在宏展开时固定类型
+3. **使用 `Action::from()`**: 返回 `Action<SAideApp>` 而不是 `Box<dyn Fn>`
+4. **编译时错误提示**: 如果缺少类型注解，给出明确的错误信息
+
+**验证**:
+
+```bash
+# 修复后编译成功，仅有未使用变量警告
+cargo check --lib
+# warning: unused variable: `app`
+#   --> src/core/ui/editor.rs:23:36
+#    |
+# 23 |         sc!("F2") => action!(null |app: &mut SAideApp, _arg| {});
+#    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_app`
+
+# 无 E0282 (type annotations needed) 错误
+# 无 E0308 (mismatched types) 错误
+```
+
+**教训**:
+
+1. **过程宏中避免使用类型占位符 `_`**: 宏展开阶段编译器上下文不足，无法推导
+2. **使用 shim 函数固定泛型类型**: 在宏中生成带显式类型的中间函数，提前解析类型
+3. **遵循已有模式**: `generate_typed_path()` 已经使用 shim 模式成功解决类型推导问题，闭包语法应保持一致
+4. **从 AST 提取类型信息**: 使用 `syn` crate 的 `Pat::Type` 和 `Type::Reference` 解析用户提供的类型注解
+5. **提供清晰的编译错误**: 当宏无法处理输入时，生成 `compile_error!` 而不是让编译器产生难以理解的错误信息
+
+**相关参考**:
+
+- Oracle 咨询会话: `ses_3bf9be01fffe3Yu6FV6O226Znj`
+- Path 语法修复: commit d7a8f3c (使用 shim 函数解决 E0282 错误)
+- egui-action 类型系统: `Action<App>` = `Command(Box<dyn Execute<App>>)` | `Serial(Vec<...>)`
+
+---
+
 ## ADB 集成陷阱
 
 ### ✅ FIXED: 假设 ADB 在 PATH 中 (commit ec5596e)

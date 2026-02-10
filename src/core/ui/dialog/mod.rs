@@ -108,7 +108,7 @@ impl SAideApp {
         dialog.add_message(&t!("mapping-config-dialog-delete-message"));
 
         match dialog.draw(ctx) {
-            DialogState::Confirmed => true,
+            DialogState::Comfirmed => true,
             _ => false,
         }
     }

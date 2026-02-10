@@ -14,6 +14,7 @@ use {
     },
     crate::{config::mapping::KeyMapping, sc, shortcut::ShortcutMap, shortcuts, t},
     eframe::egui::{self, Color32, FontId, Pos2, Stroke},
+    egui_action_macro::action,
     lazy_static::lazy_static,
 };
 
@@ -21,19 +22,19 @@ lazy_static! {
     pub static ref MAPPING_EDITOR_SHORTCUTS: ShortcutMap<SAideApp> = shortcuts! {
         sc!("F2") => action!(serial [
             action!(string SAideApp::show_rename_profile_dialog),
-            action!(SAideApp::rename_profile),
+            action!(null SAideApp::rename_profile),
         ]);
         sc!("F3") => action!(serial [
             action!(string SAideApp::show_create_profile_dialog),
-            action!(SAideApp::create_profile),
+            action!(null SAideApp::create_profile),
         ]);
         sc!("F4") => action!(serial [
             action!(bool SAideApp::show_delete_profile_dialog),
-            action!(SAideApp::delete_profile),
+            action!(null SAideApp::delete_profile),
         ]);
         sc!("F5") => action!(serial [
             action!(string SAideApp::show_save_profile_as_dialog),
-            action!(SAideApp::save_profile_as),
+            action!(null SAideApp::save_profile_as),
         ]);
     };
 }

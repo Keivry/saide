@@ -7,21 +7,22 @@ mod player;
 mod theme;
 mod toolbar;
 
-pub use app::SAideApp;
 use {
-    crate::{action::action, sc, shortcut::ShortcutMap, shortcuts},
+    crate::{sc, shortcut::ShortcutMap, shortcuts},
+    egui_action_macro::action,
     lazy_static::lazy_static,
 };
+pub use {app::SAideApp, theme::ThemeMode};
 
 lazy_static! {
     pub static ref DEFAULT_SHORTCUTS: ShortcutMap<SAideApp> = shortcuts! {
         sc!("F1") => action!(null SAideApp::show_help_dialog);
         sc!("F6") => action!(serial [
-            action!(usize show_profile_selection),
-            action!(SAideApp::switch_profile)
+            action!(usize SAideApp::show_profile_selection_dialog),
+            action!(null SAideApp::switch_profile)
         ]);
-        sc!("F7") => action!(SAideApp::prev_profile);
-        sc!("F8") => action!(SAideApp::next_profile);
+        sc!("F7") => action!(null SAideApp::prev_profile);
+        sc!("F8") => action!(null SAideApp::next_profile);
     };
 }
 
