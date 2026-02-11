@@ -1,14 +1,15 @@
 //! Test automatic GPU detection and decoder selection
 
+mod utils;
 use {
     anyhow::Result,
     saide::{
-        ScrcpyConnection,
-        ServerParams,
         decoder::{AutoDecoder, VideoDecoder},
-        detect_gpu,
+        gpu::detect_gpu,
+        scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
     tracing::info,
+    utils::get_device_serial,
 };
 
 fn main() -> Result<()> {
@@ -21,9 +22,7 @@ fn main() -> Result<()> {
     let gpu = detect_gpu();
     info!("Detected GPU: {:?}", gpu);
 
-    let serial = std::env::args()
-        .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("Usage: test_auto_decoder <device_serial>"))?;
+    let serial = get_device_serial()?;
 
     let server_jar = "3rd-party/scrcpy-server-v3.3.3";
     let params = ServerParams::default();

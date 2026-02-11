@@ -12,8 +12,6 @@ use {
     eframe::{egui, egui_wgpu},
     parking_lot::Mutex,
     saide::{
-        ScrcpyConnection,
-        ServerParams,
         avsync::AVSync,
         decoder::{
             AudioDecoder,
@@ -25,6 +23,7 @@ use {
             VideoDecoder,
             new_nv12_render_callback,
         },
+        scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
     std::{io::Read, sync::Arc, thread},
     tracing::{debug, error, info},

@@ -5,9 +5,8 @@ mod utils;
 use {
     anyhow::Result,
     saide::{
-        ScrcpyConnection,
-        ServerParams,
         decoder::{AudioDecoder, AudioPlayer, OpusDecoder},
+        scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
     std::time::Duration,
     utils::get_device_serial,

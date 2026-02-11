@@ -3,7 +3,11 @@
 mod utils;
 use {
     anyhow::Result,
-    saide::{ScrcpyConnection, ServerParams, VideoPacket},
+    saide::scrcpy::{
+        connection::ScrcpyConnection,
+        protocol::video::VideoPacket,
+        server::ServerParams,
+    },
     utils::get_device_serial,
 };
 

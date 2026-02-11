@@ -2,7 +2,10 @@
 //!
 //! 测试控制协议和视频协议的正确性
 
-use saide::{ControlMessage, VideoPacket, scrcpy::protocol::control::AndroidKeyEventAction};
+use saide::scrcpy::protocol::{
+    control::{AndroidKeyEventAction, ControlMessage},
+    video::VideoPacket,
+};
 
 fn main() -> anyhow::Result<()> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

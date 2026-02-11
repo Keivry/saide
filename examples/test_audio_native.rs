@@ -1,13 +1,14 @@
 //! Test audio streaming using native libopus decoder
 
+mod utils;
 use {
     anyhow::Result,
     saide::{
-        ScrcpyConnection,
-        ServerParams,
         decoder::{AudioDecoder, AudioPlayer, OpusDecoder},
+        scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
     std::time::Duration,
+    utils::get_device_serial,
 };
 
 fn main() -> Result<()> {
@@ -19,9 +20,7 @@ fn main() -> Result<()> {
     println!("🎵 Native libopus Audio Test");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    let serial = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "10AF971ZLN004SU".to_string());
+    let serial = get_device_serial()?;
     println!("📱 Device: {}", serial);
 
     let server_jar = "3rd-party/scrcpy-server-v3.3.3";
