@@ -15,7 +15,7 @@ pub fn find_nearest_mapping(
 ) -> Option<(Key, MappingPos)> {
     let mut nearest: Option<(Key, MappingPos, f32)> = None;
 
-    for (key, action) in mappings.read().iter() {
+    for (key, action) in mappings.iter() {
         if let Some(p) = extract_position(action) {
             let dx = source.x - p.x;
             let dy = source.y - p.y;

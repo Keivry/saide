@@ -179,7 +179,7 @@ impl ProfileManager {
     }
 
     /// Rename the active profile, ensuring the new name is unique and there is an active profile
-    pub fn rename_profile(&self, new_name: &str) -> Result<()> {
+    pub fn rename_active_profile(&self, new_name: &str) -> Result<()> {
         self.ensure_profile_not_exists(new_name)?;
 
         self.get_active_profile()

@@ -58,7 +58,7 @@ fn main() -> Result<()> {
 
     let _audio_stream = conn
         .take_audio_stream()
-        .ok_or_else(|| anyhow::anyhow!("Audio not available - requires Android 11+ (API 30+)"))?;
+        .ok_or_else(|| anyhow::anyhow!("Audio not available - requires Angdroid 11+ (API 30+)"))?;
 
     // Initialize Opus decoder and audio player
     println!("\n🎧 Initializing audio...");

@@ -12,13 +12,21 @@ use {
 };
 
 /// Key to MappingAction map with serialization support
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct KeyMapping {
     inner: HashMap<Key, MappingAction>,
 }
 
 impl KeyMapping {
     pub fn new() -> Self { KeyMapping::default() }
+
+    pub fn iter(&self) -> KeyMappingIterator<'_> {
+        KeyMappingIterator {
+            inner: self.inner.iter(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool { self.inner.is_empty() }
 
     /// Get the mapping action for a given key, if it exists
     pub fn get(&self, key: &Key) -> Option<MappingAction> { self.inner.get(key).cloned() }
@@ -43,7 +51,7 @@ impl KeyMapping {
             .iter()
             .map(|(key, action)| {
                 (
-                    key.clone(),
+                    *key,
                     ScrcpyAction::from_mapping_action(action, scrcpy_coords, mapping_coords),
                 )
             })
@@ -95,10 +103,12 @@ impl Serialize for KeyMapping {
     }
 }
 
-impl Default for KeyMapping {
-    fn default() -> Self {
-        Self {
-            inner: HashMap::new(),
-        }
-    }
+pub struct KeyMappingIterator<'a> {
+    inner: std::collections::hash_map::Iter<'a, Key, MappingAction>,
+}
+
+impl<'a> Iterator for KeyMappingIterator<'a> {
+    type Item = (&'a Key, &'a MappingAction);
+
+    fn next(&mut self) -> Option<Self::Item> { self.inner.next() }
 }

@@ -13,7 +13,7 @@ const LIST_MAX_HEIGHT: f32 = 300.0;
 const BUTTON_SIZE: (f32, f32) = (80.0, 30.0);
 
 /// Represents the state of the dialog buttons
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ButtonState {
     NoAction,
     Comfirmed,
@@ -21,6 +21,7 @@ pub enum ButtonState {
 }
 
 // Represents the state of a widget in the dialog
+#[derive(Debug)]
 pub enum WidgetState {
     Empty,
     TextInput(String),
@@ -86,6 +87,7 @@ pub struct Widget {
 }
 
 /// Represents the state of the dialog
+#[derive(Debug)]
 pub enum DialogState {
     // Not initialized
     None,
@@ -111,6 +113,21 @@ pub enum DialogState {
 
     /// Confirmed with multiple widget states, stored in a HashMap with widget id as key
     WidgetsState(HashMap<String, WidgetState>),
+}
+
+impl DialogState {
+    /// Check if the dialog is confirmed, which means the user has taken a confirm action
+    pub fn is_confirmed(&self) -> bool {
+        !matches!(self, Self::None | Self::NoAction | Self::Cancelled)
+    }
+
+    /// Check if the dialog is cancelled, which means the user has taken a cancel action
+    pub fn is_cancelled(&self) -> bool { matches!(self, Self::Cancelled) }
+
+    /// Check if the dialog is closed, which means the user has taken an action to close the dialog
+    /// such as clicking confirm/cancel button or pressing Escape key, regardless of the dialog
+    /// state
+    pub fn is_closed(&self) -> bool { !matches!(self, Self::NoAction) }
 }
 
 /// Convert WidgetState to DialogState for single-widget dialogs, where the dialog state directly
@@ -152,11 +169,11 @@ impl DialogBody {
             DialogBody::Widgets(widgets) => match widgets.len() {
                 // Return confirmed state directly if there are no widgets,
                 // which is a common case for simple dialogs
-                0 => return DialogState::Comfirmed,
+                0 => DialogState::Comfirmed,
 
                 // If there's only one widget, return its state directly
                 // without wrapping in a HashMap
-                1 => return widgets[0].kind.state().into(),
+                1 => widgets[0].kind.state().into(),
 
                 // If there are multiple widgets, collect their states into a HashMap
                 _ => {

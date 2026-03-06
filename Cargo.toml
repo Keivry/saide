@@ -52,7 +52,7 @@ serde = { version = "1.0", features = ["derive"] }
 bytemuck = "1"
 
 byteorder = "1.5"
-rand = "0.9"
+rand = "0.10"
 tokio = { version = "1", features = [
     "net",
     "io-util",
@@ -73,7 +73,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 lazy_static = "1.5.0"
 parking_lot = "0.12.5"
-arc-swap = "1.8.0"
+arc-swap = "1.8.1"
 
 ffmpeg-next = "7.1"
 
@@ -88,7 +88,7 @@ chrono = { version = "0.4.43", features = ["serde"] }
 directories = "6"
 thiserror = "2"
 wait-timeout = "0.2.1"
-ctrlc = "3.5.1"
+ctrlc = "3.5.2"
 
 fluent-bundle = "0.16"
 intl-memoizer = "0.5"

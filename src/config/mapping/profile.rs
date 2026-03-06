@@ -7,7 +7,9 @@
 use {
     super::{Key, action::MappingAction, keymapping::KeyMapping},
     chrono::{DateTime, Utc},
+    parking_lot::RwLock,
     serde::{Deserialize, Serialize},
+    std::sync::Arc,
 };
 
 /// Profile for a specific device and rotation
@@ -42,6 +44,8 @@ impl Profile {
         }
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&Key, &MappingAction)> { self.mappings.iter() }
+
     pub fn name(&self) -> &str { &self.name }
 
     pub fn device_serial(&self) -> &str { &self.device_serial }
@@ -49,6 +53,8 @@ impl Profile {
     pub fn rotation(&self) -> u32 { self.rotation }
 
     pub fn mappings(&self) -> &KeyMapping { &self.mappings }
+
+    pub fn is_empty(&self) -> bool { self.mappings.is_empty() }
 
     /// Check if this profile matches the given device and rotation
     pub fn matches(&self, device_serial: &str, rotation: u32) -> bool {
@@ -91,3 +97,6 @@ impl Profile {
         self
     }
 }
+
+pub type ProfileRef = Arc<RwLock<Profile>>;
+pub type Profiles = Arc<RwLock<Vec<ProfileRef>>>;

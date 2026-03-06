@@ -7,6 +7,7 @@ impl Notifier {
     pub fn new() -> Self { Self {} }
 
     pub fn notify(&mut self, _message: &str) {
-        unimplemented!("Notifier::notify is not implemented yet");
+        // TODO: Implement a notification system that can display messages to the user. This could
+        // be done
     }
 }

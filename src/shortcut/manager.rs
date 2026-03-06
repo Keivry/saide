@@ -5,7 +5,8 @@
 use {
     egui::{Context, Key, Modifiers},
     egui_action::{Action, ActionArgs},
-    std::collections::HashMap,
+    parking_lot::RwLock,
+    std::{collections::HashMap, sync::Arc},
     thiserror::Error,
 };
 
@@ -50,13 +51,13 @@ impl<App> ShortcutScope<App> {
 
 /// Manages keyboard shortcuts and their associated actions.
 pub struct ShortcutManager<App> {
-    global: ShortcutMap<App>,
+    global: Arc<RwLock<ShortcutMap<App>>>,
     stack: Vec<ShortcutScope<App>>,
 }
 
 impl<App> ShortcutManager<App> {
     /// Creates a new ShortcutManager with the given global shortcuts.
-    pub fn new(global: ShortcutMap<App>) -> Self {
+    pub fn new(global: Arc<RwLock<ShortcutMap<App>>>) -> Self {
         Self {
             global,
             stack: Vec::new(),
@@ -71,7 +72,7 @@ impl<App> ShortcutManager<App> {
 
     /// Registers a global shortcut and its associated action.
     pub fn register_global(&mut self, sc: Shortcut, action: Action<App>) {
-        self.global.insert(sc, action);
+        self.global.write().insert(sc, action);
     }
 
     pub fn dispatch(&self, app: &mut App, ctx: &Context) -> Result<(), ShortcutError>
@@ -115,9 +116,10 @@ impl<App> ShortcutManager<App> {
                         continue;
                     }
 
-                    if let Some(action) = self.global.get(&sc) {
+                    if let Some(action) = self.global.read().get(&sc) {
                         // Only overwrite result if no error has occurred yet
                         if result.is_ok() {
+                            tracing::debug!("Triggering global shortcut: {:?}", sc);
                             result = try_execute(action, app, ctx);
                         }
                         consumed.push(sc);
@@ -151,12 +153,15 @@ pub fn shortcut(sc: &str) -> Shortcut {
 
     sc.split('+').for_each(|part| {
         let part = part.trim();
-        match part.to_lowercase().as_str() {
-            "ctrl" | "control" => mods.ctrl = true,
-            "alt" => mods.alt = true,
-            "shift" => mods.shift = true,
-            "meta" | "cmd" | "command" => mods.mac_cmd = true,
-            k => key = Key::from_name(k),
+        match part.to_uppercase().as_str() {
+            "CTRL" | "CONTROL" => mods.ctrl = true,
+            "ALT" => mods.alt = true,
+            "SHIFT" => mods.shift = true,
+            "META" | "CMD" | "COMMAND" => mods.mac_cmd = true,
+            k => {
+                tracing::trace!("Parsing key: {}", k);
+                key = Key::from_name(k)
+            }
         }
     });
 

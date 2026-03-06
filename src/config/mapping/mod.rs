@@ -15,15 +15,12 @@ pub use {
     keymapping::KeyMapping,
     mouse::{MouseButton, WheelDirection},
     parking_lot::RwLock,
-    profile::Profile,
+    profile::{Profile, ProfileRef, Profiles},
     std::sync::Arc,
 };
 
 pub type Key = egui::Key;
 pub type Modifiers = egui::Modifiers;
-
-pub type ProfileRef = Arc<RwLock<Profile>>;
-pub type Profiles = Arc<RwLock<Vec<ProfileRef>>>;
 
 /// Overall mappings configuration
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,7 +42,7 @@ pub struct MappingsConfig {
         serialize_with = "serialize_mutex_arc_vec",
         deserialize_with = "deserialize_profiles"
     )]
-    profiles: Profiles,
+    pub profiles: Profiles,
 }
 
 impl Default for MappingsConfig {

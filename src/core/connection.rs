@@ -5,7 +5,7 @@
 
 use {
     crate::{
-        config::SAideConfig,
+        config::{InputConfig, SAideConfig},
         controller::{control_sender::ControlSender, keyboard::KeyboardMapper, mouse::MouseMapper},
         decoder::AutoDecoder,
         error::{Result, SAideError},
@@ -196,32 +196,24 @@ pub struct InputManager;
 
 impl InputManager {
     /// Create keyboard mapper
-    pub fn create_keyboard_mapper<F>(
-        config: Arc<SAideConfig>,
-        control_sender: ControlSender,
-        capture_orientation: Option<u32>,
-        on_ready: F,
-    ) where
+    pub fn create_keyboard_mapper<F>(control_sender: ControlSender, on_ready: F)
+    where
         F: FnOnce(KeyboardMapper) + Send + 'static,
     {
         thread::spawn(move || {
-            let mapper =
-                KeyboardMapper::new(config.mappings.clone(), control_sender, capture_orientation);
+            let mapper = KeyboardMapper::new(control_sender);
             debug!("Keyboard mapper initialized with ControlSender");
             on_ready(mapper);
         });
     }
 
     /// Create mouse mapper
-    pub fn create_mouse_mapper<F>(
-        config: Arc<SAideConfig>,
-        control_sender: ControlSender,
-        on_ready: F,
-    ) where
+    pub fn create_mouse_mapper<F>(config: InputConfig, control_sender: ControlSender, on_ready: F)
+    where
         F: FnOnce(MouseMapper) + Send + 'static,
     {
         thread::spawn(move || {
-            let mapper = MouseMapper::new(control_sender, config.input.clone());
+            let mapper = MouseMapper::new(control_sender, config);
             debug!("Mouse mapper initialized with ControlSender");
             on_ready(mapper);
         });

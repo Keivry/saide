@@ -10,26 +10,34 @@ use {
                 InitEvent,
                 start_initialization,
             },
+            profile_manager::ProfileManager,
             state::{AppState, ConfigState, UIState},
             utils::find_nearest_mapping,
         },
-        editor::{EditorParams, MappingEditor},
+        SHORTCUT_MANAGER,
+        editor::MappingEditor,
         indicator::Indicator,
         player::{PlayerState, StreamPlayer},
         theme::AppColors,
         toolbar::{Toolbar, ToolbarEvent},
     },
     crate::{
-        config::mapping::{Key, KeyMapping, MappingAction, MouseButton, WheelDirection},
-        controller::{keyboard::ProfileOperationResult, mouse::MouseState},
+        config::{
+            SAideConfig,
+            mapping::{Key, KeyMapping, MappingAction, MouseButton, ScrcpyAction, WheelDirection},
+        },
+        controller::mouse::MouseState,
+        core::{
+            coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
+            ui::editor::EditorParams,
+        },
         error::Result,
-        modal::{DialogState, ModalDialog, WidgetState},
+        modal::{DialogState, ModalDialog},
         t,
         tf,
     },
     crossbeam_channel::{Receiver, bounded},
-    eframe::egui,
-    std::{collections::VecDeque, sync::Arc, thread, time::Instant},
+    std::{sync::Arc, thread, time::Instant},
     tokio_util::sync::CancellationToken,
     tracing::{debug, error, info, trace, warn},
 };
@@ -44,25 +52,27 @@ enum InitState {
 }
 
 pub struct SAideApp {
-    shutdown_rx: Receiver<()>,
-    shutdown_requested: bool,
+    pub(super) shutdown_rx: Receiver<()>,
+    pub(super) shutdown_requested: bool,
 
-    toolbar: Toolbar,
-    indicator: Indicator,
-    player: StreamPlayer,
+    pub(super) toolbar: Toolbar,
+    pub(super) indicator: Indicator,
+    pub(super) player: StreamPlayer,
 
-    dialog: Option<ModalDialog>,
-    mapping_editor: Option<MappingEditor>,
+    pub(super) dialog: Option<ModalDialog>,
+    pub(super) mapping_editor: Option<MappingEditor>,
 
-    app_state: AppState,
-    config_state: ConfigState,
-    ui_state: UIState,
+    pub(super) app_state: AppState,
+    pub(super) config_state: ConfigState,
+    pub(super) ui_state: UIState,
 
-    init_state: InitState,
-    init_instant: Option<Instant>,
-    init_rx: Option<Receiver<InitEvent>>,
+    pub(super) init_state: InitState,
+    pub(super) init_instant: Option<Instant>,
+    pub(super) init_rx: Option<Receiver<InitEvent>>,
 
-    last_paint_instant: Option<Instant>,
+    pub(super) last_paint_instant: Option<Instant>,
+
+    pub(super) profile_manager: ProfileManager,
 }
 
 impl SAideApp {
@@ -111,12 +121,12 @@ impl SAideApp {
             init_rx: None,
 
             last_paint_instant: None,
+
+            profile_manager: ProfileManager::new(&config.mappings.profiles),
         }
     }
 
-    pub fn config(&self) -> std::sync::Arc<crate::config::SAideConfig> {
-        self.config_state.config()
-    }
+    pub fn config(&self) -> Arc<SAideConfig> { self.config_state.config() }
 
     fn init(&mut self) {
         self.init_state = InitState::InProgress;
@@ -132,14 +142,6 @@ impl SAideApp {
             self.app_state.cancel_token.clone(),
         );
     }
-
-    pub fn state(&self) -> &AppState { &self.app_state }
-
-    pub fn is_dialog_open(&self) -> bool { self.dialog.is_some() }
-
-    pub fn open_dialog(&mut self, dialog: ModalDialog) { self.dialog = Some(dialog); }
-
-    pub fn is_mapping_editor_open(&self) -> bool { self.mapping_editor.is_some() }
 
     /// Check initialization progress and update state
     fn check_init_stage(&mut self, _ctx: &egui::Context) {
@@ -261,7 +263,7 @@ impl SAideApp {
                 let screen_w = monitor_size.x;
                 let screen_h = monitor_size.y;
 
-                Self::calculate_window_size(video_w, video_h, screen_w, screen_h)
+                calculate_window_size(video_w, video_h, screen_w, screen_h)
             } else {
                 (video_w, video_h)
             }
@@ -278,64 +280,6 @@ impl SAideApp {
             window_w as f32 + Toolbar::width(),
             window_h as f32,
         )));
-    }
-
-    /// Calculate appropriate window size based on video and screen dimensions
-    /// Returns (width, height) that fits within screen bounds
-    fn calculate_window_size(
-        video_w: u32,
-        video_h: u32,
-        screen_w: f32,
-        screen_h: f32,
-    ) -> (u32, u32) {
-        // Use 90% of screen dimensions as usable area
-        // to leave some margin for taskbars, docks, etc.
-        const SCREEN_MARGIN_RATIO: f32 = 0.9;
-
-        let usable_w = (screen_w * SCREEN_MARGIN_RATIO) as u32;
-        let usable_h = (screen_h * SCREEN_MARGIN_RATIO) as u32;
-
-        if video_w <= usable_w && video_h <= usable_h {
-            return (video_w, video_h);
-        }
-
-        let video_long = video_w.max(video_h);
-        let video_short = video_w.min(video_h);
-        let is_landscape = video_w >= video_h;
-
-        for &tier in crate::constant::VIDEO_RESOLUTION_TIERS {
-            if tier >= video_long {
-                continue;
-            }
-
-            let scale = tier as f32 / video_long as f32;
-            let scaled_long = tier;
-            let scaled_short = (video_short as f32 * scale) as u32;
-
-            let (candidate_w, candidate_h) = if is_landscape {
-                (scaled_long, scaled_short)
-            } else {
-                (scaled_short, scaled_long)
-            };
-
-            if candidate_w <= usable_w && candidate_h <= usable_h {
-                return (candidate_w, candidate_h);
-            }
-        }
-
-        let smallest_tier = crate::constant::VIDEO_RESOLUTION_TIERS
-            .last()
-            .copied()
-            .unwrap_or(640);
-        let scale = smallest_tier as f32 / video_long as f32;
-        let scaled_long = smallest_tier;
-        let scaled_short = (video_short as f32 * scale) as u32;
-
-        if is_landscape {
-            (scaled_long, scaled_short)
-        } else {
-            (scaled_short, scaled_long)
-        }
     }
 
     /// Rotate video by 90 degrees clockwise
@@ -365,8 +309,8 @@ impl SAideApp {
         debug!("Video rotated to {}", video_rotation);
     }
 
-    /// Toggle mapping configuration window
-    fn toggle_mapping_config(&mut self, _ctx: &egui::Context) {
+    /// Toggle mapping editor
+    fn toggle_editor(&mut self, _ctx: &egui::Context) {
         if self.mapping_editor.is_some() {
             self.mapping_editor = None;
         } else {
@@ -375,7 +319,7 @@ impl SAideApp {
     }
 
     /// Toggle keyboard custom mapping
-    fn toggle_keyboard_mapping(&mut self) {
+    fn toggle_custom_keyboard_mapping(&mut self) {
         self.config_state.toggle_keyboard_custom_mapping();
 
         // Update toolbar button state
@@ -388,8 +332,8 @@ impl SAideApp {
         );
     }
 
-    /// Toggle mapping visualization
-    fn toggle_mapping_visualization(&mut self) {
+    /// Toggle mapping visualization overlay
+    fn toggle_mapping_overlay(&mut self) {
         self.ui_state.toggle_mapping_visualization();
 
         self.toolbar
@@ -401,122 +345,7 @@ impl SAideApp {
         );
     }
 
-    pub fn get_active_profile_name(&self) -> Option<String> {
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            return None;
-        };
-
-        keyboard_mapper.get_active_profile_name()
-    }
-
-    pub(crate) fn create_profile(&mut self, profile_name: &str) {
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            error!("Keyboard mapper not initialized");
-            return;
-        };
-
-        let device_serial = self.app_state.device_serial();
-        let device_rotation = self.app_state.device_orientation();
-
-        match keyboard_mapper.create_profile(device_serial, device_rotation, profile_name) {
-            Some(ProfileOperationResult::Success) => {
-                info!("Profile created: {}", profile_name);
-
-                keyboard_mapper.refresh_profiles(device_serial, device_rotation);
-                self.indicator
-                    .update_active_profile(keyboard_mapper.get_active_profile_name());
-                self.save_config();
-            }
-            Some(ProfileOperationResult::Conflict) => self.show_profile_exists_dialog(profile_name),
-            None => {
-                error!("Failed to create profile");
-            }
-        }
-    }
-
-    pub(crate) fn delete_profile(&mut self) {
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            error!("Keyboard mapper not initialized");
-            return;
-        };
-
-        if keyboard_mapper.delete_active_profile() {
-            info!("Active profile deleted");
-
-            let device_serial = self.app_state.device_serial();
-            let device_rotation = self.app_state.device_orientation();
-            keyboard_mapper.refresh_profiles(device_serial, device_rotation);
-            self.indicator
-                .update_active_profile(keyboard_mapper.get_active_profile_name());
-
-            if let Err(e) = self.config_state.config_manager.save() {
-                error!("Failed to save config: {}", e);
-            } else {
-                info!("Config saved after profile deletion");
-            }
-        } else {
-            warn!("No active profile to delete");
-        }
-    }
-
-    pub fn rename_profile(&mut self, new_name: &str) {
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            error!("Keyboard mapper not initialized");
-            return;
-        };
-
-        match keyboard_mapper.rename_active_profile(&new_name) {
-            ProfileOperationResult::Success => {
-                info!("Profile renamed to: {}", new_name);
-
-                self.indicator
-                    .update_active_profile(Some(new_name.to_string()));
-
-                if let Err(e) = self.config_state.config_manager.save() {
-                    error!("Failed to save config: {}", e);
-                } else {
-                    info!("Config saved after profile rename");
-                }
-            }
-            ProfileOperationResult::Conflict => {
-                warn!("Profile rename conflict: {}", new_name);
-                self.show_profile_exists_dialog(&new_name);
-            }
-        }
-    }
-
-    pub fn save_profile_as(&mut self, new_name: &str) {
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            error!("Keyboard mapper not initialized");
-            return;
-        };
-
-        match keyboard_mapper.save_active_profile_as(new_name) {
-            Some(ProfileOperationResult::Success) => {
-                info!("Profile saved as: {}", new_name);
-
-                let device_serial = self.app_state.device_serial();
-                let device_rotation = self.app_state.device_orientation();
-                keyboard_mapper.refresh_profiles(device_serial, device_rotation);
-                self.indicator
-                    .update_active_profile(keyboard_mapper.get_active_profile_name());
-
-                if let Err(e) = self.config_state.config_manager.save() {
-                    error!("Failed to save config: {}", e);
-                } else {
-                    info!("Config saved after profile save as");
-                }
-            }
-            Some(ProfileOperationResult::Conflict) => {
-                warn!("Profile save as conflict: {}", new_name);
-                self.show_profile_exists_dialog(&new_name);
-            }
-            None => {
-                error!("Failed to save profile as");
-            }
-        }
-    }
-
+    /// Check if a given position is within the video rectangle
     fn is_in_video_rect(&self, pos: &VisualPos) -> bool {
         let video_rect = self.player.video_rect();
         pos.x >= video_rect.left()
@@ -608,151 +437,57 @@ impl SAideApp {
         }
     }
 
-    fn draw_mapping_config_overlay(&mut self, ctx: &egui::Context) {
-        if self.init_state != InitState::Ready {
-            debug!("Skipping mapping config processing - not initialized");
-            return;
-        }
-
-        let Some(mapping_config_window) = &mut self.mapping_editor else {
-            return;
-        };
-
+    pub(super) fn add_mapping(&mut self, key: Key, pos: &MappingPos) {
         let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            warn!("Keyboard mapper not available, skipping mapping config events");
+            error!("Keyboard mapper not initialized");
             return;
         };
 
-        let mappings = keyboard_mapper
-            .get_active_mappings()
-            .unwrap_or_else(|| Arc::new(KeyMapping::default()));
-        let profile_name = keyboard_mapper.get_active_profile_name();
-
-        let video_rect = self.player.video_rect();
-        let event = mapping_config_window.draw(
-            ctx,
-            EditorParams {
-                mappings: &mappings,
-                profile_name: profile_name.as_deref(),
-                video_rect,
-                visual_coords: self.ui_state.visual_coords(),
-                scrcpy_coords: self.app_state.scrcpy_coords(),
-                mapping_coords: self.ui_state.mapping_coords(),
-            },
+        let mapping_action = MappingAction::Tap { pos: *pos };
+        let scrcpy_action = ScrcpyAction::from_mapping_action(
+            &mapping_action,
+            self.app_state.scrcpy_coords(),
+            self.ui_state.mapping_coords(),
         );
 
-        match event {
-            EditorEvent::None => {}
-            EditorEvent::Close => {
-                self.mapping_editor.take();
-            }
-            _ => self.pending_events.push_back(event),
-        }
-    }
+        match self.profile_manager.add_mapping(key, mapping_action) {
+            Ok(_) => {
+                info!(
+                    "Mapping added to profile: {:?} -> ({:.4}, {:.4})",
+                    key, pos.x, pos.y
+                );
 
-    fn handle_mapping_event(&mut self, event: EditorEvent) {
-        match event {
-            EditorEvent::None => {}
-            EditorEvent::Close => {
-                self.mapping_editor.take();
-                self.pending_events.clear();
+                keyboard_mapper.add_mapping(key, scrcpy_action);
             }
-            EditorEvent::DeleteProfile => {
-                self.delete_profile();
-            }
-            EditorEvent::NextProfile => {
-                if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
-                    && keyboard_mapper.switch_profile_next()
-                {
-                    self.indicator
-                        .update_active_profile(keyboard_mapper.get_active_profile_name());
-                }
-            }
-            EditorEvent::PrevProfile => {
-                if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
-                    && keyboard_mapper.switch_profile_prev()
-                {
-                    self.indicator
-                        .update_active_profile(keyboard_mapper.get_active_profile_name());
-                }
-            }
-            EditorEvent::AddMapping(pos) => {
-                if self.mapping_editor.is_some() && self.dialog.is_none() {
-                    self.pending_events.push_back(event.clone());
-                    self.show_add_mapping_dialog(&pos);
-                }
-            }
-            EditorEvent::DeleteMapping(pos) => {
-                if self.mapping_editor.is_some() && self.dialog.is_none() {
-                    self.pending_events.push_back(event.clone());
-                    self.show_delete_mapping_dialog(&pos);
-                }
-            }
-            EditorEvent::SwitchProfile => {
-                if self.mapping_editor.is_some() {
-                    if self.dialog.is_none() {
-                        self.pending_events.push_back(event.clone());
-                        self.show_switch_profile_dialog();
-                    }
-                } else if self.dialog.is_none() {
-                    self.pending_events.push_back(event);
-                }
-            }
-            _ => {
-                // Only enqueue dialog events if no dialog is currently open
-                if self.dialog.is_none() {
-                    self.pending_events.push_back(event);
-                }
+            Err(e) => {
+                error!("Failed to add mapping to profile: {}", e);
+                self.notify(&t!("notification-add-mapping-failed"));
             }
         }
-    }
 
-    fn add_mapping(&mut self, key: Key, pos: &MappingPos) {
         info!("Adding mapping: {:?} -> ({:.4}, {:.4})", key, pos.x, pos.y);
 
+        self.save_config();
+    }
+
+    pub(super) fn remove_mapping(&mut self, key: Key) {
         let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             error!("Keyboard mapper not initialized");
             return;
         };
 
-        let action = MappingAction::Tap { pos: *pos };
-        keyboard_mapper.add_mapping(key, action);
-
-        // Save to config file
-        if let Err(e) = self.config_state.config_manager.save() {
-            error!("Failed to save config: {}", e);
-        } else {
-            info!("Mapping saved successfully");
+        match self.profile_manager.remove_mapping(&key) {
+            Ok(_) => {
+                info!("Mapping deleted from profile: {:?}", key);
+                keyboard_mapper.remove_mapping(&key);
+            }
+            Err(e) => {
+                error!("Failed to delete mapping from profile: {}", e);
+                self.notify(&t!("notification-delete-mapping-failed"));
+            }
         }
-    }
 
-    /// Delete a mapping
-    #[allow(dead_code)]
-    fn delete_mapping(&mut self, key: Key) {
-        info!("Deleting mapping: {:?}", key);
-
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            error!("Keyboard mapper not initialized");
-            return;
-        };
-
-        keyboard_mapper.delete_mapping(&key);
-
-        // Save to config file
-        if let Err(e) = self.config_state.config_manager.save() {
-            error!("Failed to save config: {}", e);
-        } else {
-            info!("Mapping deleted successfully");
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_mapping(&self, key: &Key) -> Option<MappingAction> {
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            return None;
-        };
-
-        keyboard_mapper.get_mapping(key)
+        self.save_config();
     }
 
     /// Process keyboard event
@@ -771,44 +506,44 @@ impl SAideApp {
             key, modifiers
         );
 
-        match key {
-            egui::Key::F1 => {
-                self.handle_mapping_event(EditorEvent::ShowHelp);
-                return Ok(true);
-            }
-            egui::Key::F2 if self.mapping_editor.is_some() => {
-                self.handle_mapping_event(EditorEvent::RenameProfile);
-                return Ok(true);
-            }
-            egui::Key::F3 if self.mapping_editor.is_some() => {
-                self.handle_mapping_event(EditorEvent::NewProfile);
-                return Ok(true);
-            }
-            egui::Key::F4 if self.mapping_editor.is_some() => {
-                self.handle_mapping_event(EditorEvent::SaveAsProfile);
-                return Ok(true);
-            }
-            egui::Key::F5 if self.mapping_editor.is_some() => {
-                self.handle_mapping_event(EditorEvent::DeleteProfile);
-                return Ok(true);
-            }
-            egui::Key::F6 => {
-                self.handle_mapping_event(EditorEvent::SwitchProfile);
-                return Ok(true);
-            }
-            egui::Key::F7 => {
-                self.handle_mapping_event(EditorEvent::PrevProfile);
-                return Ok(true);
-            }
-            egui::Key::F8 => {
-                self.handle_mapping_event(EditorEvent::NextProfile);
-                return Ok(true);
-            }
-            _ => {}
-        }
+        // match key {
+        //     egui::Key::F1 => {
+        //         self.handle_mapping_event(EditorEvent::ShowHelp);
+        //         return Ok(true);
+        //     }
+        //     egui::Key::F2 if self.mapping_editor.is_some() => {
+        //         self.handle_mapping_event(EditorEvent::RenameProfile);
+        //         return Ok(true);
+        //     }
+        //     egui::Key::F3 if self.mapping_editor.is_some() => {
+        //         self.handle_mapping_event(EditorEvent::NewProfile);
+        //         return Ok(true);
+        //     }
+        //     egui::Key::F4 if self.mapping_editor.is_some() => {
+        //         self.handle_mapping_event(EditorEvent::SaveAsProfile);
+        //         return Ok(true);
+        //     }
+        //     egui::Key::F5 if self.mapping_editor.is_some() => {
+        //         self.handle_mapping_event(EditorEvent::DeleteProfile);
+        //         return Ok(true);
+        //     }
+        //     egui::Key::F6 => {
+        //         self.handle_mapping_event(EditorEvent::SwitchProfile);
+        //         return Ok(true);
+        //     }
+        //     egui::Key::F7 => {
+        //         self.handle_mapping_event(EditorEvent::PrevProfile);
+        //         return Ok(true);
+        //     }
+        //     egui::Key::F8 => {
+        //         self.handle_mapping_event(EditorEvent::NextProfile);
+        //         return Ok(true);
+        //     }
+        //     _ => {}
+        // }
 
         if key == &self.config().mappings.toggle {
-            self.toggle_keyboard_mapping();
+            self.toggle_custom_keyboard_mapping();
             return Ok(true);
         }
 
@@ -1096,19 +831,28 @@ impl SAideApp {
         });
     }
 
-    fn refresh_mapping_profiles(&mut self) {
-        let device_orientation = self.app_state.device_orientation();
-
+    pub(super) fn refresh_mapping_profiles(&mut self) {
         let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             debug!("Keyboard mapper not available for profile refresh");
             self.indicator.reset_profiles();
             return;
         };
 
-        keyboard_mapper.refresh_profiles(self.app_state.device_serial(), device_orientation);
+        self.profile_manager.update(
+            &self.app_state.device_serial,
+            self.app_state.device_orientation,
+        );
 
-        let avail_profile_names = keyboard_mapper.get_avail_profiles();
-        let active_profile_name = keyboard_mapper.get_active_profile_name();
+        let mut active_profile_name = None;
+        if let Some(active_profile) = self.profile_manager.get_active_profile() {
+            active_profile_name = Some(active_profile.read().name().to_string());
+            keyboard_mapper.update_mappings(
+                &active_profile,
+                self.scrcpy_coords(),
+                self.mapping_coords(),
+            );
+        }
+        let avail_profile_names = self.profile_manager.get_avail_profile_names();
         debug!(
             "Keyboard profiles refreshed: active={:?}, available={:?}",
             active_profile_name, avail_profile_names
@@ -1117,9 +861,10 @@ impl SAideApp {
         self.indicator.update_active_profile(active_profile_name);
     }
 
-    fn save_config(&mut self) {
+    pub(super) fn save_config(&mut self) {
         if let Err(e) = self.config_state.config_manager.save() {
             error!("Failed to save config: {}", e);
+            self.notify(&t!("notification-save-config-failed"));
         } else {
             info!("Config saved successfully");
         }
@@ -1127,11 +872,9 @@ impl SAideApp {
 
     fn draw_toolbar(&mut self, ctx: &egui::Context) {
         let has_mappings = self
-            .app_state
-            .keyboard_mapper
-            .as_ref()
-            .and_then(|mapper| mapper.get_active_mappings())
-            .map(|mappings| !mappings.read().is_empty())
+            .profile_manager
+            .get_active_profile()
+            .map(|p| !p.read().is_empty())
             .unwrap_or(false);
 
         self.toolbar.set_has_active_mappings(has_mappings);
@@ -1145,8 +888,8 @@ impl SAideApp {
                 ToolbarEvent::RotateVideo => {
                     self.rotate(ctx);
                 }
-                ToolbarEvent::ConfigureMappings => {
-                    self.toggle_mapping_config(ctx);
+                ToolbarEvent::ToggleMappingEditor => {
+                    self.toggle_editor(ctx);
                 }
                 ToolbarEvent::ToggleScreenPower => {
                     debug!("Turning off screen from toolbar");
@@ -1159,10 +902,10 @@ impl SAideApp {
                     }
                 }
                 ToolbarEvent::ToggleKeyboardMapping => {
-                    self.toggle_keyboard_mapping();
+                    self.toggle_custom_keyboard_mapping();
                 }
                 ToolbarEvent::ToggleMappingVisualization => {
-                    self.toggle_mapping_visualization();
+                    self.toggle_mapping_overlay();
                 }
                 ToolbarEvent::None => {}
             });
@@ -1192,11 +935,8 @@ impl SAideApp {
             return;
         }
 
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            return;
-        };
-
-        let Some(mappings) = keyboard_mapper.get_active_mappings() else {
+        let Some(profile) = self.profile_manager.get_active_profile() else {
+            debug!("No active profile, skipping mapping overlay");
             return;
         };
 
@@ -1205,9 +945,8 @@ impl SAideApp {
             .interactable(false)
             .show(ctx, |ui| {
                 let painter = ui.painter();
-                let mappings_read = mappings.read();
 
-                for (key, action) in mappings_read.iter() {
+                for (key, action) in profile.read().iter() {
                     use crate::config::mapping::MappingAction;
 
                     let pos = match action {
@@ -1245,118 +984,157 @@ impl SAideApp {
             });
     }
 
-    fn show_add_mapping_dialog(&mut self, screen_pos: &egui::Pos2) {
-        if self.dialog.is_some() {
-            return;
-        }
+    // fn show_add_mapping_dialog(&mut self, screen_pos: &egui::Pos2) {
+    //     if self.dialog.is_some() {
+    //         return;
+    //     }
 
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            warn!("Keyboard mapper not available, cannot add mapping");
-            return;
-        };
+    //     let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
+    //         warn!("Keyboard mapper not available, cannot add mapping");
+    //         return;
+    //     };
 
-        if keyboard_mapper.get_active_profile_name().is_none() {
-            warn!("No active profile, cannot add mapping");
-            return;
-        }
+    //     if keyboard_mapper.get_active_profile_name().is_none() {
+    //         warn!("No active profile, cannot add mapping");
+    //         return;
+    //     }
 
-        let video_rect = self.player.video_rect();
-        if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
-            screen_pos,
-            &video_rect,
-            self.app_state.scrcpy_coords(),
-            self.ui_state.mapping_coords(),
-        ) {
-            info!(
-                "Add mapping: screen=({:.1},{:.1}) -> percent=({:.6},{:.6}) [device_orientation={}]",
-                screen_pos.x,
-                screen_pos.y,
-                percent_pos.x,
-                percent_pos.y,
-                self.app_state.device_orientation()
-            );
+    //     let video_rect = self.player.video_rect();
+    //     if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
+    //         screen_pos,
+    //         &video_rect,
+    //         self.app_state.scrcpy_coords(),
+    //         self.ui_state.mapping_coords(),
+    //     ) {
+    //         info!(
+    //             "Add mapping: screen=({:.1},{:.1}) -> percent=({:.6},{:.6})
+    // [device_orientation={}]",             screen_pos.x,
+    //             screen_pos.y,
+    //             percent_pos.x,
+    //             percent_pos.y,
+    //             self.app_state.device_orientation()
+    //         );
 
-            self.dialog.replace(
-                ModalDialog::new(
-                    "key_input_dialog",
-                    &t!("mapping-config-dialog-create-title"),
-                )
-                .with_key_capture(&tf!(
-                    "mapping-config-dialog-create-message",
-                    "x" => percent_pos.x,
-                    "y" => percent_pos.y
-                )),
-            );
-        }
-    }
+    //         self.dialog.replace(
+    //             ModalDialog::new(
+    //                 "key_input_dialog",
+    //                 &t!("mapping-config-dialog-create-title"),
+    //             )
+    //             .with_key_capture(&tf!(
+    //                 "mapping-config-dialog-create-message",
+    //                 "x" => percent_pos.x,
+    //                 "y" => percent_pos.y
+    //             )),
+    //         );
+    //     }
+    // }
 
     fn process_event(&mut self) {
-        if self.pending_events.is_empty() {
-            return;
-        }
+        //     if self.pending_events.is_empty() {
+        //         return;
+        //     }
 
-        let event = self.pending_events.pop_front().unwrap();
-        match event {
-            EditorEvent::AddMapping(pos) => self.show_add_mapping_dialog(&pos),
-            EditorEvent::DeleteMapping(pos) => self.show_delete_mapping_dialog(&pos),
-            EditorEvent::RenameProfile => self.show_rename_profile_dialog(),
-            EditorEvent::NewProfile => self.show_new_profile_dialog(),
-            EditorEvent::SaveAsProfile => self.show_save_as_profile_dialog(),
-            // MappingConfigEvent::ShowHelp => self.show_help_dialog(),
-            EditorEvent::SwitchProfile => self.show_switch_profile_dialog(),
-            _ => {}
+        //     let event = self.pending_events.pop_front().unwrap();
+        //     match event {
+        //         EditorEvent::AddMapping(pos) => self.show_add_mapping_dialog(&pos),
+        //         EditorEvent::DeleteMapping(pos) => self.show_delete_mapping_dialog(&pos),
+        //         EditorEvent::RenameProfile => self.show_rename_profile_dialog(),
+        //         EditorEvent::NewProfile => self.show_new_profile_dialog(),
+        //         EditorEvent::SaveAsProfile => self.show_save_as_profile_dialog(),
+        //         // MappingConfigEvent::ShowHelp => self.show_help_dialog(),
+        //         EditorEvent::SwitchProfile => self.show_switch_profile_dialog(),
+        //         _ => {}
+        //     }
+
+        // TODO: implement event processing for mapping editor (add mapping, delete mapping, rename
+        // profile, new profile, save as profile, switch profile)
+    }
+
+    // fn show_delete_mapping_dialog(&mut self, screen_pos: &egui::Pos2) {
+    //     if self.dialog.is_some() {
+    //         return;
+    //     }
+
+    //     let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
+    //         warn!("Keyboard mapper not available, cannot delete mapping");
+    //         return;
+    //     };
+
+    //     let mappings = keyboard_mapper
+    //         .get_active_mappings()
+    //         .unwrap_or_else(|| Arc::new(KeyMapping::default()));
+
+    //     let video_rect = self.player.video_rect();
+    //     if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
+    //         screen_pos,
+    //         &video_rect,
+    //         self.app_state.scrcpy_coords(),
+    //         self.ui_state.mapping_coords(),
+    //     ) && let Some((nearest_key, nearest_pos)) = find_nearest_mapping(&percent_pos, &mappings)
+    //     {
+    //         info!(
+    //             "Delete mapping: {:?} at ({:.6}, {:.6})",
+    //             nearest_key, nearest_pos.x, nearest_pos.y
+    //         );
+
+    //         let mut dialog = ModalDialog::new(
+    //             "delete_mapping_dialog",
+    //             &t!("mapping-config-dialog-delete-title"),
+    //         );
+    //         dialog.add_message(&tf!(
+    //             "mapping-config-dialog-delete-message",
+    //             "key" => format!("{:?}", nearest_key),
+    //             "x" => nearest_pos.x.to_string(),
+    //             "y" => nearest_pos.y.to_string(),
+    //         ));
+
+    //         self.dialog.replace(dialog);
+    //     }
+    // }
+
+    pub fn draw_editor(&mut self, ctx: &egui::Context) {
+        let profile = self.profile_manager.get_active_profile();
+        let video_rect = &self.player.video_rect();
+        let visual_coords = self.visual_coords();
+        let scrcpy_coords = self.scrcpy_coords();
+        let mapping_coords = self.mapping_coords();
+        if let Some(editor) = &self.mapping_editor {
+            let editor_params = EditorParams {
+                profile,
+                video_rect,
+                visual_coords,
+                scrcpy_coords,
+                mapping_coords,
+            };
+            editor.draw(ctx, editor_params);
         }
     }
 
-    fn show_delete_mapping_dialog(&mut self, screen_pos: &egui::Pos2) {
-        if self.dialog.is_some() {
-            return;
-        }
-
-        let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-            warn!("Keyboard mapper not available, cannot delete mapping");
-            return;
-        };
-
-        let mappings = keyboard_mapper
-            .get_active_mappings()
-            .unwrap_or_else(|| Arc::new(KeyMapping::default()));
-
-        let video_rect = self.player.video_rect();
-        if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
-            screen_pos,
-            &video_rect,
-            self.app_state.scrcpy_coords(),
-            self.ui_state.mapping_coords(),
-        ) && let Some((nearest_key, nearest_pos)) = find_nearest_mapping(&percent_pos, &mappings)
-        {
-            info!(
-                "Delete mapping: {:?} at ({:.6}, {:.6})",
-                nearest_key, nearest_pos.x, nearest_pos.y
-            );
-
-            let mut dialog = ModalDialog::new(
-                "delete_mapping_dialog",
-                &t!("mapping-config-dialog-delete-title"),
-            );
-            dialog.add_message(&tf!(
-                "mapping-config-dialog-delete-message",
-                "key" => format!("{:?}", nearest_key),
-                "x" => nearest_pos.x.to_string(),
-                "y" => nearest_pos.y.to_string(),
-            ));
-
-            self.dialog.replace(dialog);
-        }
-    }
-
+    /// Draw dialog, and close it if requested by the dialog state
     pub fn draw_dialog(&mut self, ctx: &egui::Context) -> DialogState {
         let Some(dialog) = &mut self.dialog else {
             return DialogState::None;
         };
 
-        dialog.draw(ctx)
+        let state = dialog.draw(ctx);
+        tracing::debug!("Dialog state: {:?}", state);
+        if state.is_closed() {
+            self.dialog.take();
+        }
+        state
     }
+
+    pub fn notify(&self, notification: &str) {
+        // TODO: implement notification system (e.g. toast messages or status bar)
+    }
+
+    pub(super) fn scrcpy_coords(&self) -> &ScrcpyCoordSys { self.app_state.scrcpy_coords() }
+
+    pub(super) fn mapping_coords(&self) -> &MappingCoordSys { self.ui_state.mapping_coords() }
+
+    pub(super) fn visual_coords(&self) -> &VisualCoordSys { self.ui_state.visual_coords() }
+
+    pub fn toolbar_width() -> f32 { Toolbar::width() }
 }
 
 impl Drop for SAideApp {
@@ -1456,8 +1234,19 @@ impl eframe::App for SAideApp {
                         );
                     }
 
-                    if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper {
-                        keyboard_mapper.apply_active_profile();
+                    self.profile_manager.update(
+                        &self.app_state.device_serial,
+                        self.app_state.device_orientation,
+                    );
+
+                    if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper
+                        && let Some(active_profile) = self.profile_manager.get_active_profile()
+                    {
+                        keyboard_mapper.update_mappings(
+                            &active_profile,
+                            self.scrcpy_coords(),
+                            self.mapping_coords(),
+                        );
                         debug!(
                             "Reapplied keyboard mappings for new video resolution: {}x{}",
                             new_dimensions.0, new_dimensions.1
@@ -1468,15 +1257,13 @@ impl eframe::App for SAideApp {
                     self.ui_state.set_ui_initialized();
                 }
 
+                let _ = SHORTCUT_MANAGER.dispatch(self, ctx);
                 self.process_event();
 
-                if self.mapping_editor.is_some() {
-                    self.draw_mapping_config_overlay(ctx);
-                } else {
-                    self.draw_dialog(ctx);
-                    if self.dialog.is_none() {
-                        self.process_input_events(ctx);
-                    }
+                self.draw_editor(ctx);
+                self.draw_dialog(ctx);
+                if self.dialog.is_none() {
+                    self.process_input_events(ctx);
                 }
 
                 self.process_device_monitor_events(ctx);
@@ -1559,4 +1346,55 @@ impl eframe::App for SAideApp {
     }
 }
 
-mod dialog;
+/// Calculate appropriate window size based on video and screen dimensions
+/// Returns (width, height) that fits within screen bounds
+fn calculate_window_size(video_w: u32, video_h: u32, screen_w: f32, screen_h: f32) -> (u32, u32) {
+    // Use 90% of screen dimensions as usable area
+    // to leave some margin for taskbars, docks, etc.
+    const SCREEN_MARGIN_RATIO: f32 = 0.9;
+
+    let usable_w = (screen_w * SCREEN_MARGIN_RATIO) as u32;
+    let usable_h = (screen_h * SCREEN_MARGIN_RATIO) as u32;
+
+    if video_w <= usable_w && video_h <= usable_h {
+        return (video_w, video_h);
+    }
+
+    let video_long = video_w.max(video_h);
+    let video_short = video_w.min(video_h);
+    let is_landscape = video_w >= video_h;
+
+    for &tier in crate::constant::VIDEO_RESOLUTION_TIERS {
+        if tier >= video_long {
+            continue;
+        }
+
+        let scale = tier as f32 / video_long as f32;
+        let scaled_long = tier;
+        let scaled_short = (video_short as f32 * scale) as u32;
+
+        let (candidate_w, candidate_h) = if is_landscape {
+            (scaled_long, scaled_short)
+        } else {
+            (scaled_short, scaled_long)
+        };
+
+        if candidate_w <= usable_w && candidate_h <= usable_h {
+            return (candidate_w, candidate_h);
+        }
+    }
+
+    let smallest_tier = crate::constant::VIDEO_RESOLUTION_TIERS
+        .last()
+        .copied()
+        .unwrap_or(640);
+    let scale = smallest_tier as f32 / video_long as f32;
+    let scaled_long = smallest_tier;
+    let scaled_short = (video_short as f32 * scale) as u32;
+
+    if is_landscape {
+        (scaled_long, scaled_short)
+    } else {
+        (scaled_short, scaled_long)
+    }
+}

@@ -81,7 +81,7 @@ impl DeviceMonitor {
                     break;
                 }
 
-                match retry_adb_command(|| AdbShell::get_device_state(&serial)) {
+                match retry_adb_command(token.clone(), || AdbShell::get_device_state(&serial)) {
                     Ok(state) => {
                         if state != DeviceState::Connected {
                             info!("Device went offline: {:?}", state);
@@ -122,7 +122,7 @@ impl DeviceMonitor {
                     break;
                 }
 
-                match retry_adb_command(|| AdbShell::get_ime_state(&serial)) {
+                match retry_adb_command(token.clone(), || AdbShell::get_ime_state(&serial)) {
                     Ok(is_shown) => {
                         event_tx
                             .send(DeviceMonitorEvent::ImStateChanged(is_shown))
@@ -160,7 +160,8 @@ impl DeviceMonitor {
                     break;
                 }
 
-                match retry_adb_command(|| AdbShell::get_screen_orientation(&serial)) {
+                match retry_adb_command(token.clone(), || AdbShell::get_screen_orientation(&serial))
+                {
                     Ok(orientation) => {
                         if Some(orientation) != last_orientation {
                             info!("Device rotated to orientation: {}", orientation);
@@ -188,10 +189,14 @@ impl DeviceMonitor {
     }
 }
 
-fn retry_adb_command<F, T>(mut command_fn: F) -> Result<T>
+fn retry_adb_command<F, T>(cancel_token: CancellationToken, mut command_fn: F) -> Result<T>
 where
     F: FnMut() -> Result<T>,
 {
+    if cancel_token.is_cancelled() {
+        return Err(SAideError::Cancelled);
+    }
+
     const MAX_RETRIES: u32 = 3;
     const RETRY_DELAY_MS: u64 = 100;
 

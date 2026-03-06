@@ -13,6 +13,7 @@ use {
         error::Result,
     },
     egui::Key,
+    parking_lot::RwLock,
     std::collections::HashMap,
     tracing::trace,
 };
@@ -106,37 +107,39 @@ pub struct KeyboardMapper {
     sender: ControlSender,
 
     /// Active mappings for runtime use, converted to scrcpy video coordinates
-    mappings: HashMap<Key, ScrcpyAction>,
-
-    /// Scrcpy capture orientation state
-    capture_orientation: Option<u32>,
+    mappings: RwLock<HashMap<Key, ScrcpyAction>>,
 }
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(sender: ControlSender, capture_orientation: Option<u32>) -> Self {
+    pub fn new(sender: ControlSender) -> Self {
         Self {
             sender,
-            mappings: HashMap::new(),
-            capture_orientation,
+            mappings: RwLock::new(HashMap::new()),
         }
     }
 
     /// Update mappings from profile, converting to scrcpy video coordinates
-    pub fn update(
-        &mut self,
+    pub fn update_mappings(
+        &self,
         profile: &ProfileRef,
         scrcpy_coords: &ScrcpyCoordSys,
         mapping_coords: &MappingCoordSys,
     ) {
         let profile = profile.read();
         let name = profile.name();
-        self.mappings = profile
+        *self.mappings.write() = profile
             .mappings()
             .to_scrcpy_mapping(scrcpy_coords, mapping_coords);
 
         trace!("Updated keyboard mappings from profile '{name}'",);
     }
+
+    pub fn add_mapping(&self, key: Key, action: ScrcpyAction) {
+        self.mappings.write().insert(key, action);
+    }
+
+    pub fn remove_mapping(&self, key: &Key) { self.mappings.write().remove(key); }
 
     /// Handle keyboard event, returns true if handled
     pub fn handle_standard_key_event(&self, key: &Key) -> Result<bool> {
@@ -211,12 +214,16 @@ impl KeyboardMapper {
     /// Handle custom key mapping event, returns true if handled
     pub fn handle_custom_keymapping_event(&self, key: &Key) -> Result<bool> {
         // Use pixel-converted mappings for control
-        if let Some(action) = self.mappings.get(key) {
+        let action = {
+            let mappings = self.mappings.read();
+            mappings.get(key).cloned()
+        };
+        if let Some(action) = action {
             trace!(
                 "Handling custom key mapping event: {:?} -> {:?}",
                 key, action
             );
-            self.send_input_action(action)?;
+            self.send_input_action(&action)?;
             return Ok(true);
         }
         Ok(false)

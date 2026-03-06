@@ -720,6 +720,10 @@ impl AudioThread {
                     warn!(
                         "Failed to read audio header {consecutive_read_errors} times consecutively"
                     );
+
+                    // Signal main thread to stop the stream on repeated read failures
+                    token.cancel();
+
                     return Err(e.into());
                 }
 
@@ -752,6 +756,10 @@ impl AudioThread {
                     warn!(
                         "Failed to read audio payload {consecutive_read_errors} times consecutively"
                     );
+
+                    // Signal main thread to stop the stream on repeated read failures
+                    token.cancel();
+
                     return Err(e.into());
                 }
 
@@ -828,6 +836,10 @@ impl VideoLoop {
                         warn!(
                             "Failed to read video packet {consecutive_read_errors} times consecutively"
                         );
+
+                        // Signal main thread to stop the stream on repeated read failures
+                        token.cancel();
+
                         return Err(e);
                     }
 

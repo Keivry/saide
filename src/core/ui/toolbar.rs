@@ -20,7 +20,7 @@ pub enum ToolbarEvent {
     ToggleKeyboardMapping,
     ToggleMappingVisualization,
     RotateVideo,
-    ConfigureMappings,
+    ToggleMappingEditor,
     ToggleScreenPower,
 }
 
@@ -68,8 +68,8 @@ lazy_static! {
         ToolbarButton {
             btn_type: ButtonType::Normal,
             lable: "⚙",
-            tooltip_key: "toolbar-configure",
-            event: ToolbarEvent::ConfigureMappings,
+            tooltip_key: "toolbar-editor",
+            event: ToolbarEvent::ToggleMappingEditor,
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,

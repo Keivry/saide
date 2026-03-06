@@ -139,17 +139,12 @@ fn send_connection_events(
     }
 
     let tx_keyboard = tx.clone();
-    InputManager::create_keyboard_mapper(
-        config.clone(),
-        control_sender.clone(),
-        capture_orientation,
-        move |mapper| {
-            let _ = tx_keyboard.send(InitEvent::KeyboardMapper(mapper));
-        },
-    );
+    InputManager::create_keyboard_mapper(control_sender.clone(), move |mapper| {
+        let _ = tx_keyboard.send(InitEvent::KeyboardMapper(mapper));
+    });
 
     let tx_mouse = tx.clone();
-    InputManager::create_mouse_mapper(config.clone(), control_sender, move |mapper| {
+    InputManager::create_mouse_mapper(config.input.clone(), control_sender, move |mapper| {
         let _ = tx_mouse.send(InitEvent::MouseMapper(mapper));
     });
 }
