@@ -226,10 +226,18 @@ impl<'a> BitReader<'a> {
     }
 
     /// Read unsigned Exp-Golomb coded value
+    ///
+    /// H.264 SPS 字段实际值域远小于 2^32，前导零不会超过 32 位。
+    /// 对损坏或恶意构造的 SPS 数据加上此上限，防止长时间占用 CPU。
     fn read_ue(&mut self) -> Option<u32> {
-        let mut leading_zeros = 0;
+        const MAX_LEADING_ZEROS: u32 = 32;
+
+        let mut leading_zeros = 0u32;
         while self.read_bit()? == 0 {
             leading_zeros += 1;
+            if leading_zeros >= MAX_LEADING_ZEROS {
+                return None;
+            }
         }
 
         if leading_zeros == 0 {

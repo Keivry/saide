@@ -221,7 +221,9 @@ impl Drop for AudioPlayer {
     fn drop(&mut self) {
         self.stop();
 
-        // Give audio stream time to finish current callback
+        // `_stream` is dropped after this sleep, which stops the cpal callback.
+        // The sleep gives any in-progress callback invocation time to complete
+        // before the ring buffer consumer is dropped alongside the stream.
         thread::sleep(Duration::from_millis(50));
 
         let underruns = self.underrun_count();

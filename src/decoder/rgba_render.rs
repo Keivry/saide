@@ -25,7 +25,9 @@ impl CallbackTrait for RgbaRenderCallback {
         render_pass: &mut wgpu::RenderPass<'static>,
         callback_resources: &egui_wgpu::CallbackResources,
     ) {
-        let resources = callback_resources.get::<RgbaRenderResources>().unwrap();
+        let Some(resources) = callback_resources.get::<RgbaRenderResources>() else {
+            return;
+        };
         if let Some(bind_group) = &resources.bind_group {
             render_pass.set_pipeline(&resources.pipeline);
             render_pass.set_bind_group(0, bind_group, &[]);
@@ -41,7 +43,9 @@ impl CallbackTrait for RgbaRenderCallback {
         _encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        let resources = callback_resources.get_mut::<RgbaRenderResources>().unwrap();
+        let Some(resources) = callback_resources.get_mut::<RgbaRenderResources>() else {
+            return Vec::new();
+        };
         resources.upload_frame(device, queue, &self.frame);
         resources.update_rotation(queue, self.rotation);
         Vec::new()
@@ -217,9 +221,12 @@ impl RgbaRenderResources {
         }
 
         // Upload RGBA data
+        let Some(texture) = self.texture.as_ref() else {
+            return;
+        };
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: self.texture.as_ref().unwrap(),
+                texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,

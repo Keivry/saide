@@ -17,6 +17,7 @@ use {
         SHORTCUT_MANAGER,
         editor::{MAPPING_EDITOR_SHORTCUTS, MappingEditor},
         indicator::Indicator,
+        notifier::Notifier,
         player::{PlayerState, StreamPlayer},
         theme::AppColors,
         toolbar::{Toolbar, ToolbarEvent},
@@ -43,7 +44,7 @@ use {
 
 /// Initialization state enum
 #[derive(PartialEq)]
-enum InitState {
+pub(crate) enum InitState {
     NotStarted,
     InProgress,
     Ready,
@@ -72,6 +73,7 @@ pub struct SAideApp {
 
     pub(super) last_paint_instant: Option<Instant>,
 
+    pub(super) notifier: Notifier,
     pub(super) profile_manager: ProfileManager,
 }
 
@@ -123,6 +125,7 @@ impl SAideApp {
 
             last_paint_instant: None,
 
+            notifier: Notifier::new(),
             profile_manager: ProfileManager::new(&config.mappings.profiles),
         }
     }
@@ -1178,9 +1181,7 @@ impl SAideApp {
         state
     }
 
-    pub fn notify(&self, _notification: &str) {
-        // TODO: implement notification system (e.g. toast messages or status bar)
-    }
+    pub fn notify(&self, notification: &str) { self.notifier.notify(notification); }
 
     pub(super) fn scrcpy_coords(&self) -> &ScrcpyCoordSys { self.app_state.scrcpy_coords() }
 
@@ -1388,6 +1389,9 @@ impl eframe::App for SAideApp {
                 self.ui_state.audio_warning = None;
             }
         }
+
+        // Toast notifications overlay
+        self.notifier.draw(ctx, ctx.content_rect());
 
         // Frame rate limiting (only when streaming)
         if matches!(self.player.state(), PlayerState::Streaming) {

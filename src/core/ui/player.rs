@@ -173,6 +173,14 @@ pub struct StreamPlayer {
 
     /// Hardware decoding enabled
     hwdecode: bool,
+
+    /// Session-scoped cancellation token (child of app-level cancel_token).
+    /// Cancelled by stop() to signal video/audio workers to exit this session only.
+    session_token: Option<CancellationToken>,
+
+    /// Cloned TcpStream handles used to shutdown blocking I/O in stop().
+    video_ctrl: Option<TcpStream>,
+    audio_ctrl: Option<TcpStream>,
 }
 
 impl StreamPlayer {
@@ -225,6 +233,9 @@ impl StreamPlayer {
             audio_buffer_frames,
             audio_ring_capacity,
             hwdecode,
+            session_token: None,
+            video_ctrl: None,
+            audio_ctrl: None,
         }
     }
 
@@ -236,6 +247,13 @@ impl StreamPlayer {
         video_resolution: (u32, u32),
         serial: &str,
     ) {
+        if self.stream_thread.is_some() {
+            warn!(
+                "start() called while a session is already active; stopping previous session first"
+            );
+            self.stop();
+        }
+
         info!(
             "Starting stream: {}x{} for device {}",
             video_resolution.0, video_resolution.1, serial
@@ -243,14 +261,23 @@ impl StreamPlayer {
         self.state = PlayerState::Connecting;
 
         let event_tx = self.event_tx.clone();
-        let cancel_token = self.cancel_token.clone();
+        let session_token = self.cancel_token.child_token();
+        self.session_token = Some(session_token.clone());
+        self.video_ctrl = video_stream.try_clone().ok();
+        self.audio_ctrl = audio_stream.as_ref().and_then(|s| match s.try_clone() {
+            Ok(cloned) => Some(cloned),
+            Err(e) => {
+                warn!("Failed to clone audio TcpStream for shutdown control: {e}; stop() may wait for read timeout");
+                None
+            }
+        });
         let latency_summary = self.latency_summary.clone();
         let audio_buffer_frames = self.audio_buffer_frames;
         let audio_ring_capacity = self.audio_ring_capacity;
         let hwdecode = self.hwdecode;
         let event_tx_clone = event_tx.clone();
         self.stream_thread = Some(thread::spawn(move || {
-            if cancel_token.is_cancelled() {
+            if session_token.is_cancelled() {
                 debug!("Stream worker exiting due to cancellation");
                 return;
             }
@@ -260,7 +287,7 @@ impl StreamPlayer {
                 audio_stream,
                 video_resolution,
                 event_tx,
-                cancel_token.clone(),
+                session_token.clone(),
                 latency_summary,
                 StreamWorkerConfig {
                     audio_buffer_frames,
@@ -282,16 +309,49 @@ impl StreamPlayer {
 
     /// Stop streaming
     pub fn stop(&mut self) {
+        use std::net::Shutdown;
         info!("Stopping stream");
         self.state = PlayerState::Idle;
 
-        // Drop channels first to signal thread to exit
+        // 1. Cancel session token — wakes up any token.is_cancelled() check in video/audio loops.
+        if let Some(token) = self.session_token.take() {
+            token.cancel();
+        }
+
+        // 2. Shutdown sockets — unblocks any in-progress read_exact on video/audio streams.
+        if let Some(ctrl) = self.video_ctrl.take() {
+            let _ = ctrl.shutdown(Shutdown::Both);
+        }
+        if let Some(ctrl) = self.audio_ctrl.take() {
+            let _ = ctrl.shutdown(Shutdown::Both);
+        }
+
+        // 3. Join worker thread — by now both loops should be exiting promptly.
+        if let Some(handle) = self.stream_thread.take()
+            && let Err(e) = handle.join()
+        {
+            warn!("Stream worker thread panicked: {:?}", e);
+        }
+
+        // 4. Drain stale events left in channel from the just-joined session.
+        // Without this, a queued PlayerEvent::Ready from the old session could be consumed by
+        // update() after stop() returns, writing PlayerState::Streaming over the Idle state —
+        // or, on rapid stop→start, corrupting the new session's state machine.
+        let drained = {
+            let mut count = 0u32;
+            while self.event_rx.try_recv().is_ok() {
+                count += 1;
+            }
+            count
+        };
+        if drained > 0 {
+            debug!("Drained {drained} stale event(s) from previous session");
+        }
+
+        // 5. Drop remaining state after join to avoid dangling references.
         self.frame_rx = None;
         self.stats_rx = None;
         self.current_frame = None;
-
-        // Detach thread handle
-        self.stream_thread.take();
     }
 
     /// Update player state (call every frame)
@@ -323,9 +383,10 @@ impl StreamPlayer {
                 } => {
                     if !is_cancelled {
                         error!("Stream failed: {}", error);
+                        self.state = PlayerState::Failed(error);
                     }
-
-                    self.state = PlayerState::Failed(error);
+                    // is_cancelled=true means stop() was called intentionally;
+                    // state is already Idle (set in stop()), so no override needed.
                 }
             }
         }
@@ -589,7 +650,7 @@ fn stream_worker(
     let stats = Arc::new(Mutex::new(StreamStats::default()));
     let av_snapshot = decoder_mgr.av_sync.snapshot();
 
-    let _audio_thread = audio_stream.map(|audio_stream| {
+    let audio_thread = audio_stream.map(|audio_stream| {
         AudioThread::spawn(
             audio_stream,
             decoder_mgr.audio_decoder,
@@ -617,6 +678,18 @@ fn stream_worker(
         &token,
     );
 
+    // Video loop ended — cancel the token to signal the audio thread to exit.
+    // This covers all paths including early-return errors (e.g. AutoDecoder::new failure)
+    // that bypass the in-loop cancel call. Idempotent if already cancelled.
+    token.cancel();
+
+    // Ensure audio thread exits and is joined before returning.
+    if let Some(handle) = audio_thread
+        && let Err(e) = handle.join()
+    {
+        warn!("Audio thread panicked: {:?}", e);
+    }
+
     match decode_result {
         Ok(_) => {
             info!("Video decode loop completed normally");
@@ -627,14 +700,6 @@ fn stream_worker(
             if !is_cancelled {
                 error!("Connection error: {e}");
             }
-            event_tx
-                .send(PlayerEvent::Failed {
-                    error: e.to_string(),
-                    is_cancelled,
-                })
-                .unwrap_or_else(|err| {
-                    error!("Failed to send PlayerEvent::Failed: {err}");
-                });
             Err(e)
         }
     }

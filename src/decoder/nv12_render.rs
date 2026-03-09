@@ -25,7 +25,9 @@ impl CallbackTrait for Nv12RenderCallback {
         render_pass: &mut wgpu::RenderPass<'static>,
         callback_resources: &egui_wgpu::CallbackResources,
     ) {
-        let resources = callback_resources.get::<Nv12RenderResources>().unwrap();
+        let Some(resources) = callback_resources.get::<Nv12RenderResources>() else {
+            return;
+        };
         if let Some(bind_group) = &resources.bind_group {
             render_pass.set_pipeline(&resources.pipeline);
             render_pass.set_bind_group(0, bind_group, &[]);
@@ -41,7 +43,9 @@ impl CallbackTrait for Nv12RenderCallback {
         _encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        let resources = callback_resources.get_mut::<Nv12RenderResources>().unwrap();
+        let Some(resources) = callback_resources.get_mut::<Nv12RenderResources>() else {
+            return Vec::new();
+        };
         resources.upload_frame(device, queue, &self.frame);
         resources.update_rotation(queue, self.rotation);
         Vec::new()
@@ -284,9 +288,15 @@ impl Nv12RenderResources {
         }
 
         // Upload Y plane
+        let Some(y_texture) = self.y_texture.as_ref() else {
+            return;
+        };
+        let Some(uv_texture) = self.uv_texture.as_ref() else {
+            return;
+        };
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: self.y_texture.as_ref().unwrap(),
+                texture: y_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -307,7 +317,7 @@ impl Nv12RenderResources {
         // Upload UV plane (interleaved, perfect for Rg8Unorm)
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: self.uv_texture.as_ref().unwrap(),
+                texture: uv_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,

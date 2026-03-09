@@ -171,11 +171,10 @@ impl I18nManager {
         }
     }
 
-    fn current_bundle(&self) -> &ThreadSafeFluentBundle {
+    fn current_bundle(&self) -> Option<&ThreadSafeFluentBundle> {
         self.bundles
             .get(&self.current_locale)
             .or_else(|| self.bundles.values().next())
-            .expect("At least one bundle should exist")
     }
 
     pub fn current_locale(&self) -> &str { &self.current_locale }
@@ -262,30 +261,31 @@ impl I18nManager {
             return cached;
         }
 
-        let bundle = self.current_bundle();
-        let mut errors = vec![];
+        if let Some(bundle) = self.current_bundle() {
+            let mut errors = vec![];
+            let value = bundle
+                .get_message(key)
+                .and_then(|msg| msg.value())
+                .map(|pattern| {
+                    let result = bundle.format_pattern(pattern, args, &mut errors);
+                    if !errors.is_empty() {
+                        tracing::debug!("Fluent formatting errors for '{}': {:?}", key, errors);
+                    }
+                    result.into_owned()
+                })
+                .unwrap_or_else(|| key.to_string());
 
-        let result = bundle
-            .get_message(key)
-            .and_then(|msg| msg.value())
-            .map(|pattern| {
-                let result = bundle.format_pattern(pattern, args, &mut errors);
+            TRANSLATION_CACHE.with(|cache| {
+                cache
+                    .borrow_mut()
+                    .insert(cache_key, value.clone(), current_gen);
+            });
 
-                if !errors.is_empty() {
-                    tracing::debug!("Fluent formatting errors for '{}': {:?}", key, errors);
-                }
-
-                result.into_owned()
-            })
-            .unwrap_or_else(|| key.to_string());
-
-        TRANSLATION_CACHE.with(|cache| {
-            cache
-                .borrow_mut()
-                .insert(cache_key, result.clone(), current_gen);
-        });
-
-        result
+            value
+        } else {
+            tracing::warn!("No i18n bundle loaded, returning key as-is: {}", key);
+            key.to_string()
+        }
     }
 
     pub fn is_chinese(&self) -> bool { self.current_locale.starts_with("zh") }

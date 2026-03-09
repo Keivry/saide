@@ -224,6 +224,14 @@ impl MouseMapper {
                 self.sender.send_key_press(3, 0)?; // KEYCODE_HOME
                 debug!("Mouse middle button -> Home");
             }
+            MouseButton::Extra1 if pressed => {
+                self.sender.send_key_press(4, 0)?; // KEYCODE_BACK (back side button)
+                debug!("Mouse extra1 button -> Back");
+            }
+            MouseButton::Extra2 if pressed => {
+                self.sender.send_key_press(125, 0)?; // KEYCODE_FORWARD (forward side button)
+                debug!("Mouse extra2 button -> Forward");
+            }
             _ => {}
         }
 

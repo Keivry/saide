@@ -12,7 +12,8 @@ pub enum MouseButton {
     Left,
     Right,
     Middle,
-    // TODO: Add extra buttons
+    Extra1,
+    Extra2,
 }
 
 /// Scroll wheel direction
@@ -29,7 +30,8 @@ impl From<PointerButton> for MouseButton {
             PointerButton::Primary => MouseButton::Left,
             PointerButton::Secondary => MouseButton::Right,
             PointerButton::Middle => MouseButton::Middle,
-            _ => MouseButton::Left, // Default case
+            PointerButton::Extra1 => MouseButton::Extra1,
+            PointerButton::Extra2 => MouseButton::Extra2,
         }
     }
 }
