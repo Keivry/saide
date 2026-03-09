@@ -98,7 +98,7 @@ lru = "0.16"
 
 egui_cjk_font = { path = "crates/egui-cjk-font" }
 egui-command = { path = "crates/egui-command" }
-egui-command-egui = { path = "crates/egui-command-egui" }
+egui-command-binding = { path = "crates/egui-command-binding" }
 
 notify = "8"
 

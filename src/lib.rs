@@ -14,4 +14,4 @@ pub mod scrcpy;
 #[macro_use]
 pub mod shortcut;
 
-pub use {core::SAideApp, egui_command_egui::shortcut_map};
+pub use {core::SAideApp, egui_command_binding::shortcut_map};

@@ -1148,7 +1148,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui-command-egui"
+name = "egui-command-binding"
 version = "0.1.0"
 dependencies = [
  "egui",
@@ -3364,7 +3364,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui-command",
- "egui-command-egui",
+ "egui-command-binding",
  "egui_cjk_font",
  "ffmpeg-next",
  "fluent-bundle",
