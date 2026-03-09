@@ -9,30 +9,40 @@ mod theme;
 mod toolbar;
 
 use {
-    crate::{
-        sc,
-        shortcut::{ShortcutManager, ShortcutMap},
-        shortcuts,
-    },
-    egui_action_macro::action,
+    crate::shortcut::{ShortcutManager, ShortcutMap, shortcut_map},
     lazy_static::lazy_static,
     parking_lot::RwLock,
     std::sync::Arc,
 };
 pub use {app::SAideApp, theme::ThemeMode};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AppCommand {
+    ShowHelp,
+    ShowProfileSelection,
+    PrevProfile,
+    NextProfile,
+    ShowRenameDialog,
+    ShowCreateDialog,
+    ShowDeleteDialog,
+    ShowSaveAsDialog,
+    CloseEditor,
+    RenameProfile,
+    CreateProfile,
+    SaveProfileAs,
+    DeleteProfile,
+    SwitchProfile,
+}
+
 lazy_static! {
-    pub static ref GLOBAL_SHORTCUTS: Arc<RwLock<ShortcutMap<SAideApp>>> =
-        Arc::new(RwLock::new(shortcuts! {
-            sc!("F1") => action!(null SAideApp::show_help_dialog);
-            sc!("F6") => action!(serial [
-                action!(null SAideApp::show_profile_selection_dialog),
-                action!(null SAideApp::switch_profile)
-            ]);
-            sc!("F7") => action!(null SAideApp::prev_profile);
-            sc!("F8") => action!(null SAideApp::next_profile);
+    pub static ref GLOBAL_SHORTCUTS: Arc<RwLock<ShortcutMap<AppCommand>>> =
+        Arc::new(RwLock::new(shortcut_map! {
+            "F1" => AppCommand::ShowHelp,
+            "F6" => AppCommand::ShowProfileSelection,
+            "F7" => AppCommand::PrevProfile,
+            "F8" => AppCommand::NextProfile,
         }));
-    pub static ref SHORTCUT_MANAGER: ShortcutManager<SAideApp> =
+    pub static ref SHORTCUT_MANAGER: ShortcutManager<AppCommand> =
         ShortcutManager::new(GLOBAL_SHORTCUTS.clone());
 }
 

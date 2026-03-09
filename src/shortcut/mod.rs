@@ -1,4 +1,2 @@
-#[macro_use]
 mod manager;
-
-pub use manager::{ShortcutManager, ShortcutMap, ShortcutScope, shortcut};
+pub use manager::{Shortcut, ShortcutManager, ShortcutMap, ShortcutScope, shortcut, shortcut_map};

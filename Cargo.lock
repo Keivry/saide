@@ -473,9 +473,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "bindgen"
-version = "0.70.1"
+version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f49d8fed880d473ea71efb9bf597651e77201bdd4893efe54c9e5d65ae04ce6f"
+checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
 dependencies = [
  "bitflags 2.10.0",
  "cexpr",
@@ -484,7 +484,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rustc-hash 1.1.0",
+ "rustc-hash 2.1.1",
  "shlex",
  "syn",
 ]
@@ -1141,30 +1141,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui-action"
+name = "egui-command"
 version = "0.1.0"
 dependencies = [
- "egui",
- "thiserror 2.0.17",
+ "rustc-hash 2.1.1",
 ]
 
 [[package]]
-name = "egui-action"
+name = "egui-command-egui"
 version = "0.1.0"
-source = "git+https://github.com/Keivry/egui-action.git?branch=main#f791a45e71e73d785a47d4693a34159d13299abd"
 dependencies = [
  "egui",
+ "egui-command",
+ "parking_lot",
  "thiserror 2.0.17",
-]
-
-[[package]]
-name = "egui-action-macro"
-version = "0.1.0"
-dependencies = [
- "egui-action 0.1.0 (git+https://github.com/Keivry/egui-action.git?branch=main)",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -1394,9 +1384,9 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-next"
-version = "7.1.0"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da02698288e0275e442a47fc12ca26d50daf0d48b15398ba5906f20ac2e2a9f9"
+checksum = "d658424d233cbd993a972dd73a66ca733acd12a494c68995c9ac32ae1fe65b40"
 dependencies = [
  "bitflags 2.10.0",
  "ffmpeg-sys-next",
@@ -1405,9 +1395,9 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-sys-next"
-version = "7.1.3"
+version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9e9c75ebd4463de9d8998fb134ba26347fe5faee62fabf0a4b4d41bd500b4ad"
+checksum = "9bca20aa4ee774fe384c2490096c122b0b23cf524a9910add0686691003d797b"
 dependencies = [
  "bindgen",
  "cc",
@@ -3373,8 +3363,8 @@ dependencies = [
  "directories",
  "eframe",
  "egui",
- "egui-action 0.1.0",
- "egui-action-macro",
+ "egui-command",
+ "egui-command-egui",
  "egui_cjk_font",
  "ffmpeg-next",
  "fluent-bundle",
@@ -3865,14 +3855,14 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.9.10+spec-1.1.0"
+version = "1.0.4+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0825052159284a1a8b4d6c0c86cbc801f2da5afd2b225fa548c72f2e74002f48"
+checksum = "c94c3321114413476740df133f0d8862c61d87c8d26f04c6841e033c8c80db47"
 dependencies = [
  "indexmap",
  "serde_core",
  "serde_spanned",
- "toml_datetime",
+ "toml_datetime 1.0.0+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow",
@@ -3888,22 +3878,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml_datetime"
+version = "1.0.0+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32c2555c699578a4f59f0cc68e5116c8d7cabbd45e1409b989d4be085b53f13e"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "toml_edit"
 version = "0.23.10+spec-1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84c8b9f757e028cee9fa244aea147aab2a9ec09d5325a9b01e0a49730c2b5269"
 dependencies = [
  "indexmap",
- "toml_datetime",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "winnow",
 ]
 
 [[package]]
 name = "toml_parser"
-version = "1.0.6+spec-1.1.0"
+version = "1.0.9+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3198b4b0a8e11f09dd03e133c0280504d0801269e9afa46362ffde1cbeebf44"
+checksum = "702d4415e08923e7e1ef96cd5727c0dfed80b4d2fa25db9647fe5eb6f7c5a4c4"
 dependencies = [
  "winnow",
 ]

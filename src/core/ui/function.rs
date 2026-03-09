@@ -1,10 +1,5 @@
-use {
-    crate::{SAideApp, config::mapping::Profile, t},
-    egui_action::ActionArgs,
-    egui_action_macro::impl_action,
-};
+use crate::{SAideApp, config::mapping::Profile, t};
 
-#[impl_action]
 impl SAideApp {
     pub fn create_profile(&mut self, profile_name: &str) {
         let profile = Profile::new(

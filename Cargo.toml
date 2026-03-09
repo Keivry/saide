@@ -75,14 +75,14 @@ lazy_static = "1.5.0"
 parking_lot = "0.12.5"
 arc-swap = "1.8.1"
 
-ffmpeg-next = "7.1"
+ffmpeg-next = "8"
 
 cpal = "0.17"
 rtrb = "0.3"
 
 opus = "0.3"
 
-toml = "0.9"
+toml = "1"
 chrono = { version = "0.4.43", features = ["serde"] }
 
 directories = "6"
@@ -97,8 +97,8 @@ sys-locale = "0.3"
 lru = "0.16"
 
 egui_cjk_font = { path = "crates/egui-cjk-font" }
-egui-action = { path = "crates/egui-action" }
-egui-action-macro = { path = "crates/egui-action-macro" }
+egui-command = { path = "crates/egui-command" }
+egui-command-egui = { path = "crates/egui-command-egui" }
 
 notify = "8"
 

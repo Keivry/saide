@@ -9,34 +9,21 @@ use {
             coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
             utils::extract_position,
         },
-        app::SAideApp,
+        AppCommand,
         theme::AppColors,
     },
-    crate::{config::mapping::ProfileRef, sc, shortcut::ShortcutMap, shortcuts, t},
+    crate::{config::mapping::ProfileRef, shortcut::ShortcutMap, t},
     eframe::egui::{self, Color32, FontId, Pos2, Stroke},
-    egui_action_macro::action,
     lazy_static::lazy_static,
 };
 
 lazy_static! {
-    pub static ref MAPPING_EDITOR_SHORTCUTS: ShortcutMap<SAideApp> = shortcuts! {
-        sc!("F2") => action!(serial [
-            action!(null SAideApp::show_rename_profile_dialog),
-            action!(null SAideApp::rename_profile),
-        ]);
-        sc!("F3") => action!(serial [
-            action!(null SAideApp::show_create_profile_dialog),
-            action!(null SAideApp::create_profile),
-        ]);
-        sc!("F4") => action!(serial [
-            action!(null SAideApp::show_delete_profile_dialog),
-            action!(null SAideApp::delete_profile),
-        ]);
-        sc!("F5") => action!(serial [
-            action!(null SAideApp::show_save_profile_as_dialog),
-            action!(null SAideApp::save_profile_as),
-        ]);
-        sc!("Escape") => action!(null SAideApp::close_mapping_editor);
+    pub static ref MAPPING_EDITOR_SHORTCUTS: ShortcutMap<AppCommand> = crate::shortcut_map! {
+        "F2"     => AppCommand::ShowRenameDialog,
+        "F3"     => AppCommand::ShowCreateDialog,
+        "F4"     => AppCommand::ShowDeleteDialog,
+        "F5"     => AppCommand::ShowSaveAsDialog,
+        "Escape" => AppCommand::CloseEditor,
     };
 }
 

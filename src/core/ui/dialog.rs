@@ -1,11 +1,8 @@
 use {
     super::SAideApp,
     crate::{modal::ModalDialog, t, tf},
-    egui_action::ActionArgs,
-    egui_action_macro::impl_action,
 };
 
-#[impl_action]
 impl SAideApp {
     pub fn show_help_dialog(&mut self) {
         if self.dialog.is_none() {
