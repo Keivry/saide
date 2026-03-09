@@ -16,7 +16,7 @@ const BUTTON_SIZE: (f32, f32) = (80.0, 30.0);
 #[derive(Debug, PartialEq)]
 pub enum ButtonState {
     NoAction,
-    Comfirmed,
+    Confirmed,
     Cancelled,
 }
 
@@ -96,7 +96,7 @@ pub enum DialogState {
     NoAction,
 
     /// Confirmed with no state
-    Comfirmed,
+    Confirmed,
 
     /// Cancelled by user action,
     /// such as clicking cancel button or pressing Escape key
@@ -135,7 +135,7 @@ impl DialogState {
 impl From<WidgetState> for DialogState {
     fn from(state: WidgetState) -> Self {
         match state {
-            WidgetState::Empty => DialogState::Comfirmed,
+            WidgetState::Empty => DialogState::Confirmed,
             WidgetState::TextInput(text) => DialogState::String(text),
             WidgetState::ListSelection(idx) => DialogState::Usize(idx),
         }
@@ -169,7 +169,7 @@ impl DialogBody {
             DialogBody::Widgets(widgets) => match widgets.len() {
                 // Return confirmed state directly if there are no widgets,
                 // which is a common case for simple dialogs
-                0 => DialogState::Comfirmed,
+                0 => DialogState::Confirmed,
 
                 // If there's only one widget, return its state directly
                 // without wrapping in a HashMap
@@ -189,7 +189,7 @@ impl DialogBody {
                         .iter()
                         .all(|(_, state)| matches!(state, WidgetState::Empty))
                     {
-                        return DialogState::Comfirmed;
+                        return DialogState::Confirmed;
                     }
 
                     DialogState::WidgetsState(states)
@@ -201,7 +201,7 @@ impl DialogBody {
             DialogBody::KeyCapture(_) => DialogState::None,
 
             // Static dialog has no state, so return Empty state
-            DialogBody::Static => DialogState::Comfirmed,
+            DialogBody::Static => DialogState::Confirmed,
         }
     }
 }
@@ -438,7 +438,7 @@ impl ModalDialog {
 
                 let confirm_enabled = self.body.validate();
                 let button_state = self.draw_buttons(ui, confirm_enabled);
-                let mut confirmed = button_state == ButtonState::Comfirmed;
+                let mut confirmed = button_state == ButtonState::Confirmed;
 
                 ui.input_mut(|input| {
                     for event in &input.events {
@@ -562,7 +562,7 @@ impl ModalDialog {
                     )
                     .clicked()
                 {
-                    state = ButtonState::Comfirmed;
+                    state = ButtonState::Confirmed;
                 }
 
                 if self.cancel.is_some() {

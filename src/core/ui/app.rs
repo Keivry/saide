@@ -12,10 +12,10 @@ use {
             },
             profile_manager::ProfileManager,
             state::{AppState, ConfigState, UIState},
-            utils::find_nearest_mapping,
         },
+        AppCommand,
         SHORTCUT_MANAGER,
-        editor::MappingEditor,
+        editor::{MAPPING_EDITOR_SHORTCUTS, MappingEditor},
         indicator::Indicator,
         player::{PlayerState, StreamPlayer},
         theme::AppColors,
@@ -24,7 +24,7 @@ use {
     crate::{
         config::{
             SAideConfig,
-            mapping::{Key, KeyMapping, MappingAction, MouseButton, ScrcpyAction, WheelDirection},
+            mapping::{Key, MappingAction, MouseButton, ScrcpyAction, WheelDirection},
         },
         controller::mouse::MouseState,
         core::{
@@ -34,7 +34,6 @@ use {
         error::Result,
         modal::{DialogState, ModalDialog},
         t,
-        tf,
     },
     crossbeam_channel::{Receiver, bounded},
     std::{sync::Arc, thread, time::Instant},
@@ -61,6 +60,7 @@ pub struct SAideApp {
 
     pub(super) dialog: Option<ModalDialog>,
     pub(super) mapping_editor: Option<MappingEditor>,
+    pub(super) pending_command: Option<AppCommand>,
 
     pub(super) app_state: AppState,
     pub(super) config_state: ConfigState,
@@ -111,6 +111,7 @@ impl SAideApp {
 
             dialog: None,
             mapping_editor: None,
+            pending_command: None,
 
             app_state: AppState::new(serial.to_owned(), cancel_token),
             config_state: ConfigState::new(config_manager),
@@ -1029,25 +1030,78 @@ impl SAideApp {
     //     }
     // }
 
-    fn process_event(&mut self) {
-        //     if self.pending_events.is_empty() {
-        //         return;
-        //     }
+    fn process_commands(&mut self, commands: Vec<AppCommand>) {
+        for cmd in commands {
+            match cmd {
+                AppCommand::ShowHelp => self.show_help_dialog(),
+                AppCommand::ShowProfileSelection => {
+                    let had_dialog = self.dialog.is_some();
+                    self.show_profile_selection_dialog();
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(AppCommand::SwitchProfile);
+                    }
+                }
+                AppCommand::PrevProfile => self.prev_profile(),
+                AppCommand::NextProfile => self.next_profile(),
+                AppCommand::ShowRenameDialog => {
+                    let had_dialog = self.dialog.is_some();
+                    self.show_rename_profile_dialog();
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(AppCommand::RenameProfile);
+                    }
+                }
+                AppCommand::ShowCreateDialog => {
+                    let had_dialog = self.dialog.is_some();
+                    self.show_create_profile_dialog();
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(AppCommand::CreateProfile);
+                    }
+                }
+                AppCommand::ShowDeleteDialog => {
+                    let had_dialog = self.dialog.is_some();
+                    self.show_delete_profile_dialog();
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(AppCommand::DeleteProfile);
+                    }
+                }
+                AppCommand::ShowSaveAsDialog => {
+                    let had_dialog = self.dialog.is_some();
+                    self.show_save_profile_as_dialog();
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(AppCommand::SaveProfileAs);
+                    }
+                }
+                AppCommand::CloseEditor => self.close_mapping_editor(),
+                AppCommand::RenameProfile
+                | AppCommand::CreateProfile
+                | AppCommand::SaveProfileAs
+                | AppCommand::DeleteProfile
+                | AppCommand::SwitchProfile => {}
+            }
+        }
+    }
 
-        //     let event = self.pending_events.pop_front().unwrap();
-        //     match event {
-        //         EditorEvent::AddMapping(pos) => self.show_add_mapping_dialog(&pos),
-        //         EditorEvent::DeleteMapping(pos) => self.show_delete_mapping_dialog(&pos),
-        //         EditorEvent::RenameProfile => self.show_rename_profile_dialog(),
-        //         EditorEvent::NewProfile => self.show_new_profile_dialog(),
-        //         EditorEvent::SaveAsProfile => self.show_save_as_profile_dialog(),
-        //         // MappingConfigEvent::ShowHelp => self.show_help_dialog(),
-        //         EditorEvent::SwitchProfile => self.show_switch_profile_dialog(),
-        //         _ => {}
-        //     }
+    fn apply_dialog_result(&mut self, result: DialogState) {
+        if matches!(result, DialogState::None | DialogState::NoAction) {
+            return;
+        }
 
-        // TODO: implement event processing for mapping editor (add mapping, delete mapping, rename
-        // profile, new profile, save as profile, switch profile)
+        let Some(pending) = self.pending_command.take() else {
+            return;
+        };
+
+        match (pending, result) {
+            (AppCommand::RenameProfile, DialogState::String(name)) => self.rename_profile(&name),
+            (AppCommand::CreateProfile, DialogState::String(name)) => self.create_profile(&name),
+            (AppCommand::SaveProfileAs, DialogState::String(name)) => self.save_profile_as(&name),
+            (AppCommand::DeleteProfile, DialogState::Confirmed) => self.delete_profile(),
+            (AppCommand::SwitchProfile, DialogState::Usize(idx)) => self.switch_profile(idx),
+            (cmd, result) => {
+                warn!(
+                    "apply_dialog_result: unhandled (pending={cmd:?}, result={result:?}) — command dropped"
+                );
+            }
+        }
     }
 
     // fn show_delete_mapping_dialog(&mut self, screen_pos: &egui::Pos2) {
@@ -1124,7 +1178,7 @@ impl SAideApp {
         state
     }
 
-    pub fn notify(&self, notification: &str) {
+    pub fn notify(&self, _notification: &str) {
         // TODO: implement notification system (e.g. toast messages or status bar)
     }
 
@@ -1257,11 +1311,16 @@ impl eframe::App for SAideApp {
                     self.ui_state.set_ui_initialized();
                 }
 
-                let _ = SHORTCUT_MANAGER.dispatch(self, ctx);
-                self.process_event();
+                let editor_scope = self
+                    .mapping_editor
+                    .as_ref()
+                    .map(|_| &*MAPPING_EDITOR_SHORTCUTS);
+                let commands = SHORTCUT_MANAGER.dispatch_raw_with_extra(ctx, editor_scope);
+                self.process_commands(commands);
 
                 self.draw_editor(ctx);
-                self.draw_dialog(ctx);
+                let dialog_result = self.draw_dialog(ctx);
+                self.apply_dialog_result(dialog_result);
                 if self.dialog.is_none() {
                     self.process_input_events(ctx);
                 }
