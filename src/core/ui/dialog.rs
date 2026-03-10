@@ -192,6 +192,20 @@ impl SAideApp {
             }
         };
 
+        let progress = match &self.probe_current_step {
+            None => 0.0,
+            Some(ProbeStep::DetectingDevice) => 0.05,
+            Some(ProbeStep::DetectingEncoder) => 0.15,
+            Some(ProbeStep::TestingProfile { index, total, .. }) => {
+                0.15 + 0.45 * (*index as f32 / (*total).max(1) as f32)
+            }
+            Some(ProbeStep::TestingOption { index, total, .. }) => {
+                0.60 + 0.25 * (*index as f32 / (*total).max(1) as f32)
+            }
+            Some(ProbeStep::Validating) => 0.90,
+            Some(ProbeStep::Done(_)) => 1.0,
+        };
+
         egui::Window::new(t!("probe-codec-progress-title"))
             .collapsible(false)
             .resizable(false)
@@ -201,7 +215,7 @@ impl SAideApp {
                 ui.add_space(8.0);
                 ui.label(step_text);
                 ui.add_space(8.0);
-                ui.add(egui::ProgressBar::new(0.0).animate(true));
+                ui.add(egui::ProgressBar::new(progress).animate(true));
                 ui.add_space(4.0);
             });
     }
