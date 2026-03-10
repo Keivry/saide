@@ -34,8 +34,8 @@ This document summarizes the complete dialog system refactoring across three pha
 5. **Added** missing i18n keys (`mapping-config-dialog-{new,saveas,profile-exists}-title`)
 
 ### Files Modified
-- `src/saide/ui/saide.rs`
-- `src/saide/ui/mapping.rs`
+- `src/core/ui/app.rs`
+- `src/core/ui/editor.rs`
 - `i18n/en-US/main.ftl`
 - `i18n/zh-CN/main.ftl`
 
@@ -90,7 +90,7 @@ pending_dialog_events: VecDeque<MappingConfigEvent>  // Queue of events
 
 #### 1. Event Queue Implementation
 
-**File**: `src/saide/ui/saide.rs`
+**File**: `src/core/ui/app.rs`
 
 **Modified Struct**:
 ```rust
@@ -202,7 +202,7 @@ self.pending_dialog_event = Some(MappingConfigEvent::SomeEvent);
 
 #### 2. Global Shortcut Handling
 
-**File**: `src/saide/ui/saide.rs`
+**File**: `src/core/ui/app.rs`
 
 **Modified** `process_keyboard_event`:
 ```rust
@@ -263,8 +263,8 @@ fn process_keyboard_event(&mut self, key: &egui::Key, pressed: bool, modifiers: 
 | F1  | Global | Show help | Yes |
 | F2  | Overlay-only | Rename profile | Yes |
 | F3  | Overlay-only | New profile | Yes |
-| F4  | Overlay-only | Save as profile | Yes |
-| F5  | Overlay-only | Delete profile | No (direct) |
+| F4  | Overlay-only | Delete profile | Yes |
+| F5  | Overlay-only | Save as profile | Yes |
 | F6  | Global | Switch profile | Yes |
 | F7  | Global | Previous profile | No (direct) |
 | F8  | Global | Next profile | No (direct) |
@@ -376,7 +376,7 @@ SAideApp
 
 ## Files Modified (Phase 3)
 
-1. **`src/saide/ui/saide.rs`**:
+1. **`src/core/ui/app.rs`**:
    - Changed `pending_dialog_event: Option<T>` → `pending_dialog_events: VecDeque<T>`
    - Added `show_dialog_for_event()` method
    - Modified `handle_mapping_event()` to enqueue events
@@ -458,8 +458,8 @@ See docs/testing/EVENT_QUEUE_VERIFICATION.md for manual test procedures
 - **Related Issues**: None (internal refactoring)
 - **Related Docs**:
   - `docs/testing/EVENT_QUEUE_VERIFICATION.md`
-  - `src/saide/ui/mapping.rs` (event emitter)
-  - `src/saide/ui/dialog.rs` (dialog primitives)
+  - `src/core/ui/editor.rs` (event emitter)
+  - `src/core/ui/dialog.rs` (dialog primitives)
 
 ---
 

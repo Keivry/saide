@@ -29,8 +29,8 @@
   - Lock-free ring buffer for glitch-free playback
 - 🖥️ **Modern UI**: Cross-platform desktop interface built with egui
   - Real-time FPS and latency indicators
-  - Visual mapping editor (planned)
-  - Settings panel (planned)
+  - Visual mapping editor
+  - Settings panel
 - 🌐 **Internationalization**: Full support for Chinese and English locales
   - Automatic language detection (system `$LANG`)
   - Hot-reload in debug mode
@@ -225,10 +225,12 @@ saide/
 ├── src/
 │   ├── main.rs              # Application entry point
 │   ├── lib.rs               # Library exports
-│   ├── saide/               # UI layer (egui)
-│   │   ├── ui/              # SAideApp, Toolbar, Indicator
-│   │   ├── init.rs          # Connection initialization
-│   │   └── ...
+│   ├── core/                # UI layer & application logic (egui)
+│   │   ├── ui/              # app.rs, editor.rs, player.rs, toolbar.rs, indicator.rs
+│   │   ├── coords/          # Coordinate mapping (screen ↔ device)
+│   │   ├── connection.rs    # Connection management
+│   │   ├── device_monitor.rs # ADB device enumeration
+│   │   └── state.rs         # Application state machine
 │   ├── controller/          # Input handling
 │   │   ├── keyboard.rs      # Keyboard mapper
 │   │   ├── mouse.rs         # Mouse mapper

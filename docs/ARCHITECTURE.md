@@ -208,7 +208,7 @@ The central component for video and audio rendering.
 - Dynamic resolution switching
 - Frame dropping for AV sync
 
-**Source**: `src/saide/ui/stream_player.rs`
+**Source**: `src/core/ui/player.rs`
 
 ### 2. ScrcpyConnection
 
@@ -254,7 +254,7 @@ Three coordinate systems for input mapping:
 | **ScrcpyCoordSys**  | Scrcpy protocol coordinates | Video resolution, capture orientation          |
 | **VisualCoordSys**  | UI display coordinates      | Video rect, window size, visual rotation       |
 
-**Source**: `src/saide/coords.rs`
+**Source**: `src/core/coords/`
 
 ### 5. Lock-Free AV Sync
 
@@ -272,6 +272,96 @@ Atomic snapshot architecture for audio/video synchronization.
 - Zero contention between threads
 
 **Source**: `src/sync/clock.rs`
+
+---
+
+### 6. Command & Shortcut System
+
+SAide uses a two-crate event system to decouple keyboard input from application logic.
+
+**Crates**:
+
+| Crate | Responsibility |
+|---|---|
+| `egui-command` | Pure command identity (`CommandId`, `CommandSpec`, `CommandState`) — no egui dependency |
+| `egui-command-binding` | egui-aware dispatch: `ShortcutManager<C>`, `ShortcutMap<C>`, `ShortcutScope<C>` |
+
+**`AppCommand` Enum** (`src/core/ui/mod.rs`):
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AppCommand {
+    ShowHelp,              // F1
+    ShowProfileSelection,  // F6
+    PrevProfile,           // F7
+    NextProfile,           // F8
+    ShowRenameDialog,      // F2 (editor scope)
+    ShowCreateDialog,      // F3 (editor scope)
+    ShowDeleteDialog,      // F4 (editor scope)
+    ShowSaveAsDialog,      // F5 (editor scope)
+    CloseEditor,           // Esc (editor scope)
+}
+```
+
+`AppCommand` must be `Copy + Hash` to be used as a `ShortcutMap` key. Commands that need to carry data (e.g., a file path or mapping position) use `PendingCommand` instead, which is stored separately in application state.
+
+**`PendingCommand` Enum** — dialog-result carriers:
+
+```rust
+pub enum PendingCommand {
+    RenameProfile, CreateProfile, SaveProfileAs, DeleteProfile, SwitchProfile,
+    AddMapping(MappingPos), DeleteMapping(Key), ProbeCodec,
+}
+```
+
+**Shortcut Registration** (`src/core/ui/mod.rs`):
+
+```rust
+// Global shortcuts (always active)
+lazy_static! {
+    pub static ref GLOBAL_SHORTCUTS: Arc<RwLock<ShortcutMap<AppCommand>>> =
+        Arc::new(RwLock::new(shortcut_map! {
+            "F1" => AppCommand::ShowHelp,
+            "F6" => AppCommand::ShowProfileSelection,
+            "F7" => AppCommand::PrevProfile,
+            "F8" => AppCommand::NextProfile,
+        }));
+    pub static ref SHORTCUT_MANAGER: ShortcutManager<AppCommand> =
+        ShortcutManager::new(GLOBAL_SHORTCUTS.clone());
+}
+```
+
+Editor-specific shortcuts (F2–F5, Esc) are registered as a `ShortcutScope` pushed onto the `SHORTCUT_MANAGER` stack when the editor panel is active, and popped on close.
+
+**Dispatch Flow**:
+
+```text
+egui frame input
+       │
+       ▼
+ShortcutManager::dispatch(ctx)
+       │  lookup order:
+       │  1. Extra scope (if provided, always consuming)
+       │  2. Scope stack top-down (stop at consuming scope)
+       │  3. Global ShortcutMap
+       │
+       ▼
+Vec<AppCommand>   ───►   app.rs process_commands()
+                               │
+                   ┌───────────┴───────────┐
+                   ▼                       ▼
+           Direct action           Set PendingCommand
+           (e.g., prev profile)    (opens dialog; result
+                                    processed next frame)
+```
+
+**Key Design Properties**:
+
+- `ShortcutManager` does not block; consumed keys are removed from egui's input queue in the same frame
+- `SHORTCUT_MANAGER` is a `lazy_static` singleton — no per-frame allocation
+- Scopes enable context-sensitive shortcuts without global state mutation
+
+**Source**: `crates/egui-command/`, `crates/egui-command-binding/`, `src/shortcut/`, `src/core/ui/mod.rs`
 
 ---
 

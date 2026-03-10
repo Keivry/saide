@@ -231,7 +231,7 @@ pub struct ScrcpyConfig {
     pub disable_av_sync: bool,
 }
 
-// 位置: src/saide/ui/player.rs:686
+// 位置: src/core/ui/player.rs:686
 if !config.disable_av_sync && av_snapshot.should_drop_video(frame.pts) {
     // 丢帧逻辑
 }
@@ -557,7 +557,7 @@ pub struct LatencyBreakdown {
 ### 集成点
 
 ```rust
-// 位置: src/saide/ui/player.rs:640
+// 位置: src/core/ui/player.rs:640
 let pts = video_packet.pts_us as i64;
 
 // 新增: 初始化 profiler
@@ -584,7 +584,7 @@ if frame_count % 60 == 0 {
 ### UI 展示
 
 ```rust
-// 位置: src/saide/ui/indicator.rs
+// 位置: src/core/ui/indicator.rs
 // 在 FPS 旁边显示延迟
 
 ui.label(format!(
@@ -603,7 +603,7 @@ ui.label(format!(
 **现象**: UI Indicator 显示的 "GPU Upload" 时间为近似值,非实际 GPU 上传耗时
 
 **原因**:
-- `LatencyProfiler.mark_upload()` 在视频解码线程调用 (位于 `src/saide/ui/player.rs:703`)
+- `LatencyProfiler.mark_upload()` 在视频解码线程调用 (位于 `src/core/ui/player.rs:703`)
 - 实际 GPU 上传发生在 UI 渲染线程的 `Nv12RenderCallback::prepare()` 中 (位于 `src/decoder/nv12_render.rs:330`)
 - 跨线程时间测量需要额外同步机制 (Phase 1 未实现)
 

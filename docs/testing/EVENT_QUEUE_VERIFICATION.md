@@ -92,9 +92,9 @@ cargo build --release
 3. Wait 500ms
 4. Press `F3` (New Profile)
 5. Wait 500ms
-6. Press `F4` (Save As Profile)
+6. Press `F4` (Delete Profile)
 7. Wait 500ms
-8. Press `F5` (Delete Profile)
+8. Press `F5` (Save As Profile)
 9. Wait 500ms
 
 **Expected Result**:
@@ -115,13 +115,13 @@ cargo build --release
 5. Close dialog
 6. Press `F4`
 7. Close dialog
-8. Press `F5` (if profiles exist)
+8. Press `F5`
 
 **Expected Result**:
 - ✅ `F2`: Rename Profile dialog appears (with current profile name)
 - ✅ `F3`: New Profile dialog appears (empty name input)
-- ✅ `F4`: Save As Profile dialog appears (with current profile name)
-- ✅ `F5`: Active profile is deleted, no dialog (direct action)
+- ✅ `F4`: Delete Profile dialog appears (with current profile name)
+- ✅ `F5`: Save As Profile dialog appears (with current profile name)
 
 **Failure Symptoms**:
 - ❌ Any dialog fails to appear

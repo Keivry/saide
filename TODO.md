@@ -145,7 +145,7 @@
 
 ### 代码结构
 
-- [ ] **[refactor]** `src/saide/ui/saide.rs`: 1146 行超大文件  
+- [ ] **[refactor]** `src/core/ui/app.rs`: 超大文件  
       **解法**: 拆分为 `state.rs`（状态定义）、`events.rs`（事件处理）、`render.rs`（UI 渲染）、`lifecycle.rs`（初始化/关闭）
 
 - [ ] **[dup]** `src/decoder/{h264,nvdec,vaapi}.rs`: FFmpeg 初始化代码重复（`packet.data_mut().unwrap().copy_from_slice`）  
@@ -204,19 +204,19 @@
 
 ### UI 完善
 
-- [ ] **[ui]** `src/saide/ui/log.rs`: 实现日志查看器（当前占位）  
+- [ ] **[ui]** `src/core/ui/log.rs`: 实现日志查看器（当前占位）  
       **需求**: 集成 `tracing-appender`，显示最近 1000 行日志，支持级别过滤（ERROR/WARN/INFO/DEBUG）
 
-- [ ] **[ui]** `src/saide/ui/settings.rs`: 实现设置面板（当前占位）  
+- [ ] **[ui]** `src/core/ui/settings.rs`: 实现设置面板（当前占位）  
       **需求**: 可视化配置 GPU 后端、视频编码器、音频、按键映射等（同步到 `config.toml`）
 
-- [ ] **[ui]** `src/saide/ui/overlay.rs`: 实现按键映射叠加层（当前占位）  
+- [ ] **[ui]** `src/core/ui/overlay.rs`: 实现按键映射叠加层（当前占位）  
       **需求**: 半透明显示当前激活的按键映射位置（类似游戏辅助）
 
-- [ ] **[ux]** `src/saide/ui/mapping.rs`: 缺少保存/加载/导出映射配置  
+- [ ] **[ux]** `src/core/ui/editor.rs`: 缺少保存/加载/导出映射配置  
       **需求**: 支持导入/导出 JSON 格式映射文件，预设常见游戏模板
 
-- [ ] **[ux]** `src/saide/ui/indicator.rs`: 仅显示 FPS  
+- [ ] **[ux]** `src/core/ui/indicator.rs`: 仅显示 FPS  
       **需求**: 增加分辨率、音频状态（采样率/延迟）、连接状态（USB/WiFi）、丢帧计数
 
 ### 解码器

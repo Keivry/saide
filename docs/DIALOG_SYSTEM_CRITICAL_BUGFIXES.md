@@ -17,7 +17,7 @@
 
 ### Root Cause
 
-**File**: `src/saide/ui/saide.rs` (line ~1636)
+**File**: `src/core/ui/app.rs` (line ~1636)
 
 **Before**:
 ```rust
@@ -65,7 +65,7 @@ if self.mapping_config_overlay.is_some() {
 
 ### Root Cause
 
-**File**: `src/saide/ui/dialog.rs` (line ~332)
+**File**: `src/core/ui/dialog.rs` (line ~332)
 
 **Before**:
 ```rust
@@ -168,10 +168,10 @@ cargo run --release
 
 ## Files Modified
 
-1. **`src/saide/ui/saide.rs`**:
+1. **`src/core/ui/app.rs`**:
    - Line ~1636: Always call `process_dialog_result()` when overlay closed
    
-2. **`src/saide/ui/dialog.rs`**:
+2. **`src/core/ui/dialog.rs`**:
    - Line ~331-377: Handle `ButtonState::Cancelled` properly
 
 ---

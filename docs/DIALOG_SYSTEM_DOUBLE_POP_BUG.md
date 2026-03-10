@@ -18,7 +18,7 @@
 
 ### Root Cause
 
-**File**: `src/saide/ui/saide.rs` 
+**File**: `src/core/ui/app.rs` 
 
 **Issue in `process_dialog_result()` (line ~1429-1439)**:
 
@@ -117,7 +117,7 @@ Dialog shown **by** `process_dialog_result()` line 1431-1432:
 
 ### Fix: Use `front()` Instead of `pop_front()` for Dialog Display
 
-**File**: `src/saide/ui/saide.rs` (line ~1429-1434)
+**File**: `src/core/ui/app.rs` (line ~1429-1434)
 
 **After**:
 ```rust
@@ -337,7 +337,7 @@ if dialog.is_some() {
 
 ## Files Modified
 
-1. **`src/saide/ui/saide.rs`**:
+1. **`src/core/ui/app.rs`**:
    - Line ~1431: Change `pop_front()` to `front()` + `clone()`
 
 ---
@@ -365,7 +365,7 @@ Why overlay worked but non-overlay failed:
   → Line 1431 pops, line 1439 finds empty queue
 
 Changes:
-- src/saide/ui/saide.rs: Change pop_front() to front() + clone()
+- src/core/ui/app.rs: Change pop_front() to front() + clone()
   when showing dialog (line 1431), keep pop_front() for confirm (line 1439)
 
 Test: cargo test --quiet (108 passed)

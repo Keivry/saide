@@ -18,7 +18,7 @@
 
 ### Root Cause
 
-**File**: `src/saide/ui/saide.rs` 
+**File**: `src/core/ui/app.rs` 
 
 **Issue in `handle_mapping_event()` (line ~626)**:
 ```rust
@@ -69,7 +69,7 @@ match dialog.draw(_ctx) {
 
 ### Root Cause
 
-**File**: `src/saide/ui/saide.rs` 
+**File**: `src/core/ui/app.rs` 
 
 **Issue in `handle_mapping_event()` (line ~626)**:
 ```rust
@@ -125,7 +125,7 @@ DialogState::WidgetsState(states) => {
 
 ### Fix: Always Queue Events Before Showing Dialogs
 
-**File**: `src/saide/ui/saide.rs` (line ~626)
+**File**: `src/core/ui/app.rs` (line ~626)
 
 **After**:
 ```rust
@@ -291,7 +291,7 @@ self.show_add_mapping_dialog(&pos);
 
 ## Files Modified
 
-1. **`src/saide/ui/saide.rs`**:
+1. **`src/core/ui/app.rs`**:
    - Line ~626: `handle_mapping_event()` - Queue events before showing dialogs
    
 ---

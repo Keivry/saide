@@ -10,7 +10,7 @@
 
 ### ✅ FIXED: Channel 错误处理的竞态条件
 
-**位置**: `src/saide/ui/player.rs:910-920` (已修复)  
+**位置**: `src/core/ui/player.rs:910-920` (已修复)  
 **问题**: 使用 `is_full()` 后置检查来判断 `try_send()` 失败原因，存在经典的 TOCTTOU (Time-Of-Check-To-Time-Of-Use) 竞态条件
 
 **症状** (在 Linux 和 Windows 上都会出现):
@@ -170,8 +170,8 @@ match frame_tx.try_send(Arc::new(frame)) {
 **性能影响**: 无（仅改变错误分类逻辑）
 
 **相关代码**:
-- 错误处理: `src/saide/ui/player.rs:910-920`
-- Receiver 生命周期: `src/saide/ui/player.rs:289, 309`
+- 错误处理: `src/core/ui/player.rs:910-920`
+- Receiver 生命周期: `src/core/ui/player.rs:289, 309`
 
 **参考**:
 - [crossbeam-channel `TrySendError` docs](https://docs.rs/crossbeam-channel/latest/crossbeam_channel/enum.TrySendError.html)
@@ -186,7 +186,7 @@ match frame_tx.try_send(Arc::new(frame)) {
 
 ### ✅ FIXED: ControlSender 分辨率未同步导致按键坐标错误
 
-**位置**: `src/saide/ui/saide.rs:1049-1070` (已修复)  
+**位置**: `src/core/ui/app.rs:1049-1070` (已修复)  
 **问题**: 设备旋转导致视频分辨率变化,但 `ControlSender` 的 `screen_size` 未更新,导致按键映射坐标计算错误
 
 **症状**:
@@ -217,7 +217,7 @@ y = 0.654 * video_height   // 0.654 * 1280 = 837  (错误!)
 `ControlSender.update_screen_size()` 只在**鼠标事件处理时**被调用:
 
 ```rust
-// src/saide/ui/saide.rs:597-600, 638-641
+// src/core/ui/app.rs:597-600, 638-641
 fn process_mouse_button_event(...) {
     sender.update_screen_size(...);  // ✅ 鼠标事件触发频繁
 }
@@ -229,7 +229,7 @@ fn process_mouse_button_event(...) {
 **修复后**:
 
 ```rust
-// src/saide/ui/saide.rs:1049-1070
+// src/core/ui/app.rs:1049-1070
 // 视频分辨率变化时
 self.app_state.scrcpy_coords_mut()
     .update_video_size(new_dimensions.0 as u16, new_dimensions.1 as u16);
@@ -260,13 +260,13 @@ if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper {
 
 - 坐标计算: `src/controller/keyboard.rs:362-366`
 - ControlSender: `src/controller/control_sender.rs:27-41`
-- 分辨率更新: `src/saide/ui/saide.rs:1036-1070`
+- 分辨率更新: `src/core/ui/app.rs:1036-1070`
 
 ---
 
 ### ✅ NEW: 自动视频旋转补偿 (2026-01-22 实现)
 
-**位置**: `src/saide/ui/saide.rs:446-480` (新增)  
+**位置**: `src/core/ui/app.rs:446-480` (新增)  
 **功能**: 当 `capture_orientation` 启用时（锁定视频捕获方向），设备物理旋转后自动调整 `video_rotation` 以保持画面正确显示
 
 **核心逻辑**:
@@ -387,10 +387,10 @@ hwdecode = true  # NVIDIA GPU 会自动锁定 capture_orientation
 
 **相关代码**:
 
-- 自动旋转: `src/saide/ui/saide.rs:446-480`
-- 旋转公式参考: `src/saide/coords/mapping.rs:54` (按键映射坐标转换)
+- 自动旋转: `src/core/ui/app.rs:446-480`
+- 旋转公式参考: `src/core/coords/mapping.rs:54` (按键映射坐标转换)
 - 启用条件: `src/scrcpy/server.rs:141-150`
-- 设备监控: `src/saide/device_monitor.rs:146-188`
+- 设备监控: `src/core/device_monitor.rs:146-188`
 
 ---
 
@@ -466,7 +466,7 @@ impl AudioPlayer {
 
 ### ✅ FIXED: Option::unwrap() 在初始化竞态 (commit 9e3b9a6)
 
-**位置**: `src/saide/ui/saide.rs` 多处 (已修复)  
+**位置**: `src/core/ui/app.rs` 多处 (已修复)  
 **问题**: `keyboard_mapper.as_ref().unwrap()` 在初始化未完成时 panic
 
 **修复前**:
@@ -538,7 +538,7 @@ let codec_id = u32::from_be_bytes(
 
 ### ✅ FIXED: unreachable!() 在取模后 (commit 7c6a4fa)
 
-**位置**: `src/saide/coords.rs:152,194,275,326` (已修复)  
+**位置**: `src/core/coords/:152,194,275,326` (已修复)  
 **问题**: 在取模运算后使用 `unreachable!()`，整数溢出可能触发
 
 **修复前**:
@@ -841,7 +841,7 @@ let path_str = path.to_string_lossy();
 
 ### ❌ God Object 反模式
 
-**位置**: `src/saide/ui/saide.rs:58-138`  
+**位置**: `src/core/ui/app.rs:58-138`  
 **问题**: `SAideApp` 包含 40+ 字段，违反单一职责原则
 
 ```rust
@@ -952,7 +952,7 @@ unsafe extern "C" fn get_cuda_format(...) -> i32 {
 
 ### ❌ 忽略解码器时序假设
 
-**位置**: `src/saide/ui/player.rs:453-728`  
+**位置**: `src/core/ui/player.rs:453-728`  
 **问题**: 假设视频/音频帧按严格顺序到达
 
 **教训**:
@@ -973,7 +973,7 @@ unsafe extern "C" fn get_cuda_format(...) -> i32 {
 
 ### ❌ unwrap() 滥用
 
-**位置**: `src/saide/ui/saide.rs:454,622,685,...`（68 处）  
+**位置**: `src/core/ui/app.rs:454,622,685,...`（68 处）  
 **问题**: 在生产代码路径使用 `unwrap()` 导致潜在 panic
 
 ```rust
@@ -1006,7 +1006,7 @@ self.keyboard_mapper
 
 ### ❌ unreachable!() 误用
 
-**位置**: `src/saide/coords.rs:152,194,275,326`  
+**位置**: `src/core/coords/:152,194,275,326`  
 **问题**: 在取模运算后使用 `unreachable!()`
 
 ```rust
@@ -1041,124 +1041,6 @@ match rotation {
     }
 }
 ```
-
----
-
-## 过程宏类型推导陷阱 (Procedural Macro Type Inference Pitfalls)
-
-### ✅ FIXED: action! 宏闭包类型推导失败 (2026-02-09)
-
-**位置**: `crates/egui-action-macro/src/lib.rs:508-522` (已修复)  
-**问题**: `action!` 宏的闭包语法生成的代码使用 `&mut _` 类型占位符，导致编译器无法推导具体类型
-
-**症状**:
-
-```rust
-// 使用闭包语法时编译失败
-action!(null |app: &mut SAideApp, _arg| {});
-// error[E0308]: mismatched types
-//   expected `()`, found `Box<dyn Fn(&mut _, &...) + Send + Sync>`
-```
-
-**根本原因**:
-
-修复前的 `generate_typed_closure()` 直接使用闭包并强制类型转换：
-
-```rust
-Action::Command(Box::new(Command::#variant(Box::new(
-    #closure as Box<dyn Fn(&mut _, &ActionArgs) -> #return_type + Send + Sync + 'static>
-    //                     ^^^ 类型占位符，宏展开时无法推导
-))))
-```
-
-问题在于：
-1. `&mut _` 是类型占位符，期望编译器推导
-2. 在宏展开阶段，编译器还没有足够上下文推导具体类型
-3. 返回的是 `Box<dyn Fn>` 而不是 `Action<App>`
-
-**修复方案** (遵循 Oracle 建议):
-
-使用**类型化 shim 函数**模式（与 `generate_typed_path()` 一致）：
-
-```rust
-fn generate_typed_closure(mode: ActionMode, closure: ExprClosure) -> TokenStream {
-    let variant = mode.command_variant();
-    let return_type = mode.return_type();
-
-    // 从闭包的第一个参数提取显式类型注解
-    let first_param_type = closure.inputs.first().and_then(|pat| {
-        if let Pat::Type(pat_type) = pat {
-            Some(&pat_type.ty)  // 例如：&mut SAideApp
-        } else {
-            None
-        }
-    });
-
-    if let Some(app_type) = first_param_type {
-        // 从 &mut T 中提取 T
-        let inner_type = if let Type::Reference(type_ref) = &**app_type {
-            &type_ref.elem  // 提取 SAideApp
-        } else {
-            app_type
-        };
-
-        // 生成带显式类型的 shim 函数，在宏展开时固定 App = SAideApp
-        TokenStream::from(quote! {
-            {
-                #[allow(unused_imports)]
-                use egui_action::{ActionArgs, Action, Command};
-
-                fn __egui_action_closure_cb(app: &mut #inner_type, args: &ActionArgs) -> #return_type {
-                    (#closure)(app, args)
-                }
-
-                Action::from(Command::#variant(Box::new(__egui_action_closure_cb)))
-            }
-        })
-    } else {
-        // 如果无法提取类型，生成编译错误
-        TokenStream::from(quote! {
-            compile_error!("action! closure requires explicit type annotation on first parameter: |app: &mut YourType, args| {{ ... }}");
-        })
-    }
-}
-```
-
-**关键改进**:
-
-1. **从闭包参数提取类型**: 解析 `|app: &mut SAideApp, _arg|` 中的 `SAideApp`
-2. **生成 shim 函数**: `fn __egui_action_closure_cb(app: &mut SAideApp, args: &ActionArgs)` 在宏展开时固定类型
-3. **使用 `Action::from()`**: 返回 `Action<SAideApp>` 而不是 `Box<dyn Fn>`
-4. **编译时错误提示**: 如果缺少类型注解，给出明确的错误信息
-
-**验证**:
-
-```bash
-# 修复后编译成功，仅有未使用变量警告
-cargo check --lib
-# warning: unused variable: `app`
-#   --> src/core/ui/editor.rs:23:36
-#    |
-# 23 |         sc!("F2") => action!(null |app: &mut SAideApp, _arg| {});
-#    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_app`
-
-# 无 E0282 (type annotations needed) 错误
-# 无 E0308 (mismatched types) 错误
-```
-
-**教训**:
-
-1. **过程宏中避免使用类型占位符 `_`**: 宏展开阶段编译器上下文不足，无法推导
-2. **使用 shim 函数固定泛型类型**: 在宏中生成带显式类型的中间函数，提前解析类型
-3. **遵循已有模式**: `generate_typed_path()` 已经使用 shim 模式成功解决类型推导问题，闭包语法应保持一致
-4. **从 AST 提取类型信息**: 使用 `syn` crate 的 `Pat::Type` 和 `Type::Reference` 解析用户提供的类型注解
-5. **提供清晰的编译错误**: 当宏无法处理输入时，生成 `compile_error!` 而不是让编译器产生难以理解的错误信息
-
-**相关参考**:
-
-- Oracle 咨询会话: `ses_3bf9be01fffe3Yu6FV6O226Znj`
-- Path 语法修复: commit d7a8f3c (使用 shim 函数解决 E0282 错误)
-- egui-action 类型系统: `Action<App>` = `Command(Box<dyn Execute<App>>)` | `Serial(Vec<...>)`
 
 ---
 
@@ -1374,7 +1256,7 @@ max_fps = 60
 
 ### ❌ 混用同步原语
 
-**位置**: `src/saide/ui/player.rs` (parking_lot), `src/decoder/audio/player.rs` (RefCell)  
+**位置**: `src/core/ui/player.rs` (parking_lot), `src/decoder/audio/player.rs` (RefCell)  
 **问题**: 无统一同步策略，容易混淆
 
 **教训**:
@@ -1430,7 +1312,7 @@ fn audio_callback(data: &mut [f32], consumer: &mut Consumer<f32>, underruns: &At
 
 ### ❌ 每帧重建大型结构
 
-**位置**: `src/saide/ui/saide.rs`  
+**位置**: `src/core/ui/app.rs`  
 **问题**: 在 `update()` 中重复分配内存
 
 **教训**:
@@ -1711,7 +1593,7 @@ unsafe {
 
 ### ✅ FIXED: 过早解码器初始化导致首帧失败 (commit PENDING)
 
-**位置**: `src/saide/ui/player.rs:581-920` (已修复)  
+**位置**: `src/core/ui/player.rs:581-920` (已修复)  
 **问题**: 视频解码器在连接握手时创建,使用占位分辨率而非实际 SPS 分辨率,导致首帧解码错误
 
 **症状**:
@@ -1870,7 +1752,7 @@ impl ServerParams {
     }
 }
 
-// src/saide/connection_service.rs (调用侧)
+// src/core/connection.rs (调用侧)
 let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
     if ServerParams::should_lock_orientation(config.gpu.hwdecode) {
         Some(0)  // 锁定竖屏 (0°)
@@ -1916,10 +1798,10 @@ let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
 
 **相关代码**:
 
-- 延迟初始化: `src/saide/ui/player.rs:581-587, 844-876`
+- 延迟初始化: `src/core/ui/player.rs:581-587, 844-876`
 - SPS 解析: `src/decoder/mod.rs:extract_resolution_from_stream()`
 - 方向锁定: `src/scrcpy/server.rs:141-166`
-- 自动旋转补偿: `src/saide/ui/saide.rs:446-480`
+- 自动旋转补偿: `src/core/ui/app.rs:446-480`
 
 **参考**:
 
@@ -2470,7 +2352,7 @@ if linesize != expected_stride {
 
 ### ✅ FIXED: WM 限制导致窗口无法按视频分辨率调整
 
-**位置**: `src/saide/ui/saide.rs:231-311` (已修复)  
+**位置**: `src/core/ui/app.rs:231-311` (已修复)  
 **问题**: GNOME/Wayland 等 WM 会限制窗口最大尺寸,直接按视频分辨率调整窗口可能失败
 
 **症状**:
@@ -2598,7 +2480,7 @@ fn calculate_window_size(
 **相关代码**:
 
 - 常量定义: `src/constant.rs:64-76`
-- 窗口调整: `src/saide/ui/saide.rs:231-311`
+- 窗口调整: `src/core/ui/app.rs:231-311`
 - 配置项: `src/config/mod.rs:143-148`
 
 **调试技巧**:
@@ -3034,7 +2916,7 @@ impl AutoDecoder {
 }
 ```
 
-**Caller Update** (`src/saide/connection_service.rs:60`):
+**Caller Update** (`src/core/connection.rs:60`):
 
 ```rust
 // Before (GPU detection in server.rs)

@@ -22,7 +22,7 @@
 
 ### Change 1: Guard `process_mapping_config_events()` Call
 
-**File**: `src/saide/ui/saide.rs` (line ~1638)
+**File**: `src/core/ui/app.rs` (line ~1638)
 
 **Before**:
 ```rust
@@ -49,7 +49,7 @@ if self.mapping_config_overlay.is_some() {
 
 ### Change 2: Remove Redundant Warning
 
-**File**: `src/saide/ui/saide.rs` (line ~570)
+**File**: `src/core/ui/app.rs` (line ~570)
 
 **Before**:
 ```rust
