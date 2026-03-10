@@ -3,7 +3,7 @@
 //! This module defines various constants used in the SAide application,
 //! including default paths, version strings, server configurations, and audio settings.
 
-use std::path::PathBuf;
+use {directories::ProjectDirs, std::path::PathBuf};
 
 /// Get project configuration directory path
 /// Returns None if unable to determine (e.g., Docker/sandbox environment)
@@ -24,6 +24,33 @@ pub fn fallback_config_path() -> PathBuf { std::env::temp_dir().join("saide").jo
 
 /// Fallback data directory path
 pub fn fallback_data_path() -> PathBuf { std::env::temp_dir().join("saide") }
+
+pub fn scrcpy_server_filename() -> String {
+    format!("scrcpy-server-{}", SCRCPY_SERVER_VERSION_STRING)
+}
+
+pub fn resolve_scrcpy_server_path() -> PathBuf {
+    let filename = scrcpy_server_filename();
+
+    if let Some(dir) = ProjectDirs::from("io", "keivry", "saide") {
+        let path = dir.data_dir().join(filename.as_str());
+        if path.is_file() {
+            return path;
+        }
+    }
+
+    let current_dir_path = PathBuf::from(filename.as_str());
+    if current_dir_path.is_file() {
+        return current_dir_path;
+    }
+
+    let legacy_repo_path = PathBuf::from("3rd-party").join(filename.as_str());
+    if legacy_repo_path.is_file() {
+        return legacy_repo_path;
+    }
+
+    current_dir_path
+}
 
 /// Version of the scrcpy server
 pub const SCRCPY_SERVER_VERSION: &str = "3.3.3";

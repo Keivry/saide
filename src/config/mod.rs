@@ -10,10 +10,9 @@ pub mod scrcpy;
 use {
     crate::{
         config::{log::LogConfig, mapping::MappingsConfig, scrcpy::ScrcpyConfig},
-        constant::{self, SCRCPY_SERVER_VERSION_STRING},
+        constant::{self},
         error::{Result, SAideError},
     },
-    directories::ProjectDirs,
     serde::{Deserialize, Serialize},
     std::{
         fmt::{self, Display},
@@ -180,16 +179,9 @@ fn default_window_width() -> u32 { 1280 }
 fn default_window_height() -> u32 { 720 }
 fn default_bind_address() -> String { "127.0.0.1".to_string() }
 fn default_scrcpy_server_path() -> String {
-    let scrcpy_server = format!("scrcpy-server-{}", SCRCPY_SERVER_VERSION_STRING);
-    if let Some(dir) = ProjectDirs::from("io", "keivry", "saide") {
-        let path = dir.data_dir().join(scrcpy_server.as_str());
-        if path.is_file() {
-            // Use to_string_lossy to handle non-UTF-8 paths on Windows
-            return path.to_string_lossy().to_string();
-        }
-    }
-
-    scrcpy_server
+    constant::resolve_scrcpy_server_path()
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Main configuration structure
