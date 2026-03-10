@@ -27,7 +27,7 @@ use {
     },
     std::{io::Read, sync::Arc, thread},
     tracing::{debug, error, info},
-    utils::get_device_serial,
+    utils::{get_device_serial, get_scrcpy_server_path},
 };
 
 fn main() -> Result<()> {
@@ -192,10 +192,7 @@ fn av_worker(
 ) -> Result<()> {
     info!("AV worker starting (single connection, dual threads)...");
 
-    let server_jar = "3rd-party/scrcpy-server-v3.3.3";
-    if !std::path::Path::new(server_jar).exists() {
-        anyhow::bail!("Server JAR not found: {}", server_jar);
-    }
+    let server_jar = get_scrcpy_server_path()?;
 
     // Single connection with both video and audio
     let mut params = ServerParams::for_device(&serial)?;
@@ -217,7 +214,7 @@ fn av_worker(
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
 
     // Get resolution before extracting streams
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));

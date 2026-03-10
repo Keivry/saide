@@ -9,7 +9,7 @@ use {
         scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
     tracing::info,
-    utils::get_device_serial,
+    utils::{get_device_serial, get_scrcpy_server_path},
 };
 
 fn main() -> Result<()> {
@@ -24,7 +24,7 @@ fn main() -> Result<()> {
 
     let serial = get_device_serial()?;
 
-    let server_jar = "3rd-party/scrcpy-server-v3.3.3";
+    let server_jar = get_scrcpy_server_path()?;
     let params = ServerParams::default();
 
     info!("Connecting to device...");
@@ -32,7 +32,7 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
 
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
     info!("Video resolution: {}x{}", width, height);

@@ -8,7 +8,7 @@ use {
         scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
     std::time::Duration,
-    utils::get_device_serial,
+    utils::{get_device_serial, get_scrcpy_server_path},
 };
 
 fn main() -> Result<()> {
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     let serial = get_device_serial()?;
     println!("📱 Device: {}", serial);
 
-    let server_jar = "3rd-party/scrcpy-server-v3.3.3";
+    let server_jar = get_scrcpy_server_path()?;
     let params = ServerParams {
         video: false,
         audio: true,
@@ -41,7 +41,7 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
 
     let _audio_stream = conn.take_audio_stream();
     if _audio_stream.is_none() {
