@@ -29,8 +29,7 @@ pub struct ProfileManager {
     /// Reference to the main config for profile CRUD operations
     profiles: Profiles,
 
-    /// Cached available profiles for current device and rotation (sorted by last_modified desc, no
-    /// duplicates by name)
+    /// Available profiles for current device and rotation, rebuilt by `update()`
     avail_profiles: Vec<ProfileRef>,
 
     /// Active profile for current device and rotation (if any)
@@ -92,21 +91,18 @@ impl ProfileManager {
         })
     }
 
+    fn filter_profiles_for_device(&self, device_serial: &str, rotation: u32) -> Vec<ProfileRef> {
+        self.profiles
+            .read()
+            .iter()
+            .filter(|p| p.read().matches(device_serial, rotation))
+            .cloned()
+            .collect()
+    }
+
     /// Filter profiles based on device serial and rotation
     pub fn get_avail_profiles(&self, device_serial: &str, rotation: u32) -> Vec<ProfileRef> {
-        if let Some((active_serial, active_rotation)) = self.get_device_info()
-            && active_serial == device_serial
-            && active_rotation == rotation
-        {
-            self.avail_profiles.clone()
-        } else {
-            self.profiles
-                .read()
-                .iter()
-                .filter(|profile| profile.read().matches(device_serial, rotation))
-                .cloned()
-                .collect()
-        }
+        self.filter_profiles_for_device(device_serial, rotation)
     }
 
     /// Get names of available profiles for current device and rotation
@@ -376,13 +372,8 @@ impl ProfileManager {
     /// - `device_serial`: current device serial
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
     pub fn update(&mut self, device_serial: &str, device_rotation: u32) {
-        let avail_profiles: Vec<ProfileRef> = self
-            .profiles
-            .read()
-            .iter()
-            .filter(|p| p.read().matches(device_serial, device_rotation))
-            .cloned()
-            .collect();
+        let avail_profiles: Vec<ProfileRef> =
+            self.filter_profiles_for_device(device_serial, device_rotation);
 
         if avail_profiles.is_empty() {
             self.active_profile.store(Arc::new(None));
