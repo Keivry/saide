@@ -21,7 +21,9 @@ indicator = true             # Show on-screen indicator
 indicator_position = "bottom-left"  # Indicator position: top-left/top-right/bottom-left/bottom-right
 window_width = 1280          # Default window width (pixels)
 window_height = 720          # Default window height (pixels)
+smart_window_resize = true   # Scale oversized video windows down to fit the screen
 bind_address = "127.0.0.1"   # Network bind address for scrcpy server
+scrcpy_server = "scrcpy-server-v3.3.3"  # Override local scrcpy-server path if needed
 ```
 
 ### [scrcpy.video] - Video Stream Settings
@@ -70,7 +72,10 @@ stay_awake = true            # Prevent device from sleeping
 [gpu]
 vsync = false                # Enable VSync (disable for lowest latency)
 backend = "VULKAN"           # GPU backend: VULKAN (default) or OPENGL
+hwdecode = true              # Enable hardware decode auto-detection/fallback
 ```
+
+If `general.scrcpy_server` is not overridden, SAide looks for `scrcpy-server-v3.3.3` in the application data directory first, then the current working directory, and finally the legacy `3rd-party/` path used by older example setups.
 
 ### [input] - Input Control Settings
 

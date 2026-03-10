@@ -851,10 +851,9 @@ impl DeviceMessage {
 ```rust
 // ✅ Smart audio disable
 if params.audio && android_version < 30 {
-    audio_disabled_reason = Some(format!(
-        "Audio capture requires Android 11+ (API 30+). Device is Android {}.",
-        android_version
-    ));
+    audio_disabled_reason = Some(AudioDisabledReason::UnsupportedAndroidVersion {
+        api_level: android_version,
+    });
     params.audio = false;
 }
 

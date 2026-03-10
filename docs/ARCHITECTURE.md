@@ -10,7 +10,7 @@ to a desktop UI built with egui.
 
 - **High-Performance Video Streaming**: H.264/H.265/AV1 video decoding with hardware acceleration (NVDEC, VAAPI, D3D11VA)
 - **Low-Latency Input**: Direct scrcpy control channel for keyboard and mouse input (40-90ms reduction vs ADB)
-- **Audio Capture**: Opus/AAC/FLAC audio streaming from Android 11+ devices
+- **Audio Capture**: Opus audio streaming from Android 11+ devices
 - **Keyboard Mapping**: Custom key mappings with coordinate systems supporting screen rotation
 - **Cross-Platform**: Linux primary, with architecture designed for Windows/macOS expansion
 
@@ -105,25 +105,24 @@ src/
 ├── error.rs               # Unified error types
 ├── constant.rs            # Constants and default values
 │
-├── saide/                 # Application layer
+├── core/                  # Application layer
 │   ├── mod.rs
 │   ├── init.rs            # Initialization logic
-│   ├── coords.rs          # Coordinate system management
-│   ├── connection_service.rs # Connection management service
+│   ├── state.rs           # App/config/UI state structures
+│   ├── profile_manager.rs # Mapping profile management
+│   ├── connection.rs      # Connection management service
 │   ├── device_monitor.rs  # Device monitoring service
 │   ├── utils.rs           # Utility functions
+│   ├── coords/            # Coordinate system management
 │   └── ui/                # UI components
 │       ├── mod.rs
-│       ├── saide.rs       # Main application state
-│       ├── state.rs       # UI state structures
+│       ├── app.rs         # Main application state and event loop
+│       ├── editor.rs      # Mapping editor
+│       ├── dialog.rs      # Dialog components
+│       ├── function.rs    # Profile/mapping actions
 │       ├── player.rs      # Video/audio rendering
 │       ├── toolbar.rs     # Toolbar controls
-│       ├── indicator.rs   # Status indicators
-│       ├── mapping.rs     # Key mapping configuration
-│       ├── settings.rs    # Settings UI (placeholder)
-│       ├── log.rs         # Log viewer (placeholder)
-│       ├── overlay.rs     # Key overlay (placeholder)
-│       └── dialog.rs      # Dialog components
+│       └── indicator.rs   # Status indicators
 │
 ├── config/                # Configuration management
 │   ├── mod.rs
@@ -217,7 +216,7 @@ Manages the three-way TCP connection to the Android device.
 **Connections:**
 
 1. **Video Stream**: H.264/H.265/AV1 encoded video
-2. **Audio Stream**: Opus/AAC/FLAC encoded audio (optional)
+2. **Audio Stream**: Opus encoded audio (optional)
 3. **Control Channel**: Bidirectional control messages
 
 **Responsibilities:**
@@ -271,13 +270,13 @@ Atomic snapshot architecture for audio/video synchronization.
 - Video read: ~10ns (vs ~100ns + contention with Mutex)
 - Zero contention between threads
 
-**Source**: `src/sync/clock.rs`
+**Source**: `src/avsync/clock.rs`
 
 ---
 
 ### 6. Command & Shortcut System
 
-SAide uses a two-crate event system to decouple keyboard input from application logic.
+SAide uses a two-crate command system to decouple keyboard shortcuts from application logic.
 
 **Crates**:
 
@@ -432,29 +431,42 @@ User Input                    SAide                          Android
 ### Configuration File
 
 ```toml
-[scrcpy]
-serial = "device_serial"
-max_size = 1920
+[general]
+keyboard_enabled = true
+mouse_enabled = true
+init_timeout = 15
+window_width = 1280
+window_height = 720
+smart_window_resize = true
+bind_address = "127.0.0.1"
+scrcpy_server = "scrcpy-server-v3.3.3"
+
+[scrcpy.video]
 bit_rate = "8M"
 max_fps = 60
-video_codec = "h264"
-audio = true
-audio_codec = "opus"
-tunnel_forward = false
+max_size = 1920
+codec = "h264"
+
+[scrcpy.audio]
+enabled = true
+codec = "opus"
+source = "playback"
+buffer_frames = 64
+ring_capacity = 5760
+
+[scrcpy.options]
 stay_awake = true
 turn_screen_off = false
 
-[scrcpy.options]
-prepend_sps_pps = true
-capture_orientation = "@0"
+[gpu]
+backend = "VULKAN"
+vsync = false
+hwdecode = true
 
-[keyboard]
-enabled = true
-profile = "Default"
-
-[mouse]
-enabled = true
-mapping_file = "keymap.toml"
+[input]
+long_press_ms = 300
+drag_threshold_px = 5.0
+drag_interval_ms = 8
 ```
 
 ### Profile System
@@ -483,13 +495,13 @@ Keyboard mappings organized by device orientation:
 | egui            | 0.33    | Immediate mode GUI                |
 | wgpu            | 27      | GPU abstraction                   |
 | tokio           | 1.x     | Async runtime for network I/O     |
-| ffmpeg-next     | 7.1     | Media decoding (FFmpeg bindings)  |
+| ffmpeg-next     | 8       | Media decoding (FFmpeg bindings)  |
 | cpal            | 0.17    | Audio playback                    |
 | opus            | 0.3     | Opus codec (direct libopus)       |
 | fluent-bundle   | 0.16    | i18n localization (Fluent)        |
 | tracing         | 0.1     | Structured logging                |
 | serde           | 1.0     | Serialization/deserialization     |
-| toml            | 0.9     | Configuration file format         |
+| toml            | 1       | Configuration file format         |
 
 ### Build Dependencies
 
