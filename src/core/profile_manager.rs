@@ -100,7 +100,8 @@ impl ProfileManager {
             .collect()
     }
 
-    /// Filter profiles based on device serial and rotation
+    /// Filter profiles based on device serial and rotation.
+    /// Always queries live data from `self.profiles`; does not use the `avail_profiles` cache.
     pub fn get_avail_profiles(&self, device_serial: &str, rotation: u32) -> Vec<ProfileRef> {
         self.filter_profiles_for_device(device_serial, rotation)
     }
@@ -201,7 +202,7 @@ impl ProfileManager {
         }
     }
 
-    /// Rename a profile by its index in the available profiles list, ensuring the new name is
+    /// Rename a profile by its index in the full profiles list, ensuring the new name is
     /// unique and the index is valid
     pub fn rename_profile_by_idx(&self, idx: usize, new_name: &str) -> Result<()> {
         self.ensure_profile_not_exists(new_name)?;
@@ -226,7 +227,7 @@ impl ProfileManager {
         Ok(())
     }
 
-    /// Remove a profile by its name, ensuring the profile exists
+    /// Remove a profile by its index in the full profiles list, ensuring the index is valid
     pub fn remove_profile_by_idx(&self, idx: usize) -> Result<()> {
         let mut profiles = self.profiles.write();
         if idx < profiles.len() {
