@@ -1,6 +1,6 @@
 use {
     super::SAideApp,
-    crate::{modal::ModalDialog, t, tf},
+    crate::{core::coords::MappingPos, modal::ModalDialog, t, tf},
 };
 
 impl SAideApp {
@@ -22,10 +22,8 @@ impl SAideApp {
 
             let idx = self.profile_manager.get_active_profile_idx().unwrap_or(0);
 
-            let mut dialog = ModalDialog::new(
-                "switch_profile_dialog",
-                &t!("mapping-config-dialog-switch-title"),
-            );
+            let mut dialog =
+                ModalDialog::new("switch_profile_dialog", &t!("editor-dialog-switch-title"));
             dialog.add_list_selection("profile", profiles.iter().map(|s| s.as_str()), idx);
 
             self.dialog.replace(dialog);
@@ -39,10 +37,10 @@ impl SAideApp {
                 return;
             };
 
-            let mut dialog = ModalDialog::new("rename_dialog", &t!("mapping-config-rename-title"));
+            let mut dialog = ModalDialog::new("rename_dialog", &t!("editor-dialog-rename-title"));
             dialog.add_text_input(
                 "name",
-                Some(&t!("mapping-config-rename-placeholder")),
+                Some(&t!("editor-dialog-rename-placeholder")),
                 Some(&current_name),
                 true,
             );
@@ -53,9 +51,9 @@ impl SAideApp {
 
     pub fn show_create_profile_dialog(&mut self) {
         if self.dialog.is_none() {
-            let mut dialog =
-                ModalDialog::new("new_profile_dialog", &t!("mapping-config-dialog-new-title"));
-            dialog.add_text_input("name", Some(""), None, true);
+            let mut dialog = ModalDialog::new("new_profile_dialog", &t!("editor-dialog-new-title"));
+            let placeholder = t!("editor-dialog-new-placeholder");
+            dialog.add_text_input("name", Some(placeholder.as_str()), None, true);
 
             self.dialog.replace(dialog);
         }
@@ -63,16 +61,18 @@ impl SAideApp {
 
     pub fn show_delete_profile_dialog(&mut self) {
         if self.dialog.is_none() {
-            if self.profile_manager.get_active_profile().is_none() {
+            let Some(current_name) = self.profile_manager.get_active_profile_name() else {
                 self.notify(&t!("notification-no-active-profile"));
                 return;
-            }
+            };
 
             let mut dialog = ModalDialog::new(
                 "delete_profile_dialog",
-                &t!("mapping-config-dialog-delete-title"),
+                &t!("editor-dialog-delete-profile-title"),
             );
-            dialog.add_message(&t!("mapping-config-dialog-delete-message"));
+            let name = current_name.clone();
+            dialog
+                .add_message(&tf!("editor-dialog-delete-profile-message", "name" => name.as_str()));
 
             self.dialog.replace(dialog);
         }
@@ -85,13 +85,11 @@ impl SAideApp {
                 return;
             };
 
-            let mut dialog = ModalDialog::new(
-                "save_as_profile_dialog",
-                &t!("mapping-config-dialog-saveas-title"),
-            );
+            let mut dialog =
+                ModalDialog::new("save_as_profile_dialog", &t!("editor-dialog-saveas-title"));
             dialog.add_text_input(
                 "name",
-                Some(&t!("mapping-config-dialog-saveas-placeholder")),
+                Some(&t!("editor-dialog-saveas-placeholder")),
                 Some(&current_name),
                 true,
             );
@@ -102,8 +100,8 @@ impl SAideApp {
 
     pub fn show_profile_exists_dialog(&mut self, profile_name: &str) {
         self.show_error_dialog_inner(
-            &t!("mapping-config-error-profile-exists-title"),
-            &tf!("mapping-config-error-profile-exists-message", "profile_name" => profile_name),
+            &t!("editor-dialog-error-profile-exists-title"),
+            &tf!("editor-dialog-error-profile-exists-message", "profile_name" => profile_name),
         );
     }
 
@@ -117,6 +115,36 @@ impl SAideApp {
                 ModalDialog::new("saide_error_dialog", title).with_cancel::<String>(None);
             dialog.add_message(error_msg);
 
+            self.dialog.replace(dialog);
+        }
+    }
+
+    pub fn show_add_mapping_dialog(&mut self, mapping_pos: &MappingPos) {
+        if self.dialog.is_none() {
+            let x = format!("{:.1}%", mapping_pos.x * 100.0);
+            let y = format!("{:.1}%", mapping_pos.y * 100.0);
+            let dialog = ModalDialog::new("add_mapping_dialog", &t!("editor-dialog-create-title"))
+                .with_key_capture(&tf!(
+                    "editor-dialog-create-message",
+                    "x" => x.as_str(),
+                    "y" => y.as_str()
+                ));
+            self.dialog.replace(dialog);
+        }
+    }
+
+    pub fn show_delete_mapping_dialog(&mut self, mapping_pos: &MappingPos, key: &str) {
+        if self.dialog.is_none() {
+            let x = format!("{:.1}%", mapping_pos.x * 100.0);
+            let y = format!("{:.1}%", mapping_pos.y * 100.0);
+            let mut dialog =
+                ModalDialog::new("delete_mapping_dialog", &t!("editor-dialog-delete-title"));
+            dialog.add_message(&tf!(
+                "editor-dialog-delete-message",
+                "key" => key,
+                "x" => x.as_str(),
+                "y" => y.as_str()
+            ));
             self.dialog.replace(dialog);
         }
     }

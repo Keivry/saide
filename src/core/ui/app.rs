@@ -14,6 +14,8 @@ use {
             state::{AppState, ConfigState, UIState},
         },
         AppCommand,
+        EditorRequest,
+        PendingCommand,
         SHORTCUT_MANAGER,
         editor::{MAPPING_EDITOR_SHORTCUTS, MappingEditor},
         indicator::Indicator,
@@ -31,6 +33,7 @@ use {
         core::{
             coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
             ui::editor::EditorParams,
+            utils::find_nearest_mapping,
         },
         error::Result,
         modal::{DialogState, ModalDialog},
@@ -61,7 +64,7 @@ pub struct SAideApp {
 
     pub(super) dialog: Option<ModalDialog>,
     pub(super) mapping_editor: Option<MappingEditor>,
-    pub(super) pending_command: Option<AppCommand>,
+    pub(super) pending_command: Option<PendingCommand>,
 
     pub(super) app_state: AppState,
     pub(super) config_state: ConfigState,
@@ -510,42 +513,6 @@ impl SAideApp {
             key, modifiers
         );
 
-        // match key {
-        //     egui::Key::F1 => {
-        //         self.handle_mapping_event(EditorEvent::ShowHelp);
-        //         return Ok(true);
-        //     }
-        //     egui::Key::F2 if self.mapping_editor.is_some() => {
-        //         self.handle_mapping_event(EditorEvent::RenameProfile);
-        //         return Ok(true);
-        //     }
-        //     egui::Key::F3 if self.mapping_editor.is_some() => {
-        //         self.handle_mapping_event(EditorEvent::NewProfile);
-        //         return Ok(true);
-        //     }
-        //     egui::Key::F4 if self.mapping_editor.is_some() => {
-        //         self.handle_mapping_event(EditorEvent::SaveAsProfile);
-        //         return Ok(true);
-        //     }
-        //     egui::Key::F5 if self.mapping_editor.is_some() => {
-        //         self.handle_mapping_event(EditorEvent::DeleteProfile);
-        //         return Ok(true);
-        //     }
-        //     egui::Key::F6 => {
-        //         self.handle_mapping_event(EditorEvent::SwitchProfile);
-        //         return Ok(true);
-        //     }
-        //     egui::Key::F7 => {
-        //         self.handle_mapping_event(EditorEvent::PrevProfile);
-        //         return Ok(true);
-        //     }
-        //     egui::Key::F8 => {
-        //         self.handle_mapping_event(EditorEvent::NextProfile);
-        //         return Ok(true);
-        //     }
-        //     _ => {}
-        // }
-
         if key == &self.config().mappings.toggle {
             self.toggle_custom_keyboard_mapping();
             return Ok(true);
@@ -753,7 +720,7 @@ impl SAideApp {
             return;
         }
 
-        // Skip normal input processing if mapping config window is open or dialogs are open
+        // Skip normal input processing if mapping editor is open or dialogs are open
         if self.mapping_editor.is_some() || self.dialog.is_some() {
             return;
         }
@@ -988,51 +955,6 @@ impl SAideApp {
             });
     }
 
-    // fn show_add_mapping_dialog(&mut self, screen_pos: &egui::Pos2) {
-    //     if self.dialog.is_some() {
-    //         return;
-    //     }
-
-    //     let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-    //         warn!("Keyboard mapper not available, cannot add mapping");
-    //         return;
-    //     };
-
-    //     if keyboard_mapper.get_active_profile_name().is_none() {
-    //         warn!("No active profile, cannot add mapping");
-    //         return;
-    //     }
-
-    //     let video_rect = self.player.video_rect();
-    //     if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
-    //         screen_pos,
-    //         &video_rect,
-    //         self.app_state.scrcpy_coords(),
-    //         self.ui_state.mapping_coords(),
-    //     ) {
-    //         info!(
-    //             "Add mapping: screen=({:.1},{:.1}) -> percent=({:.6},{:.6})
-    // [device_orientation={}]",             screen_pos.x,
-    //             screen_pos.y,
-    //             percent_pos.x,
-    //             percent_pos.y,
-    //             self.app_state.device_orientation()
-    //         );
-
-    //         self.dialog.replace(
-    //             ModalDialog::new(
-    //                 "key_input_dialog",
-    //                 &t!("mapping-config-dialog-create-title"),
-    //             )
-    //             .with_key_capture(&tf!(
-    //                 "mapping-config-dialog-create-message",
-    //                 "x" => percent_pos.x,
-    //                 "y" => percent_pos.y
-    //             )),
-    //         );
-    //     }
-    // }
-
     fn process_commands(&mut self, commands: Vec<AppCommand>) {
         for cmd in commands {
             match cmd {
@@ -1041,45 +963,97 @@ impl SAideApp {
                     let had_dialog = self.dialog.is_some();
                     self.show_profile_selection_dialog();
                     if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(AppCommand::SwitchProfile);
+                        self.pending_command = Some(PendingCommand::SwitchProfile);
                     }
                 }
                 AppCommand::PrevProfile => self.prev_profile(),
                 AppCommand::NextProfile => self.next_profile(),
                 AppCommand::ShowRenameDialog => {
-                    let had_dialog = self.dialog.is_some();
-                    self.show_rename_profile_dialog();
-                    if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(AppCommand::RenameProfile);
+                    if self.profile_manager.get_active_profile().is_none() {
+                        let had_dialog = self.dialog.is_some();
+                        self.show_create_profile_dialog();
+                        if !had_dialog && self.dialog.is_some() {
+                            self.pending_command = Some(PendingCommand::CreateProfile);
+                        }
+                    } else {
+                        let had_dialog = self.dialog.is_some();
+                        self.show_rename_profile_dialog();
+                        if !had_dialog && self.dialog.is_some() {
+                            self.pending_command = Some(PendingCommand::RenameProfile);
+                        }
                     }
                 }
                 AppCommand::ShowCreateDialog => {
                     let had_dialog = self.dialog.is_some();
                     self.show_create_profile_dialog();
                     if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(AppCommand::CreateProfile);
+                        self.pending_command = Some(PendingCommand::CreateProfile);
                     }
                 }
                 AppCommand::ShowDeleteDialog => {
                     let had_dialog = self.dialog.is_some();
                     self.show_delete_profile_dialog();
                     if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(AppCommand::DeleteProfile);
+                        self.pending_command = Some(PendingCommand::DeleteProfile);
                     }
                 }
                 AppCommand::ShowSaveAsDialog => {
                     let had_dialog = self.dialog.is_some();
                     self.show_save_profile_as_dialog();
                     if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(AppCommand::SaveProfileAs);
+                        self.pending_command = Some(PendingCommand::SaveProfileAs);
                     }
                 }
                 AppCommand::CloseEditor => self.close_mapping_editor(),
-                AppCommand::RenameProfile
-                | AppCommand::CreateProfile
-                | AppCommand::SaveProfileAs
-                | AppCommand::DeleteProfile
-                | AppCommand::SwitchProfile => {}
+                AppCommand::ShowAddMappingDialog | AppCommand::ShowDeleteMappingDialog => {}
+            }
+        }
+    }
+
+    fn handle_editor_request(&mut self, request: EditorRequest) {
+        let video_rect = self.player.video_rect();
+        match request {
+            EditorRequest::AddMapping(screen_pos) => {
+                if self.profile_manager.get_active_profile().is_none() {
+                    self.create_profile("Default");
+                }
+                let had_dialog = self.dialog.is_some();
+                if let Some(mapping_pos) = self.ui_state.visual_coords().to_mapping(
+                    &screen_pos,
+                    &video_rect,
+                    self.app_state.scrcpy_coords(),
+                    self.ui_state.mapping_coords(),
+                ) {
+                    self.show_add_mapping_dialog(&mapping_pos);
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(PendingCommand::AddMapping(mapping_pos));
+                    }
+                }
+            }
+            EditorRequest::DeleteMapping(screen_pos) => {
+                let had_dialog = self.dialog.is_some();
+                let Some(mapping_pos) = self.ui_state.visual_coords().to_mapping(
+                    &screen_pos,
+                    &video_rect,
+                    self.app_state.scrcpy_coords(),
+                    self.ui_state.mapping_coords(),
+                ) else {
+                    return;
+                };
+                let Some(profile) = self.profile_manager.get_active_profile() else {
+                    return;
+                };
+                let profile_lock = profile.read();
+                let mappings = profile_lock.mappings();
+                if let Some((nearest_key, nearest_pos)) =
+                    find_nearest_mapping(&mapping_pos, mappings)
+                {
+                    let key_text = format!("{nearest_key:?}");
+                    self.show_delete_mapping_dialog(&nearest_pos, &key_text);
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(PendingCommand::DeleteMapping(nearest_key));
+                    }
+                }
             }
         }
     }
@@ -1094,11 +1068,23 @@ impl SAideApp {
         };
 
         match (pending, result) {
-            (AppCommand::RenameProfile, DialogState::String(name)) => self.rename_profile(&name),
-            (AppCommand::CreateProfile, DialogState::String(name)) => self.create_profile(&name),
-            (AppCommand::SaveProfileAs, DialogState::String(name)) => self.save_profile_as(&name),
-            (AppCommand::DeleteProfile, DialogState::Confirmed) => self.delete_profile(),
-            (AppCommand::SwitchProfile, DialogState::Usize(idx)) => self.switch_profile(idx),
+            (PendingCommand::RenameProfile, DialogState::String(name)) => {
+                self.rename_profile(&name)
+            }
+            (PendingCommand::CreateProfile, DialogState::String(name)) => {
+                self.create_profile(&name)
+            }
+            (PendingCommand::SaveProfileAs, DialogState::String(name)) => {
+                self.save_profile_as(&name)
+            }
+            (PendingCommand::DeleteProfile, DialogState::Confirmed) => self.delete_profile(),
+            (PendingCommand::SwitchProfile, DialogState::Usize(idx)) => self.switch_profile(idx),
+            (PendingCommand::AddMapping(mapping_pos), DialogState::CapturedKey(key)) => {
+                self.add_mapping(key, &mapping_pos);
+            }
+            (PendingCommand::DeleteMapping(key), DialogState::Confirmed) => {
+                self.remove_mapping(key);
+            }
             (cmd, result) => {
                 warn!(
                     "apply_dialog_result: unhandled (pending={cmd:?}, result={result:?}) — command dropped"
@@ -1107,49 +1093,7 @@ impl SAideApp {
         }
     }
 
-    // fn show_delete_mapping_dialog(&mut self, screen_pos: &egui::Pos2) {
-    //     if self.dialog.is_some() {
-    //         return;
-    //     }
-
-    //     let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
-    //         warn!("Keyboard mapper not available, cannot delete mapping");
-    //         return;
-    //     };
-
-    //     let mappings = keyboard_mapper
-    //         .get_active_mappings()
-    //         .unwrap_or_else(|| Arc::new(KeyMapping::default()));
-
-    //     let video_rect = self.player.video_rect();
-    //     if let Some(percent_pos) = self.ui_state.visual_coords().to_mapping(
-    //         screen_pos,
-    //         &video_rect,
-    //         self.app_state.scrcpy_coords(),
-    //         self.ui_state.mapping_coords(),
-    //     ) && let Some((nearest_key, nearest_pos)) = find_nearest_mapping(&percent_pos, &mappings)
-    //     {
-    //         info!(
-    //             "Delete mapping: {:?} at ({:.6}, {:.6})",
-    //             nearest_key, nearest_pos.x, nearest_pos.y
-    //         );
-
-    //         let mut dialog = ModalDialog::new(
-    //             "delete_mapping_dialog",
-    //             &t!("mapping-config-dialog-delete-title"),
-    //         );
-    //         dialog.add_message(&tf!(
-    //             "mapping-config-dialog-delete-message",
-    //             "key" => format!("{:?}", nearest_key),
-    //             "x" => nearest_pos.x.to_string(),
-    //             "y" => nearest_pos.y.to_string(),
-    //         ));
-
-    //         self.dialog.replace(dialog);
-    //     }
-    // }
-
-    pub fn draw_editor(&mut self, ctx: &egui::Context) {
+    pub fn draw_editor(&mut self, ctx: &egui::Context) -> Option<EditorRequest> {
         let profile = self.profile_manager.get_active_profile();
         let video_rect = &self.player.video_rect();
         let visual_coords = self.visual_coords();
@@ -1163,7 +1107,9 @@ impl SAideApp {
                 scrcpy_coords,
                 mapping_coords,
             };
-            editor.draw(ctx, editor_params);
+            editor.draw(ctx, editor_params)
+        } else {
+            None
         }
     }
 
@@ -1315,13 +1261,15 @@ impl eframe::App for SAideApp {
                 let editor_scope = self
                     .mapping_editor
                     .as_ref()
+                    .filter(|_| self.dialog.is_none())
                     .map(|_| &*MAPPING_EDITOR_SHORTCUTS);
                 let commands = SHORTCUT_MANAGER.dispatch_raw_with_extra(ctx, editor_scope);
                 self.process_commands(commands);
 
-                self.draw_editor(ctx);
-                let dialog_result = self.draw_dialog(ctx);
-                self.apply_dialog_result(dialog_result);
+                if let Some(editor_request) = self.draw_editor(ctx) {
+                    self.handle_editor_request(editor_request);
+                }
+                let dialog_result = self.draw_dialog(ctx);                self.apply_dialog_result(dialog_result);
                 if self.dialog.is_none() {
                     self.process_input_events(ctx);
                 }
