@@ -376,7 +376,13 @@ impl ProfileManager {
     /// - `device_serial`: current device serial
     /// - `device_rotation`: current device rotation (0, 1, 2, 3)
     pub fn update(&mut self, device_serial: &str, device_rotation: u32) {
-        let avail_profiles = self.get_avail_profiles(device_serial, device_rotation);
+        let avail_profiles: Vec<ProfileRef> = self
+            .profiles
+            .read()
+            .iter()
+            .filter(|p| p.read().matches(device_serial, device_rotation))
+            .cloned()
+            .collect();
 
         if avail_profiles.is_empty() {
             self.active_profile.store(Arc::new(None));
