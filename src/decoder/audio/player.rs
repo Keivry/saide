@@ -26,7 +26,7 @@ use {
         thread,
         time::Duration,
     },
-    tracing::{debug, info, warn},
+    tracing::{debug, info, trace, warn},
 };
 
 /// Audio player using cpal with lock-free ring buffer
@@ -48,6 +48,10 @@ pub struct AudioPlayer {
 
     /// Number of channels
     channels: u16,
+
+    overflow_count: u64,
+
+    dropped_samples: u64,
 }
 
 impl AudioPlayer {
@@ -126,6 +130,8 @@ impl AudioPlayer {
             underruns,
             sample_rate,
             channels,
+            overflow_count: 0,
+            dropped_samples: 0,
         })
     }
 
@@ -158,9 +164,15 @@ impl AudioPlayer {
         };
 
         if written < audio.samples.len() {
-            debug!(
-                "Buffer overflow: dropped {} samples (buffer full)",
-                audio.samples.len() - written
+            let dropped_samples = (audio.samples.len() - written) as u64;
+            self.overflow_count += 1;
+            self.dropped_samples += dropped_samples;
+
+            trace!(
+                dropped_samples,
+                requested_samples = audio.samples.len(),
+                written_samples = written,
+                "Audio ring buffer overflow"
             );
         }
 
@@ -227,10 +239,17 @@ impl Drop for AudioPlayer {
         thread::sleep(Duration::from_millis(50));
 
         let underruns = self.underrun_count();
-        if underruns > 0 {
-            debug!("Audio player stopped ({} underruns)", underruns);
-        } else {
-            debug!("Audio player stopped");
+        match (underruns, self.overflow_count) {
+            (0, 0) => debug!("Audio player stopped"),
+            (underruns, 0) => debug!("Audio player stopped ({} underruns)", underruns),
+            (0, overflow_count) => debug!(
+                "Audio player stopped ({} overflows, {} dropped samples)",
+                overflow_count, self.dropped_samples
+            ),
+            (underruns, overflow_count) => debug!(
+                "Audio player stopped ({} underruns, {} overflows, {} dropped samples)",
+                underruns, overflow_count, self.dropped_samples
+            ),
         }
     }
 }
