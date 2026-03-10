@@ -25,12 +25,12 @@
   - Drag detection, long-press recognition, adaptive thresholds
   - Toggle mappings on/off with F10 (configurable)
 - 🎵 **Audio Streaming**: Real-time audio capture from Android 11+ devices
-  - Opus/AAC codec support with configurable latency (1.3-5.3ms @ 48kHz)
+  - Opus audio support with configurable latency (1.3-5.3ms @ 48kHz)
   - Lock-free ring buffer for glitch-free playback
 - 🖥️ **Modern UI**: Cross-platform desktop interface built with egui
   - Real-time FPS and latency indicators
   - Visual mapping editor
-  - Settings panel
+  - Codec compatibility probe dialog with progress UI
 - 🌐 **Internationalization**: Full support for Chinese and English locales
   - Automatic language detection (system `$LANG`)
   - Hot-reload in debug mode
@@ -42,7 +42,7 @@
   - Linux: VAAPI (Intel/AMD), NVDEC (NVIDIA)
   - Windows: D3D11VA (Intel/AMD/NVIDIA), NVDEC (NVIDIA)
   - All platforms: Software H.264 fallback
-- **Robust error handling**: No panics in production code, comprehensive diagnostics
+- **Defensive error handling**: Comprehensive diagnostics for expected runtime failures
 - **Configurable everything**: TOML-based configuration with validation and hot-reload
 - **Profiling built-in**: 5-stage latency profiling (network → decode → upload → display)
 
@@ -226,8 +226,9 @@ saide/
 │   ├── main.rs              # Application entry point
 │   ├── lib.rs               # Library exports
 │   ├── core/                # UI layer & application logic (egui)
-│   │   ├── ui/              # app.rs, editor.rs, player.rs, toolbar.rs, indicator.rs
+│   │   ├── ui/              # app.rs, editor.rs, dialog.rs, player.rs, toolbar.rs, indicator.rs
 │   │   ├── coords/          # Coordinate mapping (screen ↔ device)
+│   │   ├── init.rs          # Initialization coordinator
 │   │   ├── connection.rs    # Connection management
 │   │   ├── device_monitor.rs # ADB device enumeration
 │   │   └── state.rs         # Application state machine
@@ -244,7 +245,7 @@ saide/
 │   │   ├── nvdec.rs         # NVIDIA hardware decoder (cross-platform)
 │   │   ├── vaapi.rs         # Linux VAAPI hardware decoder
 │   │   ├── d3d11va.rs       # Windows D3D11VA hardware decoder
-│   │   └── audio/           # Opus/AAC audio decoding
+│   │   └── audio/           # Opus audio decoding and playback
 │   ├── config/              # Configuration management
 │   ├── i18n/                # Internationalization
 │   └── profiler/            # Latency profiling
@@ -301,6 +302,8 @@ cargo run --example audio_diagnostic
 cargo run --example render_avsync
 ```
 
+Examples resolve `scrcpy-server-v3.3.3` from the application data directory, the current working directory, or the legacy `3rd-party/` location used by older checkouts.
+
 See [examples/](examples/) for full list.
 
 ---
@@ -344,9 +347,9 @@ See [docs/LATENCY_OPTIMIZATION.md](docs/LATENCY_OPTIMIZATION.md) for detailed an
 
 #### Near-term (v0.2 - Q1 2026)
 
-- [ ] Visual mapping editor (drag-and-drop UI)
 - [ ] Settings panel (GPU backend, codec, audio tuning)
 - [ ] Log viewer (integrated tracing-appender)
+- [ ] Mapping profile import/export
 - [ ] Clipboard synchronization (Android ↔ PC)
 
 #### Mid-term (v0.3 - Q2 2026)

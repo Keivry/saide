@@ -25,12 +25,12 @@
   - 拖拽检测、长按识别、自适应阈值
   - 按 F10 开关映射(可配置)
 - 🎵 **音频串流**: Android 11+ 设备实时音频捕获
-  - Opus/AAC 编解码器支持,可配置延迟 (1.3-5.3ms @ 48kHz)
+  - 支持 Opus 音频,可配置延迟 (1.3-5.3ms @ 48kHz)
   - 无锁环形缓冲区,无杂音播放
 - 🖥️ **现代化 UI**: 基于 egui 的跨平台桌面界面
   - 实时 FPS 和延迟指示器
   - 可视化映射编辑器
-  - 设置面板
+  - 编解码器兼容性检测对话框与进度窗口
 - 🌐 **国际化**: 完整支持中英文语言环境
   - 自动语言检测 (系统 `$LANG`)
   - Debug 模式下支持热重载
@@ -42,7 +42,7 @@
   - Linux: VAAPI (Intel/AMD)、NVDEC (NVIDIA)
   - Windows: D3D11VA (Intel/AMD/NVIDIA)、NVDEC (NVIDIA)
   - 全平台: 软件 H.264 回退
-- **健壮的错误处理**: 生产代码无 panic,全面的诊断信息
+- **稳健的错误处理**: 对预期运行时故障提供完整诊断信息
 - **一切皆可配置**: 基于 TOML 的配置系统,带验证和热重载
 - **内置性能分析**: 5 阶段延迟分析 (网络 → 解码 → 上传 → 显示)
 
@@ -225,10 +225,13 @@ saide/
 ├── src/
 │   ├── main.rs              # 应用程序入口点
 │   ├── lib.rs               # 库导出
-│   ├── saide/               # UI 层 (egui)
-│   │   ├── ui/              # SAideApp、Toolbar、Indicator
-│   │   ├── init.rs          # 连接初始化
-│   │   └── ...
+│   ├── core/                # UI 层与应用逻辑 (egui)
+│   │   ├── ui/              # app.rs、editor.rs、dialog.rs、player.rs 等
+│   │   ├── coords/          # 坐标映射 (屏幕 ↔ 设备)
+│   │   ├── init.rs          # 初始化协调器
+│   │   ├── connection.rs    # 连接管理
+│   │   ├── device_monitor.rs # ADB 设备监控
+│   │   └── state.rs         # 应用状态机
 │   ├── controller/          # 输入处理
 │   │   ├── keyboard.rs      # 键盘映射器
 │   │   ├── mouse.rs         # 鼠标映射器
@@ -241,7 +244,7 @@ saide/
 │   │   ├── h264.rs          # 软件 H.264 解码器
 │   │   ├── nvdec.rs         # NVIDIA 硬件解码器
 │   │   ├── vaapi.rs         # VAAPI 硬件解码器
-│   │   └── audio/           # Opus/AAC 音频解码
+│   │   └── audio/           # Opus 音频解码与播放
 │   ├── config/              # 配置管理
 │   ├── i18n/                # 国际化
 │   └── profiler/            # 延迟分析
@@ -298,6 +301,8 @@ cargo run --example audio_diagnostic
 cargo run --example render_avsync
 ```
 
+示例程序会按顺序在应用数据目录、当前工作目录以及旧版仓库常见的 `3rd-party/` 目录中查找 `scrcpy-server-v3.3.3`。
+
 完整列表请参阅 [examples/](examples/)。
 
 ---
@@ -341,9 +346,9 @@ level = "debug"  # 显示每帧延迟统计
 
 #### 近期 (v0.2 - 2026 Q1)
 
-- [ ] 可视化映射编辑器 (拖放 UI)
 - [ ] 设置面板 (GPU 后端、编解码器、音频调优)
 - [ ] 日志查看器 (集成 tracing-appender)
+- [ ] 映射配置导入/导出
 - [ ] 剪贴板同步 (Android ↔ PC)
 
 #### 中期 (v0.3 - 2026 Q2)
