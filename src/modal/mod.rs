@@ -505,22 +505,19 @@ impl ModalDialog {
         }
     }
 
-    fn draw_input(&self, ui: &mut egui::Ui, value: &mut String) {
-        let response = ui.text_edit_singleline(value);
-
-        // Auto-focus the text input
-        response.request_focus();
-    }
-
     fn draw_text_input(&self, ui: &mut egui::Ui, placeholder: Option<String>, text: &mut String) {
-        if let Some(placeholder) = placeholder {
-            ui.horizontal_centered(|ui| {
-                ui.label(placeholder.as_str());
-            });
-            self.draw_input(ui, text);
-        } else {
-            self.draw_input(ui, text);
-        }
+        let content_width = if placeholder.is_some() { 280.0 } else { 200.0 };
+        ui.allocate_ui_with_layout(
+            egui::Vec2::new(content_width, ui.spacing().interact_size.y),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                if let Some(ref p) = placeholder {
+                    ui.label(p.as_str());
+                }
+                let response = ui.add(egui::TextEdit::singleline(text).desired_width(200.0));
+                response.request_focus();
+            },
+        );
     }
 
     fn draw_list_selection(&self, ui: &mut egui::Ui, items: &[String], selected_idx: &mut usize) {
