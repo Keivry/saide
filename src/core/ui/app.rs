@@ -930,7 +930,7 @@ impl SAideApp {
         }
 
         let Some(profile) = self.profile_manager.get_active_profile() else {
-            debug!("No active profile, skipping mapping overlay");
+            debug!("No active profile, skipping mapping visualization overlay");
             return;
         };
 
