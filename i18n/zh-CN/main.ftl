@@ -14,7 +14,17 @@ toolbar-screen-off-hint = （按物理电源键唤醒）
 
 ## UI - 音频警告
 audio-warning-title = 音频不可用
+audio-warning-unsupported-android = 音频采集需要 Android 11+（API 30+）。当前设备 API 级别：{$api_level}。
 audio-warning-close = ✖
+
+## UI - 播放器
+player-status-idle = 未连接设备
+player-status-connecting = 正在连接…
+player-status-loading = 正在加载…
+player-error-title = ⚠️ 串流错误
+player-error-message = 串流过程中发生错误
+player-error-restart = 请重新启动应用程序
+player-error-details = 详情：{$error}
 
 ## UI - 指示器
 indicator-fps = FPS: {$fps}

@@ -23,6 +23,8 @@ use {
         error::Result,
         profiler::{LatencyProfiler, LatencyStats, latency::LatencySummary},
         scrcpy::protocol::video::VideoPacket,
+        t,
+        tf,
     },
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded},
@@ -417,9 +419,6 @@ impl StreamPlayer {
 
     /// Draw video frame or placeholder in the UI
     pub fn draw(&mut self, ui: &mut egui::Ui) -> egui::Response {
-        // Update state first (process events)
-        self.update();
-
         let available_rect = ui.available_rect_before_wrap();
 
         if let Some(ref frame) = self.current_frame {
@@ -427,7 +426,7 @@ impl StreamPlayer {
             if self.video_width == 0 || self.video_height == 0 {
                 return ui
                     .centered_and_justified(|ui| {
-                        ui.label(egui::RichText::new("Loading...").size(20.0))
+                        ui.label(egui::RichText::new(t!("player-status-loading")).size(20.0))
                     })
                     .response;
             }
@@ -488,13 +487,13 @@ impl StreamPlayer {
             // Show placeholder
             ui.centered_and_justified(|ui| match &self.state {
                 PlayerState::Idle => {
-                    ui.label(egui::RichText::new("No Device").size(20.0));
+                    ui.label(egui::RichText::new(t!("player-status-idle")).size(20.0));
                 }
                 PlayerState::Connecting => {
-                    ui.label(egui::RichText::new("Connecting...").size(20.0));
+                    ui.label(egui::RichText::new(t!("player-status-connecting")).size(20.0));
                 }
                 PlayerState::Streaming => {
-                    ui.label(egui::RichText::new("Loading...").size(20.0));
+                    ui.label(egui::RichText::new(t!("player-status-loading")).size(20.0));
                 }
                 PlayerState::Failed(err) => {
                     self.draw_failed_overlay(ui, err);
@@ -572,7 +571,7 @@ impl StreamPlayer {
                         ui.add_space(screen_rect.height() / 3.0);
 
                         ui.label(
-                            egui::RichText::new("⚠️ Stream Error")
+                            egui::RichText::new(t!("player-error-title"))
                                 .size(36.0)
                                 .color(colors.error_overlay_title),
                         );
@@ -580,7 +579,7 @@ impl StreamPlayer {
                         ui.add_space(20.0);
 
                         ui.label(
-                            egui::RichText::new("An error occurred during streaming")
+                            egui::RichText::new(t!("player-error-message"))
                                 .size(20.0)
                                 .color(colors.error_overlay_text),
                         );
@@ -588,7 +587,7 @@ impl StreamPlayer {
                         ui.add_space(15.0);
 
                         ui.label(
-                            egui::RichText::new("Please restart the application")
+                            egui::RichText::new(t!("player-error-restart"))
                                 .size(16.0)
                                 .color(colors.error_overlay_hint),
                         );
@@ -596,7 +595,7 @@ impl StreamPlayer {
                         ui.add_space(10.0);
 
                         ui.label(
-                            egui::RichText::new(format!("Details: {}", err_msg))
+                            egui::RichText::new(tf!("player-error-details", "error" => err_msg))
                                 .size(14.0)
                                 .color(colors.error_overlay_details),
                         );

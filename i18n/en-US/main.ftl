@@ -14,7 +14,17 @@ toolbar-screen-off-hint = (Press physical power button to wake)
 
 ## UI - Audio Warning
 audio-warning-title = Audio Unavailable
+audio-warning-unsupported-android = Audio capture requires Android 11+ (API 30+). Device API level: {$api_level}.
 audio-warning-close = ✖
+
+## UI - Player
+player-status-idle = No Device
+player-status-connecting = Connecting...
+player-status-loading = Loading...
+player-error-title = ⚠️ Stream Error
+player-error-message = An error occurred during streaming
+player-error-restart = Please restart the application
+player-error-details = Details: {$error}
 
 ## UI - Indicator
 indicator-fps = FPS: {$fps}
