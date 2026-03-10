@@ -1130,24 +1130,30 @@ impl SAideApp {
         }
     }
 
-    pub fn draw_editor(&mut self, ctx: &egui::Context) -> Option<EditorRequest> {
+    pub fn draw_editor(&mut self, ui: &mut egui::Ui) -> Option<EditorRequest> {
+        let Some(editor) = &self.mapping_editor else {
+            return None;
+        };
+
+        let video_rect = self.player.video_rect();
+        if video_rect.width() <= 0.0 || video_rect.height() <= 0.0 {
+            return None;
+        }
+
         let profile = self.profile_manager.get_active_profile();
-        let video_rect = &self.player.video_rect();
         let visual_coords = self.visual_coords();
         let scrcpy_coords = self.scrcpy_coords();
         let mapping_coords = self.mapping_coords();
-        if let Some(editor) = &self.mapping_editor {
-            let editor_params = EditorParams {
-                profile,
-                video_rect,
-                visual_coords,
-                scrcpy_coords,
-                mapping_coords,
-            };
-            editor.draw(ctx, editor_params)
-        } else {
-            None
-        }
+        let editor_params = EditorParams {
+            profile,
+            video_rect: &video_rect,
+            visual_coords,
+            scrcpy_coords,
+            mapping_coords,
+        };
+
+        let mut overlay_ui = ui.new_child(egui::UiBuilder::new().max_rect(video_rect));
+        editor.draw(&mut overlay_ui, editor_params)
     }
 
     /// Draw dialog, and close it if requested by the dialog state
@@ -1157,7 +1163,6 @@ impl SAideApp {
         };
 
         let state = dialog.draw(ctx);
-        tracing::debug!("Dialog state: {:?}", state);
         if state.is_closed() {
             self.dialog.take();
         }
@@ -1331,9 +1336,6 @@ impl eframe::App for SAideApp {
                 let commands = SHORTCUT_MANAGER.dispatch_raw_with_extra(ctx, editor_scope);
                 self.process_commands(commands);
 
-                if let Some(editor_request) = self.draw_editor(ctx) {
-                    self.handle_editor_request(editor_request);
-                }
                 if self.dialog.is_none() {
                     self.process_input_events(ctx);
                 }
@@ -1345,15 +1347,25 @@ impl eframe::App for SAideApp {
             }
         }
 
-        let dialog_result = self.draw_dialog(ctx);
-        self.apply_dialog_result(dialog_result);
+        let mut editor_request = None;
 
         // Render player in center panel (no margin to maximize video area)
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
                 self.player.draw(ui);
+
+                if self.init_state == InitState::Ready {
+                    editor_request = self.draw_editor(ui);
+                }
             });
+
+        if let Some(editor_request) = editor_request {
+            self.handle_editor_request(editor_request);
+        }
+
+        let dialog_result = self.draw_dialog(ctx);
+        self.apply_dialog_result(dialog_result);
 
         // Draw indicator overlay on top of video
         if self.init_state == InitState::Ready && self.config().general.indicator {
