@@ -1016,6 +1016,9 @@ impl SAideApp {
             EditorRequest::AddMapping(screen_pos) => {
                 if self.profile_manager.get_active_profile().is_none() {
                     self.create_profile("Default");
+                    if self.profile_manager.get_active_profile().is_none() {
+                        return;
+                    }
                 }
                 let had_dialog = self.dialog.is_some();
                 if let Some(mapping_pos) = self.ui_state.visual_coords().to_mapping(
@@ -1269,7 +1272,8 @@ impl eframe::App for SAideApp {
                 if let Some(editor_request) = self.draw_editor(ctx) {
                     self.handle_editor_request(editor_request);
                 }
-                let dialog_result = self.draw_dialog(ctx);                self.apply_dialog_result(dialog_result);
+                let dialog_result = self.draw_dialog(ctx);
+                self.apply_dialog_result(dialog_result);
                 if self.dialog.is_none() {
                     self.process_input_events(ctx);
                 }

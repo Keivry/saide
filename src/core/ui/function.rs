@@ -1,4 +1,4 @@
-use crate::{config::mapping::Profile, t, SAideApp};
+use crate::{SAideApp, config::mapping::Profile, t};
 
 impl SAideApp {
     pub fn create_profile(&mut self, profile_name: &str) {
