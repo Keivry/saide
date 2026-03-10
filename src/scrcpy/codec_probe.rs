@@ -80,28 +80,56 @@ impl EncoderProfile {
     }
 
     pub fn build_options_string(&self) -> Option<String> {
-        if self.supported_options.is_empty() {
-            return None;
-        }
+        build_options_string_for(self.supported_profile.as_deref(), &self.supported_options)
+    }
+}
 
-        let mut options: Vec<String> = Vec::new();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EndToEndValidation {
+    DeviceRejected,
+    HostRejected,
+    HostAccepted(DecoderPreference),
+}
 
-        if let Some(ref profile_value) = self.supported_profile {
-            options.push(format!("profile={}", profile_value));
-        }
+fn build_options_string_for(
+    supported_profile: Option<&str>,
+    supported_options: &[String],
+) -> Option<String> {
+    let mut options: Vec<String> = Vec::new();
 
-        for (key, value) in CODEC_OPTIONS_BASE.iter() {
-            if self.supported_options.contains(&key.to_string()) {
-                options.push(format!("{}={}", key, value));
-            }
-        }
+    if let Some(profile_value) = supported_profile {
+        options.push(format!("profile={}", profile_value));
+    }
 
-        if options.is_empty() {
-            None
-        } else {
-            Some(options.join(","))
+    for (key, value) in CODEC_OPTIONS_BASE.iter() {
+        if supported_options.iter().any(|supported| supported == key) {
+            options.push(format!("{}={}", key, value));
         }
     }
+
+    if options.is_empty() {
+        None
+    } else {
+        Some(options.join(","))
+    }
+}
+
+fn profile_fallbacks(selected_profile: Option<&str>) -> Vec<Option<&'static str>> {
+    match selected_profile {
+        Some(selected) => CODEC_PROFILES
+            .iter()
+            .skip_while(|(_, value)| *value != selected)
+            .map(|(_, value)| Some(*value))
+            .collect(),
+        None => vec![None],
+    }
+}
+
+fn trim_option_sets(supported_options: &[String]) -> Vec<Vec<String>> {
+    (0..=supported_options.len())
+        .rev()
+        .map(|len| supported_options[..len].to_vec())
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -348,7 +376,7 @@ pub fn probe_device(
         info!("Using system default encoder");
     }
 
-    info!("Starting cascade profile testing (NVDEC → Baseline)...");
+    info!("Starting end-to-end profile testing (65536 → 66)...");
 
     let total_profiles = CODEC_PROFILES.len();
     for (i, (key, value)) in CODEC_PROFILES.iter().enumerate() {
@@ -359,17 +387,31 @@ pub fn probe_device(
         });
         info!("Testing {}={}...", key, value);
         let options = format!("{}={}", key, value);
-        if test_codec_options(
+        match validate_end_to_end(
             serial,
             server_jar,
             &options,
             profile.video_encoder.as_deref(),
         )? {
-            info!("✅ Profile {}={} supported", key, value);
-            profile.supported_profile = Some(value.to_string());
-            break;
-        } else {
-            info!("❌ Profile {}={} not supported", key, value);
+            EndToEndValidation::HostAccepted(decoder) => {
+                info!(
+                    "✅ Profile {}={} passed end-to-end validation via {}",
+                    key,
+                    value,
+                    decoder.profile_name()
+                );
+                profile.supported_profile = Some(value.to_string());
+                break;
+            }
+            EndToEndValidation::HostRejected => {
+                info!(
+                    "⚠️ Profile {}={} streams on device but failed host decoder validation",
+                    key, value
+                );
+            }
+            EndToEndValidation::DeviceRejected => {
+                info!("❌ Profile {}={} not supported on device", key, value);
+            }
         }
     }
 
@@ -427,33 +469,31 @@ pub fn probe_device(
         info!("🔄 Validating combined configuration...");
         info!("   Testing: {}", combined_config);
 
-        if test_codec_options(
+        if let Some((validated_profile, validated_options, decoder)) = validate_final_config(
             serial,
             server_jar,
-            combined_config,
             profile.video_encoder.as_deref(),
+            profile.supported_profile.as_deref(),
+            &profile.supported_options,
         )? {
-            info!("   ✅ Combined config works!");
+            profile.supported_profile = validated_profile.map(str::to_string);
+            profile.supported_options = validated_options;
+            profile.optimal_config =
+                build_options_string_for(profile.supported_profile.as_deref(), &profile.supported_options);
 
-            if let Some(decoder) = validate_decoder(
-                serial,
-                server_jar,
-                combined_config,
-                profile.video_encoder.as_deref(),
-            )? {
-                info!("   ✅ Validated host decoder: {}", decoder.profile_name());
-                save_validated_decoder(
-                    serial,
-                    decoder,
-                    profile.video_encoder.as_deref(),
-                    profile.optimal_config.as_deref(),
-                )?;
-            } else {
-                info!("   ⚠️ No hardware decoder validated, runtime will use fallback cascade");
-                clear_validated_decoder(serial)?;
+            if let Some(ref final_config) = profile.optimal_config {
+                info!("   ✅ Final end-to-end config: {}", final_config);
             }
+
+            info!("   ✅ Validated host decoder: {}", decoder.profile_name());
+            save_validated_decoder(
+                serial,
+                decoder,
+                profile.video_encoder.as_deref(),
+                profile.optimal_config.as_deref(),
+            )?;
         } else {
-            info!("   ❌ Combined config failed, falling back to None");
+            info!("   ❌ No end-to-end valid final configuration found, falling back to defaults");
             profile.optimal_config = None;
             profile.supported_options.clear();
             profile.supported_profile = None;
@@ -476,7 +516,7 @@ pub fn probe_device(
     // Clear heuristic encoder name if no options were validated, so the
     // next connection falls back to scrcpy's default encoder instead of
     // using an unverified guess.
-    if profile.supported_options.is_empty() {
+    if profile.supported_options.is_empty() && profile.supported_profile.is_none() {
         profile.video_encoder = None;
         clear_validated_decoder(serial)?;
     }
@@ -613,6 +653,67 @@ fn validate_decoder(
 
         Ok(None)
     })
+}
+
+fn validate_end_to_end(
+    serial: &str,
+    server_jar: &str,
+    options: &str,
+    video_encoder: Option<&str>,
+) -> Result<EndToEndValidation> {
+    if !test_codec_options(serial, server_jar, options, video_encoder)? {
+        return Ok(EndToEndValidation::DeviceRejected);
+    }
+
+    Ok(match validate_decoder(serial, server_jar, options, video_encoder)? {
+        Some(decoder) => EndToEndValidation::HostAccepted(decoder),
+        None => EndToEndValidation::HostRejected,
+    })
+}
+
+fn validate_final_config(
+    serial: &str,
+    server_jar: &str,
+    video_encoder: Option<&str>,
+    selected_profile: Option<&str>,
+    supported_options: &[String],
+) -> Result<Option<(Option<&'static str>, Vec<String>, DecoderPreference)>> {
+    for profile_candidate in profile_fallbacks(selected_profile) {
+        if profile_candidate != selected_profile {
+            info!(
+                "   ↩️ Retrying with more conservative profile {}",
+                profile_candidate.unwrap_or("default")
+            );
+        }
+
+        for option_set in trim_option_sets(supported_options) {
+            let Some(config) = build_options_string_for(profile_candidate, &option_set) else {
+                continue;
+            };
+
+            if option_set.len() != supported_options.len() {
+                info!(
+                    "   ↩️ Retrying with {} option(s): {}",
+                    option_set.len(),
+                    config
+                );
+            }
+
+            match validate_end_to_end(serial, server_jar, &config, video_encoder)? {
+                EndToEndValidation::HostAccepted(decoder) => {
+                    return Ok(Some((profile_candidate, option_set, decoder)));
+                }
+                EndToEndValidation::HostRejected => {
+                    info!("   ⚠️ Host decoder validation failed for {}", config);
+                }
+                EndToEndValidation::DeviceRejected => {
+                    info!("   ⚠️ Device rejected candidate config {}", config);
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 fn collect_validation_packets(
@@ -775,6 +876,23 @@ mod tests {
     }
 
     #[test]
+    fn test_profile_build_options_profile_only() {
+        let profile = EncoderProfile {
+            serial: "test".to_string(),
+            model: "Test".to_string(),
+            platform: "test".to_string(),
+            android_version: 14,
+            video_encoder: Some("c2.test.avc.encoder".to_string()),
+            supported_options: Vec::new(),
+            supported_profile: Some("66".to_string()),
+            optimal_config: None,
+            tested_at: "2025-01-01T00:00:00Z".to_string(),
+        };
+
+        assert_eq!(profile.build_options_string().as_deref(), Some("profile=66"));
+    }
+
+    #[test]
     fn test_decoder_preference_roundtrip() {
         assert_eq!(
             DecoderPreference::from_profile_name("NVDEC").map(|it| it.profile_name()),
@@ -789,5 +907,24 @@ mod tests {
             Some("encoder=c2.qcom.avc.encoder|options=profile=66,latency=0".to_string())
         );
         assert_eq!(encoder_fingerprint(None, None), None);
+    }
+
+    #[test]
+    fn test_profile_fallbacks_from_65536() {
+        assert_eq!(profile_fallbacks(Some("65536")), vec![Some("65536"), Some("66")]);
+    }
+
+    #[test]
+    fn test_trim_option_sets_descending() {
+        let options = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(
+            trim_option_sets(&options),
+            vec![
+                vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                vec!["a".to_string(), "b".to_string()],
+                vec!["a".to_string()],
+                vec![],
+            ]
+        );
     }
 }
