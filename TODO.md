@@ -65,10 +65,10 @@
 - [x] **[panic]** `src/scrcpy/connection.rs:190-192`: `try_into().unwrap()` 无错误上下文  
       ✅ **已修复** (commit 673e8ee): 改用 `expect("BUG: ...")` 并标注不变式
 
-- [x] **[panic]** `src/saide/ui/saide.rs:454,622,685,702,799,831,868`: 多处 `keyboard_mapper.unwrap()` 和 `mouse_mapper.unwrap()`  
+- [x] **[panic]** `src/core/ui/app.rs`: 多处 `keyboard_mapper.unwrap()` 和 `mouse_mapper.unwrap()`  
       ✅ **已修复** (commit 9e3b9a6): 使用 `let Some(...) else` 模式 + 早期返回
 
-- [x] **[panic]** `src/saide/coords.rs:152,194,275,326`: `unreachable!()` 在取模运算后（理论上可达，因为整数溢出）  
+- [x] **[panic]** `src/core/coords/mod.rs`: `unreachable!()` 在取模运算后（理论上可达，因为整数溢出）  
       ✅ **已修复** (commit 7c6a4fa): 改用 `debug_assert!` + % 4 normalization + fallback
 
 - [x] **[panic]** `src/decoder/audio/player.rs:95`: cpal 音频回调中包含潜在 panic 点  
@@ -93,13 +93,13 @@
 
 ### 架构设计
 
-- [x] **[god-object]** `src/saide/ui/saide.rs:58-138`: `SAideApp` 包含 40+ 字段，违反单一职责原则  
+- [x] **[god-object]** `src/core/ui/app.rs`: `SAideApp` 包含 40+ 字段，违反单一职责原则  
       ✅ **已修复** (commit f2af6d5): 拆分为 `AppState` (8字段)、`UIState` (5字段)、`ConfigState` (6字段)
 
-- [x] **[coupling]** `src/saide/init.rs`: 混合连接建立、设备监控、输入映射初始化三种职责  
+- [x] **[coupling]** `src/core/init.rs`: 混合连接建立、设备监控、输入映射初始化三种职责  
       ✅ **已修复**: 拆分为 `ConnectionService` (230行), `DeviceMonitor` (215行), init.rs 简化为协调器 (155行, -67%)
 
-- [x] **[coupling]** `src/saide/ui/player.rs:453-728`: `stream_worker` 275 行单体函数，混合解码器初始化、音频线程、视频循环  
+- [x] **[coupling]** `src/core/ui/player.rs`: `stream_worker` 曾是单体函数，混合解码器初始化、音频线程、视频循环  
       ✅ **已修复**: 拆分为 `DecoderManager::init()`, `AudioThread::spawn()`, `VideoLoop::run()`, stream_worker 简化为协调器 (310行→74行, -76%)
 
 - [x] **[abstraction]** `src/scrcpy/connection.rs:46-76`: `ScrcpyConnection` 公开原始 `TcpStream`  
@@ -117,7 +117,7 @@
 - [x] **[hardcoded]** `src/main.rs:18-19`: 窗口默认尺寸硬编码 `1280×720`，忽略 DPI 和屏幕尺寸  
       ✅ **已修复** (commit 18a1065): 添加 `general.window_width/height` 配置项
 
-- [x] **[hardcoded]** `src/saide/init.rs:122`: `capture_orientation` 硬编码为 `Some(0)`  
+- [x] **[hardcoded]** `src/core/connection.rs`: `capture_orientation` 硬编码为 `Some(0)`  
       ✅ **已修复** (commit 18a1065): 添加 `video.capture_orientation: Option<u32>` 配置项
 
 - [x] **[hardcoded]** `src/scrcpy/server.rs:103-104`: `max_size: 1600`, `max_fps: 60` 硬编码  
@@ -204,13 +204,13 @@
 
 ### UI 完善
 
-- [ ] **[ui]** `src/core/ui/log.rs`: 实现日志查看器（当前占位）  
+- [ ] **[ui]** 日志查看器：为主界面增加日志面板或对话框（当前未实现）  
       **需求**: 集成 `tracing-appender`，显示最近 1000 行日志，支持级别过滤（ERROR/WARN/INFO/DEBUG）
 
-- [ ] **[ui]** `src/core/ui/settings.rs`: 实现设置面板（当前占位）  
+- [ ] **[ui]** 设置面板：为主界面增加配置编辑入口（当前未实现）  
       **需求**: 可视化配置 GPU 后端、视频编码器、音频、按键映射等（同步到 `config.toml`）
 
-- [ ] **[ui]** `src/core/ui/overlay.rs`: 实现按键映射叠加层（当前占位）  
+- [ ] **[ui]** 映射可视化增强：补充更丰富的按键叠加展示  
       **需求**: 半透明显示当前激活的按键映射位置（类似游戏辅助）
 
 - [ ] **[ux]** `src/core/ui/editor.rs`: 缺少保存/加载/导出映射配置  
