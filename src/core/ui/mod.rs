@@ -9,7 +9,11 @@ mod theme;
 mod toolbar;
 
 use {
-    crate::shortcut::{ShortcutManager, ShortcutMap, shortcut_map},
+    crate::{
+        config::mapping::Key,
+        core::coords::MappingPos,
+        shortcut::{ShortcutManager, ShortcutMap, shortcut_map},
+    },
     lazy_static::lazy_static,
     parking_lot::RwLock,
     std::sync::Arc,
@@ -26,12 +30,28 @@ pub enum AppCommand {
     ShowCreateDialog,
     ShowDeleteDialog,
     ShowSaveAsDialog,
+    ShowAddMappingDialog,
+    ShowDeleteMappingDialog,
     CloseEditor,
+}
+
+/// Pending operation waiting for a dialog result. Carries data that cannot be
+/// encoded in [`AppCommand`] (which must be `Copy + Hash` for shortcut maps).
+#[derive(Debug)]
+pub enum PendingCommand {
     RenameProfile,
     CreateProfile,
     SaveProfileAs,
     DeleteProfile,
     SwitchProfile,
+    AddMapping(MappingPos),
+    DeleteMapping(Key),
+}
+
+#[derive(Debug)]
+pub enum EditorRequest {
+    AddMapping(egui::Pos2),
+    DeleteMapping(egui::Pos2),
 }
 
 lazy_static! {

@@ -1,8 +1,3 @@
-//! Mapping Editor UI
-//!
-//! This module provides the UI overlay for edit key mappings.
-//! It allows users to add, delete, and manage key mappings visually.
-
 use {
     super::{
         super::{
@@ -10,10 +5,11 @@ use {
             utils::extract_position,
         },
         AppCommand,
+        EditorRequest,
         theme::AppColors,
     },
     crate::{config::mapping::ProfileRef, shortcut::ShortcutMap, t},
-    eframe::egui::{self, Color32, FontId, Pos2, Stroke},
+    eframe::egui::{self, Color32, FontId, PointerButton, Pos2, Stroke},
     lazy_static::lazy_static,
 };
 
@@ -44,14 +40,27 @@ pub struct MappingEditor {}
 impl MappingEditor {
     pub fn new() -> Self { Self {} }
 
-    pub fn draw(&self, ctx: &egui::Context, params: EditorParams) {
+    pub fn draw(&self, ctx: &egui::Context, params: EditorParams) -> Option<EditorRequest> {
         let colors = AppColors::from_context(ctx);
+        let mut request = None;
 
         egui::Area::new(egui::Id::new(EDITOR_WINDOW_ID))
             .fixed_pos(params.video_rect.min)
-            .interactable(false)
+            .interactable(true)
             .order(egui::Order::Middle)
             .show(ctx, |ui| {
+                let response = ui.allocate_rect(*params.video_rect, egui::Sense::click());
+
+                if response.clicked_by(PointerButton::Primary) {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        request = Some(EditorRequest::AddMapping(pos));
+                    }
+                } else if response.clicked_by(PointerButton::Secondary)
+                    && let Some(pos) = response.interact_pointer_pos()
+                {
+                    request = Some(EditorRequest::DeleteMapping(pos));
+                }
+
                 let painter = ui.painter();
 
                 painter.rect_filled(
@@ -69,6 +78,8 @@ impl MappingEditor {
                 );
 
                 let instructions = [
+                    t!("mapping-config-instruction-add"),
+                    t!("mapping-config-instruction-delete"),
                     t!("mapping-config-instruction-help"),
                     t!("mapping-config-instruction-exit"),
                 ];
@@ -125,14 +136,16 @@ impl MappingEditor {
                 );
                 painter.text(
                     Pos2::new(
-                        params.video_rect.center().x,
-                        params.video_rect.top() + 100.0,
+                        params.video_rect.right() - 10.0,
+                        params.video_rect.bottom() - 10.0,
                     ),
-                    egui::Align2::CENTER_TOP,
+                    egui::Align2::RIGHT_BOTTOM,
                     &profile_text,
                     FontId::proportional(14.0),
                     Color32::LIGHT_GRAY,
                 );
             });
+
+        request
     }
 }

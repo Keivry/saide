@@ -1,4 +1,4 @@
-use crate::{SAideApp, config::mapping::Profile, t};
+use crate::{config::mapping::Profile, t, SAideApp};
 
 impl SAideApp {
     pub fn create_profile(&mut self, profile_name: &str) {
@@ -9,6 +9,10 @@ impl SAideApp {
         );
 
         if self.profile_manager.add_profile(profile).is_ok() {
+            self.profile_manager.update(
+                &self.app_state.device_serial,
+                self.app_state.device_orientation,
+            );
             self.save_config();
             if self
                 .profile_manager
@@ -29,6 +33,10 @@ impl SAideApp {
         }
 
         if self.profile_manager.remove_active_profile().is_ok() {
+            self.profile_manager.update(
+                &self.app_state.device_serial,
+                self.app_state.device_orientation,
+            );
             self.save_config();
         } else {
             self.notify(&t!("notification-delete-profile-failed"));
@@ -46,11 +54,13 @@ impl SAideApp {
             .save_active_profile_as(new_name)
             .is_ok()
         {
-            self.save_config()
+            self.profile_manager.update(
+                &self.app_state.device_serial,
+                self.app_state.device_orientation,
+            );
+            self.save_config();
         } else {
-            {
-                self.notify(&t!("notification-save-profile-as-failed"));
-            }
+            self.notify(&t!("notification-save-profile-as-failed"));
         };
     }
 
