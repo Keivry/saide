@@ -64,11 +64,6 @@ impl AppState {
 
     pub fn device_orientation(&self) -> u32 { self.device_orientation }
 
-    #[allow(dead_code)]
-    pub fn set_device_orientation(&mut self, orientation: u32) {
-        self.device_orientation = orientation;
-    }
-
     pub fn scrcpy_coords(&self) -> &ScrcpyCoordSys { &self.scrcpy_coords }
 
     pub fn scrcpy_coords_mut(&mut self) -> &mut ScrcpyCoordSys { &mut self.scrcpy_coords }
@@ -138,9 +133,6 @@ impl ConfigState {
 
     pub fn device_ime_state(&self) -> bool { self.device_ime_state }
 
-    #[allow(dead_code)]
-    pub fn set_device_ime_state(&mut self, state: bool) { self.device_ime_state = state; }
-
     pub fn frame_rate_limiter(&self) -> Option<Duration> { self.frame_rate_limiter }
 }
 
@@ -186,21 +178,9 @@ impl UIState {
 
     pub fn visual_coords_mut(&mut self) -> &mut VisualCoordSys { &mut self.visual_coords }
 
-    #[allow(dead_code)]
-    pub fn last_pointer_pos(&self) -> VisualPos { self.last_pointer_pos }
-
-    #[allow(dead_code)]
-    pub fn set_last_pointer_pos(&mut self, pos: VisualPos) { self.last_pointer_pos = pos; }
-
     pub fn is_ui_initialized(&self) -> bool { self.ui_initialized }
 
     pub fn set_ui_initialized(&mut self) { self.ui_initialized = true; }
-
-    #[allow(dead_code)]
-    pub fn audio_warning(&self) -> Option<&str> { self.audio_warning.as_deref() }
-
-    #[allow(dead_code)]
-    pub fn set_audio_warning(&mut self, warning: Option<String>) { self.audio_warning = warning; }
 
     pub fn mapping_visualization_enabled(&self) -> bool { self.mapping_visualization_enabled }
 

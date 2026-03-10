@@ -7,14 +7,6 @@ use {
     tracing::info,
 };
 
-/// Detected hardware encoder information
-#[derive(Debug, Clone)]
-pub struct EncoderInfo {
-    pub name: String,
-    pub is_hardware: bool,
-    pub mime_type: String,
-}
-
 /// Detect best H.264 hardware encoder on device
 ///
 /// Priority:
@@ -97,14 +89,6 @@ fn match_encoder_for_platform(platform: &str) -> Option<String> {
     }
 
     None
-}
-
-/// List all available video encoders (for debugging)
-pub fn list_video_encoders(_serial: &str) -> Result<Vec<EncoderInfo>> {
-    // TODO: Implement actual detection
-    // Would need to run Java code on device or parse dumpsys output
-    // For now, return empty - can be extended later
-    Ok(vec![])
 }
 
 #[cfg(test)]

@@ -192,9 +192,6 @@ pub fn detect_gpu() -> GpuType {
     GpuType::Unknown
 }
 
-/// Get GPU display name for UI
-pub fn gpu_display_name() -> String { detect_gpu().to_string() }
-
 #[cfg(test)]
 mod tests {
     use super::*;
