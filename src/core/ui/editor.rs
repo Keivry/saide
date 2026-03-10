@@ -65,16 +65,16 @@ impl MappingEditor {
         painter.text(
             Pos2::new(params.video_rect.center().x, params.video_rect.top() + 20.0),
             egui::Align2::CENTER_TOP,
-            t!("mapping-config-title"),
+            t!("editor-title"),
             FontId::proportional(18.0),
             Color32::WHITE,
         );
 
         let instructions = [
-            t!("mapping-config-instruction-add"),
-            t!("mapping-config-instruction-delete"),
-            t!("mapping-config-instruction-help"),
-            t!("mapping-config-instruction-exit"),
+            t!("editor-instruction-add"),
+            t!("editor-instruction-delete"),
+            t!("editor-instruction-help"),
+            t!("editor-instruction-exit"),
         ];
         instructions.iter().enumerate().for_each(|(i, text)| {
             painter.text(
@@ -120,12 +120,12 @@ impl MappingEditor {
 
         let profile_text = format!(
             "{} {}",
-            t!("mapping-config-profile-label"),
+            t!("editor-profile-label"),
             params
                 .profile
                 .as_ref()
                 .map(|p| p.read().name().to_string())
-                .unwrap_or_else(|| t!("mapping-config-profile-none"))
+                .unwrap_or_else(|| t!("editor-profile-none"))
         );
         painter.text(
             Pos2::new(

@@ -50,13 +50,13 @@ indicator-panel-profile = Profile:
 indicator-panel-profile-none = N/A
 
 ## UI - Mapping Editor
-mapping-config-title = Mapping Configuration Mode
-mapping-config-profile-label = Profile:
-mapping-config-profile-none = No Profile
-mapping-config-instruction-add = Left click - Add mapping
-mapping-config-instruction-delete = Right click - Delete mapping
-mapping-config-instruction-help = F1 - Show help
-mapping-config-instruction-exit = Press ESC to exit
+editor-title = Mapping Editor
+editor-profile-label = Profile:
+editor-profile-none = No Profile
+editor-instruction-add = Left click - Add mapping
+editor-instruction-delete = Right click - Delete mapping
+editor-instruction-help = F1 - Show help
+editor-instruction-exit = Press ESC to exit
 
 ## UI - Mapping Editor Dialogs
 editor-dialog-create-title = Add Mapping

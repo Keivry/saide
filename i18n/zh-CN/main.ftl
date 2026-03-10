@@ -50,13 +50,13 @@ indicator-panel-profile = 配置：
 indicator-panel-profile-none = 不可用
 
 ## UI - 映射编辑器
-mapping-config-title = 映射配置模式
-mapping-config-profile-label = 配置名称：
-mapping-config-profile-none = 无配置
-mapping-config-instruction-add = 左键 - 添加映射
-mapping-config-instruction-delete = 右键 - 删除映射
-mapping-config-instruction-help = F1 - 显示帮助
-mapping-config-instruction-exit = 按 ESC 退出
+editor-title = 映射编辑器
+editor-profile-label = 配置名称：
+editor-profile-none = 无配置
+editor-instruction-add = 左键 - 添加映射
+editor-instruction-delete = 右键 - 删除映射
+editor-instruction-help = F1 - 显示帮助
+editor-instruction-exit = 按 ESC 退出
 
 ## UI - 映射编辑器对话框
 editor-dialog-create-title = 创建映射
