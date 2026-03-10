@@ -74,21 +74,13 @@ impl ProfileManager {
         }
     }
 
-    /// Helper method to ensure there is an active profile for operations that require it
+    #[allow(dead_code)]
     fn ensure_active_profile_exists(&self) -> Result<()> {
         if self.get_active_profile().is_some() {
             Ok(())
         } else {
             Err(ProfileError::NoActiveProfile)
         }
-    }
-
-    /// Get device info (serial and rotation) from active profile, if any
-    pub fn get_device_info(&self) -> Option<(String, u32)> {
-        self.get_active_profile().as_ref().map(|p| {
-            let profile = p.read();
-            (profile.device_serial().into(), profile.rotation())
-        })
     }
 
     fn filter_profiles_for_device(&self, device_serial: &str, rotation: u32) -> Vec<ProfileRef> {
@@ -102,6 +94,7 @@ impl ProfileManager {
 
     /// Filter profiles based on device serial and rotation.
     /// Always queries live data from `self.profiles`; does not use the `avail_profiles` cache.
+    #[allow(dead_code)]
     pub fn get_avail_profiles(&self, device_serial: &str, rotation: u32) -> Vec<ProfileRef> {
         self.filter_profiles_for_device(device_serial, rotation)
     }
@@ -135,6 +128,7 @@ impl ProfileManager {
     }
 
     /// Get a profile reference by its index in the available profiles list
+    #[allow(dead_code)]
     pub fn get_profile_by_idx(&self, idx: usize) -> Option<ProfileRef> {
         if idx < self.avail_profiles.len() {
             Some(self.avail_profiles[idx].clone())
@@ -144,6 +138,7 @@ impl ProfileManager {
     }
 
     /// Get a profile reference by its name in the available profiles list
+    #[allow(dead_code)]
     pub fn get_profile_by_name(&self, profile_name: &str) -> Option<ProfileRef> {
         self.avail_profiles
             .iter()
@@ -152,6 +147,7 @@ impl ProfileManager {
     }
 
     /// Get the name of a profile by its index in the available profiles list
+    #[allow(dead_code)]
     pub fn get_profile_name_by_idx(&self, idx: usize) -> Option<String> {
         self.get_profile_by_idx(idx)
             .as_ref()
@@ -189,6 +185,7 @@ impl ProfileManager {
 
     /// Rename a profile by its current name, ensuring the new name is unique and the old profile
     /// exists
+    #[allow(dead_code)]
     pub fn rename_profile_by_name(&self, old_name: &str, new_name: &str) -> Result<()> {
         self.ensure_profile_exists(old_name)?;
         self.ensure_profile_not_exists(new_name)?;
@@ -204,6 +201,7 @@ impl ProfileManager {
 
     /// Rename a profile by its index in the full profiles list, ensuring the new name is
     /// unique and the index is valid
+    #[allow(dead_code)]
     pub fn rename_profile_by_idx(&self, idx: usize, new_name: &str) -> Result<()> {
         self.ensure_profile_not_exists(new_name)?;
 
@@ -228,6 +226,7 @@ impl ProfileManager {
     }
 
     /// Remove a profile by its index in the full profiles list, ensuring the index is valid
+    #[allow(dead_code)]
     pub fn remove_profile_by_idx(&self, idx: usize) -> Result<()> {
         let mut profiles = self.profiles.write();
         if idx < profiles.len() {
@@ -298,6 +297,7 @@ impl ProfileManager {
     }
 
     /// Clear all key mappings from the active profile
+    #[allow(dead_code)]
     pub fn clear_mappings(&self) -> Result<()> {
         let active_profile = self
             .get_active_profile()

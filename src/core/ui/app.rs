@@ -1053,13 +1053,12 @@ impl SAideApp {
                 let mappings = profile_lock.mappings();
                 if let Some((nearest_key, nearest_pos, dist)) =
                     find_nearest_mapping(&mapping_pos, mappings)
+                    && dist <= 0.04
                 {
-                    if dist <= 0.04 {
-                        let key_text = format!("{nearest_key:?}");
-                        self.show_delete_mapping_dialog(&nearest_pos, &key_text);
-                        if !had_dialog && self.dialog.is_some() {
-                            self.pending_command = Some(PendingCommand::DeleteMapping(nearest_key));
-                        }
+                    let key_text = format!("{nearest_key:?}");
+                    self.show_delete_mapping_dialog(&nearest_pos, &key_text);
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(PendingCommand::DeleteMapping(nearest_key));
                     }
                 }
             }
