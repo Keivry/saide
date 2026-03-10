@@ -32,6 +32,25 @@ pub enum Channel {
     Control,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioDisabledReason {
+    UnsupportedAndroidVersion { api_level: u32 },
+}
+
+impl fmt::Display for AudioDisabledReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AudioDisabledReason::UnsupportedAndroidVersion { api_level } => {
+                write!(
+                    f,
+                    "Audio capture requires Android 11+ (API 30+). Device API level: {}.",
+                    api_level
+                )
+            }
+        }
+    }
+}
+
 impl fmt::Display for Channel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -73,7 +92,7 @@ pub struct ScrcpyConnection {
     pub video_resolution: Option<(u32, u32)>,
 
     /// Audio disabled reason (if audio was requested but unavailable)
-    pub audio_disabled_reason: Option<String>,
+    pub audio_disabled_reason: Option<AudioDisabledReason>,
 
     /// Local TCP port used for tunneling
     pub local_port: u16,
@@ -113,11 +132,9 @@ impl ScrcpyConnection {
 
             // Audio capture requires Android 11 (API 30) or higher
             if android_version < 30 {
-                let reason = format!(
-                    "Audio capture requires Android 11+ (API 30+). Device is Android {} (API {}).",
-                    if android_version >= 29 { "10" } else { "<10" },
-                    android_version
-                );
+                let reason = AudioDisabledReason::UnsupportedAndroidVersion {
+                    api_level: android_version,
+                };
                 tracing::warn!("{} Disabling audio.", reason);
                 audio_disabled_reason = Some(reason);
                 params.audio = false;

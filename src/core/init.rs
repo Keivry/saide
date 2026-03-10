@@ -12,7 +12,7 @@ use {
             device_monitor::DeviceMonitor,
         },
         error::SAideError,
-        scrcpy::connection::ScrcpyConnection,
+        scrcpy::connection::{AudioDisabledReason, ScrcpyConnection},
     },
     crossbeam_channel::{Receiver, Sender},
     std::{
@@ -39,7 +39,7 @@ pub enum InitEvent {
         audio_stream: Option<TcpStream>,
         video_resolution: (u32, u32),
         device_name: Option<String>,
-        audio_disabled_reason: Option<String>,
+        audio_disabled_reason: Option<AudioDisabledReason>,
         capture_orientation: Option<u32>,
     },
     KeyboardMapper(KeyboardMapper),

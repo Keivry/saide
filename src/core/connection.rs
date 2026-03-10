@@ -9,7 +9,10 @@ use {
         controller::{control_sender::ControlSender, keyboard::KeyboardMapper, mouse::MouseMapper},
         decoder::AutoDecoder,
         error::{Result, SAideError},
-        scrcpy::{connection::ScrcpyConnection, server::ServerParams},
+        scrcpy::{
+            connection::{AudioDisabledReason, ScrcpyConnection},
+            server::ServerParams,
+        },
     },
     std::{net::TcpStream, sync::Arc, thread},
     tokio_util::sync::CancellationToken,
@@ -24,7 +27,7 @@ pub struct ConnectionResult {
     pub audio_stream: Option<TcpStream>,
     pub video_resolution: (u32, u32),
     pub device_name: Option<String>,
-    pub audio_disabled_reason: Option<String>,
+    pub audio_disabled_reason: Option<AudioDisabledReason>,
     pub capture_orientation: Option<u32>,
 }
 

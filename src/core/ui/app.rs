@@ -37,8 +37,12 @@ use {
         },
         error::Result,
         modal::{DialogState, ModalDialog},
-        scrcpy::codec_probe::{ProfileDatabase, ProbeStep},
-        t, tf,
+        scrcpy::{
+            codec_probe::{ProbeStep, ProfileDatabase},
+            connection::AudioDisabledReason,
+        },
+        t,
+        tf,
     },
     crossbeam_channel::{Receiver, bounded},
     std::{sync::Arc, thread, time::Instant},
@@ -165,8 +169,7 @@ impl SAideApp {
         let server_jar = self.config().general.scrcpy_server.clone();
 
         thread::spawn(move || {
-            let result =
-                crate::scrcpy::codec_probe::probe_device(&serial, &server_jar, Some(&tx));
+            let result = crate::scrcpy::codec_probe::probe_device(&serial, &server_jar, Some(&tx));
             if let Err(ref e) = result {
                 let _ = tx.send(ProbeStep::Done(Err(e.to_string())));
             }
@@ -198,7 +201,8 @@ impl SAideApp {
                         );
 
                         // Store audio warning if present
-                        self.ui_state.audio_warning = audio_disabled_reason;
+                        self.ui_state.audio_warning =
+                            audio_disabled_reason.map(localize_audio_warning);
 
                         // Save connection (to keep it alive and prevent server shutdown)
                         self.app_state.connection = Some(connection);
@@ -749,12 +753,11 @@ impl SAideApp {
         }
 
         // Update mouse state (check for long press and send drag updates)
-        if self.config_state.mouse_enabled() {
-            if let Some(mapper) = self.app_state.mouse_mapper.as_ref() {
-                if let Err(e) = mapper.update() {
-                    error!("Failed to update mouse mapper: {}", e);
-                }
-            }
+        if self.config_state.mouse_enabled()
+            && let Some(mapper) = self.app_state.mouse_mapper.as_ref()
+            && let Err(e) = mapper.update()
+        {
+            error!("Failed to update mouse mapper: {}", e);
         }
 
         ctx.input(|input| {
@@ -764,16 +767,14 @@ impl SAideApp {
             for event in &input.events {
                 // Process keyboard events
                 if self.config_state.keyboard_enabled() {
-                    if let egui::Event::Key {
-                        key,
-                        pressed,
-                        modifiers,
-                        ..
-                    } = event
-                    {
-                        match self.process_keyboard_event(key, *pressed, *modifiers) {
+                    match event {
+                        egui::Event::Key {
+                            key,
+                            pressed,
+                            modifiers,
+                            ..
+                        } => match self.process_keyboard_event(key, *pressed, *modifiers) {
                             Ok(handled) => {
-                                // If key event was handled, ignore subsequent text events
                                 if handled {
                                     ignore_text_events = true;
                                 }
@@ -781,18 +782,16 @@ impl SAideApp {
                             Err(e) => {
                                 info!("Failed to handle keyboard event: {}", e);
                             }
-                        }
-                    } else if !ignore_text_events {
-                        if let egui::Event::Text(text) = event {
-                            if !text.is_empty() {
-                                if let Some(mapper) = self.app_state.keyboard_mapper.as_ref() {
-                                    if let Err(e) = mapper.handle_text_input_event(text) {
-                                        info!("Failed to handle text input event: {}", e);
-                                    }
-                                }
+                        },
+                        egui::Event::Text(text) if !ignore_text_events && !text.is_empty() => {
+                            if let Some(mapper) = self.app_state.keyboard_mapper.as_ref()
+                                && let Err(e) = mapper.handle_text_input_event(text)
+                            {
+                                info!("Failed to handle text input event: {}", e);
                             }
                         }
-                    };
+                        _ => {}
+                    }
                 }
 
                 // Process mouse events
@@ -1469,5 +1468,13 @@ fn calculate_window_size(video_w: u32, video_h: u32, screen_w: f32, screen_h: f3
         (scaled_long, scaled_short)
     } else {
         (scaled_short, scaled_long)
+    }
+}
+
+fn localize_audio_warning(reason: AudioDisabledReason) -> String {
+    match reason {
+        AudioDisabledReason::UnsupportedAndroidVersion { api_level } => {
+            tf!("audio-warning-unsupported-android", "api_level" => api_level)
+        }
     }
 }
