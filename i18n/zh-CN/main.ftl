@@ -77,8 +77,8 @@ editor-dialog-saveas-placeholder = 新配置名称
 editor-dialog-switch-title = 选择要启用的配置
 editor-dialog-error-profile-exists-title = 配置已存在
 editor-dialog-error-profile-exists-message = 配置 "{$profile_name}" 已存在。
-mapping-config-help-title = 帮助
-mapping-config-help-message =
+help-title = 帮助
+help-message =
     可用快捷键：
     
     F1  - 显示此帮助      

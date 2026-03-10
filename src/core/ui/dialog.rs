@@ -6,8 +6,8 @@ use {
 impl SAideApp {
     pub fn show_help_dialog(&mut self) {
         if self.dialog.is_none() {
-            let mut dialog = ModalDialog::new("help_dialog", &t!("mapping-config-help-title"));
-            dialog.add_message(&t!("mapping-config-help-message"));
+            let mut dialog = ModalDialog::new("help_dialog", &t!("help-title"));
+            dialog.add_message(&t!("help-message"));
             self.dialog.replace(dialog);
         }
     }

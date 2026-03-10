@@ -77,8 +77,8 @@ editor-dialog-saveas-placeholder = New Profile Name
 editor-dialog-switch-title = Select Profile to Activate
 editor-dialog-error-profile-exists-title = Profile Already Exists
 editor-dialog-error-profile-exists-message = Profile "{$profile_name}" already exists.
-mapping-config-help-title = Help
-mapping-config-help-message =
+help-title = Help
+help-message =
     Available shortcuts:
     
     F1  - Show this help        
