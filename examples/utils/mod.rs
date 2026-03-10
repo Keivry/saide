@@ -1,4 +1,7 @@
-use anyhow::{Context, Result};
+use {
+    anyhow::{Context, Result},
+    saide::constant::resolve_scrcpy_server_path,
+};
 
 pub fn get_device_serial() -> Result<String> {
     if let Some(serial) = std::env::args().nth(1) {
@@ -20,5 +23,17 @@ pub fn get_device_serial() -> Result<String> {
         }
     }
 
-    anyhow::bail!("No Android device found. Usage: render_nvdec <device_serial>")
+    anyhow::bail!("No Android device found. Usage: cargo run --example <example-name> [serial]")
+}
+
+pub fn get_scrcpy_server_path() -> Result<String> {
+    let path = resolve_scrcpy_server_path();
+    if path.is_file() {
+        return Ok(path.to_string_lossy().to_string());
+    }
+
+    anyhow::bail!(
+        "Scrcpy server JAR not found. Expected '{}' in the current directory, application data directory, or legacy 3rd-party/ path.",
+        path.display()
+    )
 }
