@@ -8,7 +8,7 @@ use {
         protocol::video::VideoPacket,
         server::ServerParams,
     },
-    utils::get_device_serial,
+    utils::{get_device_serial, get_scrcpy_server_path},
 };
 
 fn main() -> Result<()> {
@@ -23,10 +23,7 @@ fn main() -> Result<()> {
     let serial = get_device_serial()?;
     println!("📱 设备: {}", serial);
 
-    let server_jar = "3rd-party/scrcpy-server-v3.3.3";
-    if !std::path::Path::new(server_jar).exists() {
-        anyhow::bail!("Server JAR 不存在: {}", server_jar);
-    }
+    let server_jar = get_scrcpy_server_path()?;
     println!("✓ Server JAR: {}", server_jar);
 
     // 使用默认配置（send_codec_meta=true, send_device_meta=true）
@@ -48,7 +45,7 @@ fn main() -> Result<()> {
     println!("  send_codec_meta: {}", params.send_codec_meta);
 
     println!("\n🔌 建立连接中...");
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
 
     println!("✅ 连接成功!");
     println!(

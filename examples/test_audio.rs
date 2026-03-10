@@ -9,7 +9,7 @@ use {
         scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
     std::time::Duration,
-    utils::get_device_serial,
+    utils::{get_device_serial, get_scrcpy_server_path},
 };
 
 fn main() -> Result<()> {
@@ -24,10 +24,7 @@ fn main() -> Result<()> {
     let serial = get_device_serial()?;
     println!("📱 Device: {}", serial);
 
-    let server_jar = "3rd-party/scrcpy-server-v3.3.3";
-    if !std::path::Path::new(server_jar).exists() {
-        anyhow::bail!("Server JAR not found: {}", server_jar);
-    }
+    let server_jar = get_scrcpy_server_path()?;
 
     // Enable audio streaming
     let params = ServerParams {
@@ -52,7 +49,7 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, server_jar, "127.0.0.1", params)?;
+    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
 
     println!("✅ Connection established!");
 
