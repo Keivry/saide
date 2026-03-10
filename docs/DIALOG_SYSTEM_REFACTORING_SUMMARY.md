@@ -9,7 +9,7 @@
 
 ## Overview
 
-This document summarizes the complete dialog system refactoring across three phases, transforming the mapping configuration UI from a tightly-coupled design to a clean event-driven architecture.
+This document summarizes the complete dialog system refactoring across three phases, transforming the mapping editor UI from a tightly-coupled design to a clean event-driven architecture.
 
 ---
 
@@ -31,7 +31,7 @@ This document summarizes the complete dialog system refactoring across three pha
    - `show_save_as_profile_dialog()`
    - `show_help_dialog()`
 4. **Cleaned up** 334 lines of commented old code
-5. **Added** missing i18n keys (`mapping-config-dialog-{new,saveas,profile-exists}-title`)
+5. **Added** missing i18n keys for the editor dialog flow
 
 ### Files Modified
 - `src/core/ui/app.rs`
@@ -64,7 +64,7 @@ This document summarizes the complete dialog system refactoring across three pha
 
 ### Objectives
 - Implement true event queue (VecDeque) to prevent lost events
-- Add global shortcut support (F1, F6-F8 work outside mapping overlay)
+- Add global shortcut support (F1, F6-F8 work outside the editor)
 - Prevent duplicate dialogs
 
 ### Problem Statement
@@ -73,7 +73,7 @@ This document summarizes the complete dialog system refactoring across three pha
 pending_dialog_event: Option<MappingConfigEvent>  // Only holds ONE event
 ```
 - Rapid keypresses in same frame → only last event processed (others lost)
-- F1-F8 shortcuts only worked inside mapping overlay
+- F1-F8 shortcuts only worked inside the editor
 - Multiple F1 presses could create multiple help dialogs
 
 **After**:
@@ -433,7 +433,7 @@ refactor(dialog): implement event queue and global shortcuts
 - Add show_dialog_for_event() dispatcher method
 - Implement global shortcuts (F1, F6-F8) in process_keyboard_event()
 - Add spam protection: only enqueue when dialog.is_none()
-- Clear event queue when mapping overlay closes
+- Clear event queue when the editor closes
 
 Fixes:
 - Multiple events in single frame no longer lost

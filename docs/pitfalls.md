@@ -1840,7 +1840,7 @@ macro_rules! t {
 fn update(&mut self, ctx: &egui::Context) {
     ui.label(t!("indicator-panel-fps"));      // Lock 1
     ui.label(t!("indicator-panel-resolution")); // Lock 2
-    ui.label(t!("mapping-config-title"));      // Lock 3
+    ui.label(t!("editor-title"));              // Lock 3
     // ... 17 more locks per frame
 }
 ```

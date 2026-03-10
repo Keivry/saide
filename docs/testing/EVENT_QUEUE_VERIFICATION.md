@@ -22,11 +22,11 @@ cargo build --release
 
 **Objective**: Verify multiple events queued in single frame are processed sequentially
 
-### Test 1.1: Multiple Dialog Events (Overlay Open)
+### Test 1.1: Multiple Dialog Events (Editor Open)
 
 **Steps**:
 1. Launch SAide and wait for device connection
-2. Press `M` to open mapping configuration overlay
+2. Press `M` to open the mapping editor
 3. **Rapidly** press `F1` then `F6` (within ~50ms)
 4. Observe dialog behavior
 
@@ -39,32 +39,32 @@ cargo build --release
 - ❌ Only Switch Profile dialog appears (F1 event lost)
 - ❌ Both dialogs try to render simultaneously (UI corruption)
 
-### Test 1.2: Event Queue Cleared on Overlay Close
+### Test 1.2: Event Queue Cleared on Editor Close
 
 **Steps**:
-1. Press `M` to open mapping overlay
+1. Press `M` to open the mapping editor
 2. Rapidly press `F1`, `F2`, `F3` (within ~50ms)
-3. **Immediately** press `Esc` to close overlay (before any dialog appears)
+3. **Immediately** press `Esc` to close the editor (before any dialog appears)
 4. Wait 2 seconds
 
 **Expected Result**:
-- ✅ No dialogs appear after closing overlay
-- ✅ Event queue was cleared when overlay closed
+- ✅ No dialogs appear after closing the editor
+- ✅ Event queue was cleared when the editor closed
 
 **Failure Symptoms**:
-- ❌ Dialogs appear after overlay is closed
+- ❌ Dialogs appear after the editor is closed
 - ❌ Application crashes
 
 ---
 
-## Test 2: Global Shortcuts Outside Mapping Overlay
+## Test 2: Global Shortcuts Outside the Editor
 
-**Objective**: Verify F1/F6/F7/F8 work globally, F2-F5 require overlay
+**Objective**: Verify F1/F6/F7/F8 work globally, while F2-F5 require the editor to be open
 
-### Test 2.1: Global Shortcuts (Overlay Closed)
+### Test 2.1: Global Shortcuts (Editor Closed)
 
 **Steps**:
-1. Ensure mapping overlay is **closed** (press `Esc` if needed)
+1. Ensure the editor is **closed** (press `Esc` if needed)
 2. Press `F1`
 3. Close dialog
 4. Press `F6`
@@ -82,12 +82,12 @@ cargo build --release
 
 **Failure Symptoms**:
 - ❌ Any of the above keys do nothing
-- ❌ Keys only work when overlay is open
+- ❌ Keys only work when the editor is open
 
-### Test 2.2: Overlay-Only Shortcuts (Overlay Closed)
+### Test 2.2: Editor-Only Shortcuts (Editor Closed)
 
 **Steps**:
-1. Ensure mapping overlay is **closed**
+1. Ensure the editor is **closed**
 2. Press `F2` (Rename Profile)
 3. Wait 500ms
 4. Press `F3` (New Profile)
@@ -102,13 +102,13 @@ cargo build --release
 - ✅ No error messages in terminal
 
 **Failure Symptoms**:
-- ❌ Dialogs appear when overlay is closed
-- ❌ Errors in terminal about missing overlay
+- ❌ Dialogs appear when the editor is closed
+- ❌ Errors in terminal about the editor not being available
 
-### Test 2.3: Overlay-Only Shortcuts (Overlay Open)
+### Test 2.3: Editor-Only Shortcuts (Editor Open)
 
 **Steps**:
-1. Press `M` to open mapping overlay
+1. Press `M` to open the mapping editor
 2. Press `F2`
 3. Close dialog (press `Esc`)
 4. Press `F3`
@@ -134,7 +134,7 @@ cargo build --release
 ### Test 3.1: Spam Protection
 
 **Steps**:
-1. Press `M` to open mapping overlay
+1. Press `M` to open the mapping editor
 2. Rapidly press `F1` 10 times (as fast as possible)
 3. Observe behavior
 
@@ -147,10 +147,10 @@ cargo build --release
 - ❌ 10 dialogs queue up and appear sequentially after closing first one
 - ❌ UI becomes unresponsive
 
-### Test 3.2: Mixed Global and Overlay Shortcuts
+### Test 3.2: Mixed Global and Editor Shortcuts
 
 **Steps**:
-1. Press `M` to open mapping overlay
+1. Press `M` to open the mapping editor
 2. Rapidly press `F1`, `F7`, `F6`, `F8` (within ~100ms)
 3. Observe behavior
 
@@ -170,7 +170,7 @@ cargo build --release
 ### Test 4.1: Shortcuts During Active Dialog
 
 **Steps**:
-1. Press `M` to open overlay
+1. Press `M` to open the editor
 2. Press `F1` to show Help dialog
 3. While Help dialog is open, press `F6`
 4. Wait 200ms (dialog still open)
@@ -187,7 +187,7 @@ cargo build --release
 ### Test 4.2: Device Rotation During Dialog
 
 **Steps**:
-1. Press `M` to open overlay
+1. Press `M` to open the editor
 2. Press `F1` to show Help dialog
 3. Rotate device (or trigger rotation via ADB)
 4. Observe dialog behavior
@@ -207,9 +207,9 @@ cargo build --release
 After completing all tests, verify:
 
 - [ ] Event queue prevents duplicate dialogs (Test 1.1)
-- [ ] Event queue clears on overlay close (Test 1.2)
-- [ ] Global shortcuts (F1, F6, F7, F8) work without overlay (Test 2.1)
-- [ ] Overlay-only shortcuts (F2-F5) require overlay (Test 2.2, 2.3)
+- [ ] Event queue clears on editor close (Test 1.2)
+- [ ] Global shortcuts (F1, F6, F7, F8) work without the editor (Test 2.1)
+- [ ] Editor-only shortcuts (F2-F5) require the editor (Test 2.2, 2.3)
 - [ ] Spam protection works (Test 3.1)
 - [ ] Direct actions (F5, F7, F8) execute immediately (Test 3.2)
 - [ ] No queueing during active dialog (Test 4.1)
