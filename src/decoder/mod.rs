@@ -19,14 +19,14 @@ pub use d3d11va::D3d11vaDecoder;
 use error::Result;
 pub use {
     audio::{AudioDecoder, AudioPlayer, DecodedAudio, OpusDecoder},
-    auto::AutoDecoder,
+    auto::{AutoDecoder, DecoderPreference},
     error::VideoError,
     ffmpeg_next::format::Pixel,
     h264::H264Decoder,
     h264_parser::extract_resolution_from_stream,
-    nv12_render::{Nv12RenderResources, new_nv12_render_callback},
+    nv12_render::{new_nv12_render_callback, Nv12RenderResources},
     nvdec::NvdecDecoder,
-    rgba_render::{RgbaRenderResources, new_rgba_render_callback},
+    rgba_render::{new_rgba_render_callback, RgbaRenderResources},
     vaapi::VaapiDecoder,
 };
 
@@ -71,7 +71,7 @@ pub struct DecodedFrame {
 ///
 /// # Example
 /// ```ignore
-/// let mut decoder = AutoDecoder::new(1920, 1080, true)?;
+/// let mut decoder = AutoDecoder::new(1920, 1080, true, None)?;
 /// let frame = decoder.decode(&packet_data, pts)?;
 /// if let Some(frame) = frame {
 ///     // Render frame

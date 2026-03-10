@@ -2695,7 +2695,8 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
 **Breaking Changes**:
 
 - `DeviceProfile::build_options_string(gpu_type: GpuType)` → `build_options_string()` (移除参数)
-- 现有 `device_profiles.toml` 可能需要重新生成 (profile 选择逻辑变化)
+- 现有 profile 缓存已拆分为 `encoder_profile.toml` 与 `decoder_profile.toml`
+- 若本地仍保留旧的 `device_profiles.toml`, 新版本会兼容读取；后续保存时才会写入新的 `encoder_profile.toml` / `decoder_profile.toml`，但仍建议重新生成以匹配最新探测逻辑
 
 **相关提交**:
 

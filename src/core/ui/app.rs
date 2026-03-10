@@ -38,7 +38,7 @@ use {
         error::Result,
         modal::{DialogState, ModalDialog},
         scrcpy::{
-            codec_probe::{ProbeStep, ProfileDatabase},
+            codec_probe::{EncoderProfileDatabase, ProbeStep},
             connection::AudioDisabledReason,
         },
         t,
@@ -1224,7 +1224,7 @@ impl eframe::App for SAideApp {
         match self.init_state {
             InitState::NotStarted => {
                 let serial = self.app_state.device_serial().to_owned();
-                let needs_probe = ProfileDatabase::load()
+                let needs_probe = EncoderProfileDatabase::load()
                     .map(|db| db.get(&serial).is_none())
                     .unwrap_or(true);
                 if needs_probe {

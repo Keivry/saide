@@ -38,17 +38,17 @@ fn main() -> Result<()> {
         println!("   Recommendation: Use video_codec_options: None");
     }
 
-    // Show saved profile location
     use saide::constant::{config_dir, fallback_data_path};
-    let config_path = config_dir()
+    let base_dir = config_dir()
         .and_then(|p: std::path::PathBuf| {
-            p.parent().map(|parent| parent.join("device_profiles.toml"))
+            p.parent().map(std::path::Path::to_path_buf)
         })
-        .or_else(|| Some(fallback_data_path().join("device_profiles.toml")));
+        .or_else(|| Some(fallback_data_path()));
 
-    if let Some(path) = config_path {
-        println!("\n💾 Profile saved to: {}", path.display());
-        println!("   (Future connections will use cached config)");
+    if let Some(path) = base_dir {
+        println!("\n💾 Encoder profile: {}", path.join("encoder_profile.toml").display());
+        println!("💾 Decoder profile: {}", path.join("decoder_profile.toml").display());
+        println!("   (Future connections will reuse cached encoder and decoder results)");
     }
 
     Ok(())

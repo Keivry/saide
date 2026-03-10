@@ -2,9 +2,9 @@
 
 use {
     super::{
+        error::{AudioError, Result},
         AudioDecoder,
         DecodedAudio,
-        error::{AudioError, Result},
     },
     opus::{Channels, Decoder},
     tracing::{debug, info, trace},

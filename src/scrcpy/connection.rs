@@ -328,6 +328,17 @@ impl ScrcpyConnection {
         )
     }
 
+    pub fn set_video_read_timeout(&self, timeout: Option<Duration>) -> Result<()> {
+        if let Some(ref stream) = self.video_stream {
+            stream.set_read_timeout(timeout)?;
+            Ok(())
+        } else {
+            Err(SAideError::Other(
+                "Unexpected null video stream".to_string(),
+            ))
+        }
+    }
+
     /// Read and parse an audio packet
     pub fn read_audio_packet(&mut self) -> Result<AudioPacket> {
         if let Some(ref mut stream) = self.audio_stream {

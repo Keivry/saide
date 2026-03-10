@@ -8,7 +8,7 @@ use {
         constant::{SCRCPY_SERVER_CLASS_NAME, SCRCPY_SERVER_PATH, SCRCPY_SERVER_VERSION},
         controller::AdbShell,
         error::{Result, SAideError},
-        scrcpy::codec_probe::ProfileDatabase,
+        scrcpy::codec_probe::EncoderProfileDatabase,
     },
     std::process::Child,
     tracing::{debug, info},
@@ -61,7 +61,7 @@ pub struct ServerParams {
     /// Send frame metadata (12-byte header)
     pub send_frame_meta: bool,
 
-    /// Send codec metadata (SPS/PPS)
+    /// Send scrcpy codec metadata (codec id + width + height)
     pub send_codec_meta: bool,
 
     /// Send device metadata (device name, 64 bytes)
@@ -130,7 +130,7 @@ impl ServerParams {
     ///
     /// Loads from cache if available, otherwise uses defaults
     pub fn for_device(serial: &str) -> Result<Self> {
-        let db = ProfileDatabase::load()?;
+        let db = EncoderProfileDatabase::load()?;
         let mut params = Self::default();
 
         if let Some(profile) = db.get(serial) {

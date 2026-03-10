@@ -11,6 +11,7 @@ use {
             AudioPlayer,
             AutoDecoder,
             DecodedFrame,
+            DecoderPreference,
             Nv12RenderResources,
             OpusDecoder,
             Pixel,
@@ -22,6 +23,7 @@ use {
         },
         error::Result,
         profiler::{LatencyProfiler, LatencyStats, latency::LatencySummary},
+        scrcpy::codec_probe::{DecoderProfileDatabase, EncoderProfileDatabase, encoder_fingerprint},
         scrcpy::protocol::video::VideoPacket,
         t,
         tf,
@@ -277,6 +279,24 @@ impl StreamPlayer {
         let audio_buffer_frames = self.audio_buffer_frames;
         let audio_ring_capacity = self.audio_ring_capacity;
         let hwdecode = self.hwdecode;
+        let current_encoder_fingerprint = EncoderProfileDatabase::load()
+            .ok()
+            .and_then(|db| db.get(serial).cloned())
+            .and_then(|profile| {
+                encoder_fingerprint(
+                    profile.video_encoder.as_deref(),
+                    profile.optimal_config.as_deref(),
+                )
+            });
+        let preferred_decoder = DecoderProfileDatabase::load()
+            .ok()
+            .and_then(|db| db.get(serial).cloned())
+            .filter(|profile| {
+                current_encoder_fingerprint
+                    .as_deref()
+                    .is_some_and(|fingerprint| profile.encoder_fingerprint == fingerprint)
+            })
+            .and_then(|profile| DecoderPreference::from_profile_name(&profile.validated_decoder));
         let event_tx_clone = event_tx.clone();
         self.stream_thread = Some(thread::spawn(move || {
             if session_token.is_cancelled() {
@@ -295,6 +315,7 @@ impl StreamPlayer {
                     audio_buffer_frames,
                     audio_ring_capacity,
                     hwdecode,
+                    preferred_decoder,
                 },
             ) {
                 let is_cancelled = e.is_cancelled();
@@ -613,6 +634,7 @@ struct StreamWorkerConfig {
     audio_buffer_frames: u32,
     audio_ring_capacity: usize,
     hwdecode: bool,
+    preferred_decoder: Option<DecoderPreference>,
 }
 
 /// Stream worker thread
@@ -642,6 +664,7 @@ fn stream_worker(
         config.audio_buffer_frames,
         config.audio_ring_capacity,
         config.hwdecode,
+        config.preferred_decoder,
     )?;
     let mut last_resolution = (0u32, 0u32);
     let mut video_decoder: Option<AutoDecoder> = None;
@@ -674,6 +697,7 @@ fn stream_worker(
         &latency_summary,
         &mut last_resolution,
         decoder_mgr.hwdecode,
+        decoder_mgr.preferred_decoder,
         &token,
     );
 
@@ -709,10 +733,16 @@ struct DecoderManager {
     audio_player: AudioPlayer,
     av_sync: AVSync,
     hwdecode: bool,
+    preferred_decoder: Option<DecoderPreference>,
 }
 
 impl DecoderManager {
-    fn init(audio_buffer_frames: u32, audio_ring_capacity: usize, hwdecode: bool) -> Result<Self> {
+    fn init(
+        audio_buffer_frames: u32,
+        audio_ring_capacity: usize,
+        hwdecode: bool,
+        preferred_decoder: Option<DecoderPreference>,
+    ) -> Result<Self> {
         let audio_decoder = OpusDecoder::new(48000, 2)?;
         let audio_player = AudioPlayer::new(48000, 2, audio_buffer_frames, audio_ring_capacity)?;
         let av_sync = AVSync::new(20);
@@ -726,6 +756,7 @@ impl DecoderManager {
             audio_player,
             av_sync,
             hwdecode,
+            preferred_decoder,
         })
     }
 }
@@ -867,6 +898,7 @@ impl VideoLoop {
         latency_summary: &Arc<ArcSwap<LatencySummary>>,
         last_resolution: &mut (u32, u32),
         hwdecode: bool,
+        preferred_decoder: Option<DecoderPreference>,
         token: &CancellationToken,
     ) -> Result<()> {
         let mut consecutive_read_errors = 0u32;
@@ -936,7 +968,12 @@ impl VideoLoop {
                             "Creating video decoder from SPS: {}x{}",
                             new_res.0, new_res.1
                         );
-                        *video_decoder = Some(AutoDecoder::new(new_res.0, new_res.1, hwdecode)?);
+                        *video_decoder = Some(AutoDecoder::new(
+                            new_res.0,
+                            new_res.1,
+                            hwdecode,
+                            preferred_decoder,
+                        )?);
                         *last_resolution = new_res;
                         let _ = event_tx.send(PlayerEvent::ResolutionChanged {
                             width: new_res.0,
@@ -947,7 +984,12 @@ impl VideoLoop {
                             "Resolution change detected in SPS: {}x{} -> {}x{}, recreating decoder",
                             last_resolution.0, last_resolution.1, new_res.0, new_res.1
                         );
-                        *video_decoder = Some(AutoDecoder::new(new_res.0, new_res.1, hwdecode)?);
+                        *video_decoder = Some(AutoDecoder::new(
+                            new_res.0,
+                            new_res.1,
+                            hwdecode,
+                            preferred_decoder,
+                        )?);
                         *last_resolution = new_res;
                         let _ = event_tx.send(PlayerEvent::ResolutionChanged {
                             width: new_res.0,

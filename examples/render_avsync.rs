@@ -294,7 +294,7 @@ fn av_worker(
     });
 
     // Video decode loop (main thread)
-    let mut video_decoder = AutoDecoder::new(width, height, true)?;
+    let mut video_decoder = AutoDecoder::new(width, height, true, None)?;
     info!(
         "Video decoder initialized: {}",
         video_decoder.decoder_type()

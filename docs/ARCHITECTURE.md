@@ -545,7 +545,10 @@ Device codec compatibility is tested using cascade approach:
 2. Fallback to Baseline profile (`profile=66`)
 3. Use first profile that succeeds
 
-Results are cached in `device_profiles.toml` to avoid repeated testing.
+Results are cached in two files to avoid repeated testing:
+
+- `encoder_profile.toml`: device-side encoder selection and codec options
+- `decoder_profile.toml`: host-side validated decoder preference (used only when it matches the current encoder profile fingerprint)
 
 **Source**: `src/decoder/auto.rs`, `src/scrcpy/codec_probe.rs`
 

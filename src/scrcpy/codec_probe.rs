@@ -2,20 +2,16 @@
 //!
 //! Probes device capabilities to find optimal low-latency configuration.
 //!
-//! **Strategy**: Cascade profile testing instead of GPU detection.
-//! - Tests all relevant codec profiles (NVDEC, Baseline, etc.) on the device
-//! - Device encoder validates which profiles work via FFmpeg
-//! - Supports multi-GPU systems (integrated + discrete)
-
 use {
     super::server::ServerParams,
     crate::{
         controller::AdbShell,
+        decoder::{AutoDecoder, DecoderPreference, VideoDecoder, extract_resolution_from_stream},
         error::{IoError, Result, SAideError},
     },
     crossbeam_channel::Sender,
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, fs, path::PathBuf},
+    std::{collections::HashMap, fs, path::PathBuf, time::Duration},
     tracing::{debug, info},
 };
 
@@ -48,9 +44,11 @@ const CODEC_OPTIONS_BASE: &[(&str, &str)] = &[
 ];
 
 const CODEC_PROFILES: &[(&str, &str)] = &[("profile", "65536"), ("profile", "66")];
+const PROBE_PACKET_TIMEOUT: Duration = Duration::from_secs(3);
+const VALIDATION_PACKET_LIMIT: usize = 12;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceProfile {
+pub struct EncoderProfile {
     pub serial: String,
     pub model: String,
     pub platform: String,
@@ -62,7 +60,7 @@ pub struct DeviceProfile {
     pub tested_at: String,
 }
 
-impl DeviceProfile {
+impl EncoderProfile {
     pub fn new(serial: &str) -> Result<Self> {
         let model = AdbShell::get_prop(serial, "ro.product.model")?;
         let platform = AdbShell::get_platform(serial)?;
@@ -106,28 +104,71 @@ impl DeviceProfile {
     }
 }
 
-/// Profile database
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProfileDatabase {
-    profiles: HashMap<String, DeviceProfile>,
+pub struct EncoderProfileDatabase {
+    profiles: HashMap<String, EncoderProfile>,
 }
 
-impl ProfileDatabase {
-    /// Load from config file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecoderProfile {
+    pub serial: String,
+    pub validated_decoder: String,
+    pub encoder_fingerprint: String,
+    pub tested_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DecoderProfileDatabase {
+    profiles: HashMap<String, DecoderProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct LegacyProfileDatabase {
+    profiles: HashMap<String, LegacyDeviceProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyDeviceProfile {
+    serial: String,
+    model: String,
+    platform: String,
+    android_version: u32,
+    video_encoder: Option<String>,
+    validated_decoder: Option<String>,
+    supported_options: Vec<String>,
+    supported_profile: Option<String>,
+    optimal_config: Option<String>,
+    tested_at: String,
+}
+
+pub fn encoder_fingerprint(
+    video_encoder: Option<&str>,
+    optimal_config: Option<&str>,
+) -> Option<String> {
+    match (video_encoder, optimal_config) {
+        (None, None) => None,
+        _ => Some(format!(
+            "encoder={}|options={}",
+            video_encoder.unwrap_or_default(),
+            optimal_config.unwrap_or_default()
+        )),
+    }
+}
+
+impl EncoderProfileDatabase {
     pub fn load() -> Result<Self> {
         let path = Self::config_path()?;
         if !path.exists() {
-            return Ok(Self::default());
+            return Self::load_legacy();
         }
 
         let content = fs::read_to_string(&path).map_err(|e| {
-            SAideError::IoError(IoError::new(e).with_message("Failed to read profile database"))
+            SAideError::IoError(IoError::new(e).with_message("Failed to read encoder profile database"))
         })?;
         let config = toml::from_str(&content)?;
         Ok(config)
     }
 
-    /// Save to config file
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
         if let Some(parent) = path.parent() {
@@ -137,28 +178,146 @@ impl ProfileDatabase {
         let content = toml::to_string_pretty(&self)?;
         fs::write(&path, content)?;
 
-        info!("Saved device profiles to {:?}", path);
+        info!("Saved encoder profiles to {:?}", path);
         Ok(())
     }
 
-    /// Get config file path
     fn config_path() -> Result<PathBuf> {
-        use crate::constant::{config_dir, fallback_data_path};
-        config_dir()
-            .and_then(|p: PathBuf| p.parent().map(|parent| parent.join("device_profiles.toml")))
-            .or_else(|| Some(fallback_data_path().join("device_profiles.toml")))
-            .ok_or_else(|| {
-                SAideError::IoError(IoError::new_with_message("Unable to determine config path"))
-            })
+        profile_path("encoder_profile.toml")
     }
 
-    /// Get profile for device
-    pub fn get(&self, serial: &str) -> Option<&DeviceProfile> { self.profiles.get(serial) }
+    fn legacy_path() -> Result<PathBuf> {
+        profile_path("device_profiles.toml")
+    }
 
-    /// Insert or update profile
-    pub fn insert(&mut self, profile: DeviceProfile) {
+    fn load_legacy() -> Result<Self> {
+        let path = Self::legacy_path()?;
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+
+        let content = fs::read_to_string(&path).map_err(|e| {
+            SAideError::IoError(IoError::new(e).with_message("Failed to read legacy profile database"))
+        })?;
+        let legacy: LegacyProfileDatabase = toml::from_str(&content)?;
+        Ok(Self {
+            profiles: legacy
+                .profiles
+                .into_iter()
+                .map(|(serial, profile)| {
+                    (
+                        serial,
+                        EncoderProfile {
+                            serial: profile.serial,
+                            model: profile.model,
+                            platform: profile.platform,
+                            android_version: profile.android_version,
+                            video_encoder: profile.video_encoder,
+                            supported_options: profile.supported_options,
+                            supported_profile: profile.supported_profile,
+                            optimal_config: profile.optimal_config,
+                            tested_at: profile.tested_at,
+                        },
+                    )
+                })
+                .collect(),
+        })
+    }
+
+    pub fn get(&self, serial: &str) -> Option<&EncoderProfile> { self.profiles.get(serial) }
+
+    pub fn insert(&mut self, profile: EncoderProfile) {
         self.profiles.insert(profile.serial.clone(), profile);
     }
+}
+
+impl DecoderProfileDatabase {
+    pub fn load() -> Result<Self> {
+        let path = Self::config_path()?;
+        if !path.exists() {
+            return Self::load_legacy();
+        }
+
+        let content = fs::read_to_string(&path).map_err(|e| {
+            SAideError::IoError(IoError::new(e).with_message("Failed to read decoder profile database"))
+        })?;
+        let config = toml::from_str(&content)?;
+        Ok(config)
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let path = Self::config_path()?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let content = toml::to_string_pretty(&self)?;
+        fs::write(&path, content)?;
+
+        info!("Saved decoder profiles to {:?}", path);
+        Ok(())
+    }
+
+    fn config_path() -> Result<PathBuf> {
+        profile_path("decoder_profile.toml")
+    }
+
+    fn legacy_path() -> Result<PathBuf> {
+        profile_path("device_profiles.toml")
+    }
+
+    fn load_legacy() -> Result<Self> {
+        let path = Self::legacy_path()?;
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+
+        let content = fs::read_to_string(&path).map_err(|e| {
+            SAideError::IoError(IoError::new(e).with_message("Failed to read legacy profile database"))
+        })?;
+        let legacy: LegacyProfileDatabase = toml::from_str(&content)?;
+        Ok(Self {
+            profiles: legacy
+                .profiles
+                .into_iter()
+                .filter_map(|(serial, profile)| {
+                    profile.validated_decoder.map(|validated_decoder| {
+                        (
+                            serial,
+                            DecoderProfile {
+                                serial: profile.serial,
+                                validated_decoder,
+                                encoder_fingerprint: encoder_fingerprint(
+                                    profile.video_encoder.as_deref(),
+                                    profile.optimal_config.as_deref(),
+                                )
+                                .unwrap_or_default(),
+                                tested_at: profile.tested_at,
+                            },
+                        )
+                    })
+                })
+                .collect(),
+        })
+    }
+
+    pub fn get(&self, serial: &str) -> Option<&DecoderProfile> { self.profiles.get(serial) }
+
+    pub fn insert(&mut self, profile: DecoderProfile) {
+        self.profiles.insert(profile.serial.clone(), profile);
+    }
+
+    pub fn remove(&mut self, serial: &str) { self.profiles.remove(serial); }
+}
+
+fn profile_path(file_name: &str) -> Result<PathBuf> {
+    use crate::constant::{config_dir, fallback_data_path};
+    config_dir()
+        .and_then(|p: PathBuf| p.parent().map(|parent| parent.join(file_name)))
+        .or_else(|| Some(fallback_data_path().join(file_name)))
+        .ok_or_else(|| {
+            SAideError::IoError(IoError::new_with_message("Unable to determine config path"))
+        })
 }
 
 pub fn probe_device(
@@ -175,7 +334,7 @@ pub fn probe_device(
     };
 
     send(ProbeStep::DetectingDevice);
-    let mut profile = DeviceProfile::new(serial)?;
+    let mut profile = EncoderProfile::new(serial)?;
     info!(
         "Device: {} ({}), Android {}",
         profile.model, profile.platform, profile.android_version
@@ -275,11 +434,30 @@ pub fn probe_device(
             profile.video_encoder.as_deref(),
         )? {
             info!("   ✅ Combined config works!");
+
+            if let Some(decoder) = validate_decoder(
+                serial,
+                server_jar,
+                combined_config,
+                profile.video_encoder.as_deref(),
+            )? {
+                info!("   ✅ Validated host decoder: {}", decoder.profile_name());
+                save_validated_decoder(
+                    serial,
+                    decoder,
+                    profile.video_encoder.as_deref(),
+                    profile.optimal_config.as_deref(),
+                )?;
+            } else {
+                info!("   ⚠️ No hardware decoder validated, runtime will use fallback cascade");
+                clear_validated_decoder(serial)?;
+            }
         } else {
             info!("   ❌ Combined config failed, falling back to None");
             profile.optimal_config = None;
             profile.supported_options.clear();
             profile.supported_profile = None;
+            clear_validated_decoder(serial)?;
         }
     }
 
@@ -300,9 +478,10 @@ pub fn probe_device(
     // using an unverified guess.
     if profile.supported_options.is_empty() {
         profile.video_encoder = None;
+        clear_validated_decoder(serial)?;
     }
 
-    let mut db = ProfileDatabase::load()?;
+    let mut db = EncoderProfileDatabase::load()?;
     db.insert(profile.clone());
     db.save()?;
 
@@ -380,13 +559,185 @@ fn test_codec_options(
     Ok(result)
 }
 
+fn validate_decoder(
+    serial: &str,
+    server_jar: &str,
+    options: &str,
+    video_encoder: Option<&str>,
+) -> Result<Option<DecoderPreference>> {
+    use crate::scrcpy::connection::ScrcpyConnection;
+
+    let params = ServerParams {
+        video: true,
+        video_codec: "h264".to_string(),
+        video_encoder: video_encoder.map(str::to_string),
+        video_bit_rate: 4_000_000,
+        max_size: 800,
+        max_fps: 30,
+        audio: false,
+        control: false,
+        send_device_meta: false,
+        send_codec_meta: true,
+        send_frame_meta: true,
+        video_codec_options: Some(options.to_string()),
+        ..Default::default()
+    };
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    rt.block_on(async {
+        let mut conn = match ScrcpyConnection::connect(serial, server_jar, "127.0.0.1", params) {
+            Ok(conn) => conn,
+            Err(e) => {
+                info!("  Decoder validation connection failed: {}", e);
+                return Ok(None);
+            }
+        };
+
+        let packets = collect_validation_packets(&mut conn);
+        let _ = conn.shutdown();
+        let packets = packets?;
+
+        if packets.is_empty() {
+            info!("  No video packets captured for decoder validation");
+            return Ok(None);
+        }
+
+        for candidate in DecoderPreference::hardware_candidates() {
+            if validate_decoder_candidate(*candidate, &packets) {
+                return Ok(Some(*candidate));
+            }
+        }
+
+        Ok(None)
+    })
+}
+
+fn collect_validation_packets(
+    conn: &mut crate::scrcpy::connection::ScrcpyConnection,
+) -> Result<Vec<(Vec<u8>, i64)>> {
+    let mut packets = Vec::new();
+    let mut saw_config_or_sps = false;
+
+    conn.set_video_read_timeout(Some(PROBE_PACKET_TIMEOUT))?;
+
+    while packets.len() < VALIDATION_PACKET_LIMIT {
+        let packet = match conn.read_video_packet() {
+            Ok(packet) => packet,
+            Err(e) => {
+                info!("  Validation packet read failed: {}", e);
+                break;
+            }
+        };
+
+        if packet.data.is_empty() {
+            continue;
+        }
+
+        let has_sps = extract_resolution_from_stream(&packet.data).is_some();
+        if !saw_config_or_sps {
+            if !packet.is_config && !has_sps {
+                continue;
+            }
+
+            saw_config_or_sps = true;
+            info!(
+                "  Detected {} packet for validation",
+                if packet.is_config { "config" } else { "SPS" }
+            );
+        }
+
+        packets.push((packet.data, packet.pts_us as i64));
+    }
+
+    conn.set_video_read_timeout(None)?;
+
+    if !saw_config_or_sps {
+        info!(
+            "  Timed out after {:?} waiting for config/SPS packet",
+            PROBE_PACKET_TIMEOUT
+        );
+    }
+
+    Ok(packets)
+}
+
+fn save_validated_decoder(
+    serial: &str,
+    decoder: DecoderPreference,
+    video_encoder: Option<&str>,
+    optimal_config: Option<&str>,
+) -> Result<()> {
+    let mut db = DecoderProfileDatabase::load()?;
+    db.insert(DecoderProfile {
+        serial: serial.to_string(),
+        validated_decoder: decoder.profile_name().to_string(),
+        encoder_fingerprint: encoder_fingerprint(video_encoder, optimal_config).unwrap_or_default(),
+        tested_at: chrono::Utc::now().to_rfc3339(),
+    });
+    db.save()
+}
+
+fn clear_validated_decoder(serial: &str) -> Result<()> {
+    let mut db = DecoderProfileDatabase::load()?;
+    db.remove(serial);
+    db.save()
+}
+
+fn validate_decoder_candidate(candidate: DecoderPreference, packets: &[(Vec<u8>, i64)]) -> bool {
+    let Some((width, height)) = packets
+        .iter()
+        .find_map(|(packet, _)| extract_resolution_from_stream(packet))
+    else {
+        info!(
+            "  {} validation skipped: SPS resolution unavailable",
+            candidate.profile_name()
+        );
+        return false;
+    };
+
+    let mut decoder = match AutoDecoder::new_exact(width, height, candidate) {
+        Ok(decoder) => decoder,
+        Err(e) => {
+            info!(
+                "  {} validation skipped: decoder init failed: {}",
+                candidate.profile_name(),
+                e
+            );
+            return false;
+        }
+    };
+
+    for (packet, pts) in packets {
+        match decoder.decode(packet, *pts) {
+            Ok(Some(_)) => {
+                info!("  ✅ {} decoded a validation frame", candidate.profile_name());
+                return true;
+            }
+            Ok(None) => continue,
+            Err(e) => {
+                info!("  {} validation failed: {}", candidate.profile_name(), e);
+                return false;
+            }
+        }
+    }
+
+    info!(
+        "  {} validation exhausted captured packets without producing a frame",
+        candidate.profile_name()
+    );
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_profile_build_options_baseline() {
-        let profile = DeviceProfile {
+        let profile = EncoderProfile {
             serial: "test".to_string(),
             model: "Test".to_string(),
             platform: "test".to_string(),
@@ -406,7 +757,7 @@ mod tests {
 
     #[test]
     fn test_profile_build_options_nvdec() {
-        let profile = DeviceProfile {
+        let profile = EncoderProfile {
             serial: "test".to_string(),
             model: "Test".to_string(),
             platform: "test".to_string(),
@@ -421,5 +772,22 @@ mod tests {
         let options = profile.build_options_string().unwrap();
         assert!(options.contains("profile=65536"));
         assert!(options.contains("i-frame-interval=2"));
+    }
+
+    #[test]
+    fn test_decoder_preference_roundtrip() {
+        assert_eq!(
+            DecoderPreference::from_profile_name("NVDEC").map(|it| it.profile_name()),
+            Some("NVDEC")
+        );
+    }
+
+    #[test]
+    fn test_encoder_fingerprint_contents() {
+        assert_eq!(
+            encoder_fingerprint(Some("c2.qcom.avc.encoder"), Some("profile=66,latency=0")),
+            Some("encoder=c2.qcom.avc.encoder|options=profile=66,latency=0".to_string())
+        );
+        assert_eq!(encoder_fingerprint(None, None), None);
     }
 }

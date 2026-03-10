@@ -8,7 +8,7 @@
 //! - Windows: NVDEC → D3D11VA → Software H.264
 
 use {
-    super::{DecodedFrame, H264Decoder, NvdecDecoder, VideoDecoder, error::Result},
+    super::{error::Result, DecodedFrame, H264Decoder, NvdecDecoder, VideoDecoder},
     tracing::{info, warn},
 };
 
@@ -16,6 +16,59 @@ use {
 use super::D3d11vaDecoder;
 #[cfg(not(target_os = "windows"))]
 use super::VaapiDecoder;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecoderPreference {
+    Nvdec,
+    #[cfg(target_os = "windows")]
+    D3d11va,
+    #[cfg(not(target_os = "windows"))]
+    Vaapi,
+}
+
+impl DecoderPreference {
+    pub fn profile_name(self) -> &'static str {
+        match self {
+            Self::Nvdec => "NVDEC",
+            #[cfg(target_os = "windows")]
+            Self::D3d11va => "D3D11VA",
+            #[cfg(not(target_os = "windows"))]
+            Self::Vaapi => "VAAPI",
+        }
+    }
+
+    pub fn from_profile_name(name: &str) -> Option<Self> {
+        if name.eq_ignore_ascii_case("NVDEC") {
+            return Some(Self::Nvdec);
+        }
+
+        #[cfg(target_os = "windows")]
+        if name.eq_ignore_ascii_case("D3D11VA") {
+            return Some(Self::D3d11va);
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        if name.eq_ignore_ascii_case("VAAPI") {
+            return Some(Self::Vaapi);
+        }
+
+        None
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn hardware_candidates() -> &'static [Self] {
+        const CANDIDATES: &[DecoderPreference] =
+            &[DecoderPreference::Nvdec, DecoderPreference::D3d11va];
+        CANDIDATES
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn hardware_candidates() -> &'static [Self] {
+        const CANDIDATES: &[DecoderPreference] =
+            &[DecoderPreference::Nvdec, DecoderPreference::Vaapi];
+        CANDIDATES
+    }
+}
 
 /// Auto-selecting video decoder based on available GPU
 #[cfg(not(target_os = "windows"))]
@@ -34,6 +87,22 @@ pub enum AutoDecoder {
 }
 
 impl AutoDecoder {
+    #[cfg(not(target_os = "windows"))]
+    pub fn new_exact(width: u32, height: u32, preferred: DecoderPreference) -> Result<Self> {
+        match preferred {
+            DecoderPreference::Nvdec => Ok(Self::Nvdec(NvdecDecoder::new(width, height)?)),
+            DecoderPreference::Vaapi => Ok(Self::Vaapi(VaapiDecoder::new(width, height)?)),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn new_exact(width: u32, height: u32, preferred: DecoderPreference) -> Result<Self> {
+        match preferred {
+            DecoderPreference::Nvdec => Ok(Self::Nvdec(NvdecDecoder::new(width, height)?)),
+            DecoderPreference::D3d11va => Ok(Self::D3d11va(D3d11vaDecoder::new(width, height)?)),
+        }
+    }
+
     /// Determine if orientation lock is needed for hardware decoding
     ///
     /// This is a conservative prediction made BEFORE decoder creation.
@@ -79,7 +148,7 @@ impl AutoDecoder {
 
         #[cfg(not(target_os = "windows"))]
         {
-            use crate::gpu::{GpuType, detect_gpu};
+            use crate::gpu::{detect_gpu, GpuType};
 
             // Linux: Only NVDEC needs lock, VAAPI can handle dynamic resolution
             match detect_gpu() {
@@ -109,7 +178,12 @@ impl AutoDecoder {
     /// - Linux: NVDEC → VAAPI → Software
     /// - Windows: NVDEC → D3D11VA → Software
     #[cfg(not(target_os = "windows"))]
-    pub fn new(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
+    pub fn new(
+        width: u32,
+        height: u32,
+        hwdecode: bool,
+        preferred: Option<DecoderPreference>,
+    ) -> Result<Self> {
         if !hwdecode {
             info!("Hardware decoding disabled by config, using software decoder");
             return Ok(Self::Software(H264Decoder::new(width, height)?));
@@ -117,17 +191,39 @@ impl AutoDecoder {
 
         info!("Starting cascade decoder selection (NVDEC → VAAPI → Software)");
 
-        if let Ok(decoder) = NvdecDecoder::new(width, height) {
-            info!("✅ Using NVDEC hardware decoder");
-            return Ok(Self::Nvdec(decoder));
+        if let Some(preferred) = preferred {
+            match Self::new_exact(width, height, preferred) {
+                Ok(decoder) => {
+                    info!(
+                        "✅ Using probe-validated preferred {} hardware decoder",
+                        preferred.profile_name()
+                    );
+                    return Ok(decoder);
+                }
+                Err(e) => {
+                    warn!(
+                        "Preferred {} decoder unavailable: {e}; falling back to cascade",
+                        preferred.profile_name()
+                    );
+                }
+            }
         }
-        warn!("NVDEC unavailable, trying VAAPI");
 
-        if let Ok(decoder) = VaapiDecoder::new(width, height) {
-            info!("✅ Using VAAPI hardware decoder");
-            return Ok(Self::Vaapi(decoder));
+        for candidate in DecoderPreference::hardware_candidates() {
+            if Some(*candidate) == preferred {
+                continue;
+            }
+
+            match Self::new_exact(width, height, *candidate) {
+                Ok(decoder) => {
+                    info!("✅ Using {} hardware decoder", candidate.profile_name());
+                    return Ok(decoder);
+                }
+                Err(e) => {
+                    warn!("{} unavailable: {e}", candidate.profile_name());
+                }
+            }
         }
-        warn!("VAAPI unavailable, falling back to software decoder");
 
         info!("Using software H.264 decoder");
         Ok(Self::Software(H264Decoder::new(width, height)?))
@@ -148,7 +244,12 @@ impl AutoDecoder {
     /// - D3D11VA (DirectX 11, Intel/AMD/NVIDIA)
     /// - Software H.264
     #[cfg(target_os = "windows")]
-    pub fn new(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
+    pub fn new(
+        width: u32,
+        height: u32,
+        hwdecode: bool,
+        preferred: Option<DecoderPreference>,
+    ) -> Result<Self> {
         if !hwdecode {
             info!("Hardware decoding disabled by config, using software decoder");
             return Ok(Self::Software(H264Decoder::new(width, height)?));
@@ -156,17 +257,39 @@ impl AutoDecoder {
 
         info!("Starting cascade decoder selection (NVDEC → D3D11VA → Software)");
 
-        if let Ok(decoder) = NvdecDecoder::new(width, height) {
-            info!("✅ Using NVDEC hardware decoder");
-            return Ok(Self::Nvdec(decoder));
+        if let Some(preferred) = preferred {
+            match Self::new_exact(width, height, preferred) {
+                Ok(decoder) => {
+                    info!(
+                        "✅ Using probe-validated preferred {} hardware decoder",
+                        preferred.profile_name()
+                    );
+                    return Ok(decoder);
+                }
+                Err(e) => {
+                    warn!(
+                        "Preferred {} decoder unavailable: {e}; falling back to cascade",
+                        preferred.profile_name()
+                    );
+                }
+            }
         }
-        warn!("NVDEC unavailable, trying D3D11VA");
 
-        if let Ok(decoder) = D3d11vaDecoder::new(width, height) {
-            info!("✅ Using D3D11VA hardware decoder");
-            return Ok(Self::D3d11va(decoder));
+        for candidate in DecoderPreference::hardware_candidates() {
+            if Some(*candidate) == preferred {
+                continue;
+            }
+
+            match Self::new_exact(width, height, *candidate) {
+                Ok(decoder) => {
+                    info!("✅ Using {} hardware decoder", candidate.profile_name());
+                    return Ok(decoder);
+                }
+                Err(e) => {
+                    warn!("{} unavailable: {e}", candidate.profile_name());
+                }
+            }
         }
-        warn!("D3D11VA unavailable, falling back to software decoder");
 
         info!("Using software H.264 decoder");
         Ok(Self::Software(H264Decoder::new(width, height)?))
@@ -176,8 +299,8 @@ impl AutoDecoder {
     #[cfg(not(target_os = "windows"))]
     pub fn decoder_type(&self) -> &'static str {
         match self {
-            Self::Nvdec(_) => "NVDEC",
-            Self::Vaapi(_) => "VAAPI",
+            Self::Nvdec(_) => DecoderPreference::Nvdec.profile_name(),
+            Self::Vaapi(_) => DecoderPreference::Vaapi.profile_name(),
             Self::Software(_) => "Software",
         }
     }
@@ -186,8 +309,8 @@ impl AutoDecoder {
     #[cfg(target_os = "windows")]
     pub fn decoder_type(&self) -> &'static str {
         match self {
-            Self::Nvdec(_) => "NVDEC",
-            Self::D3d11va(_) => "D3D11VA",
+            Self::Nvdec(_) => DecoderPreference::Nvdec.profile_name(),
+            Self::D3d11va(_) => DecoderPreference::D3d11va.profile_name(),
             Self::Software(_) => "Software",
         }
     }
