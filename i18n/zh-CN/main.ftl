@@ -38,32 +38,34 @@ indicator-panel-gpu-upload = GPU 上传：
 indicator-panel-profile = 配置：
 indicator-panel-profile-none = 不可用
 
-## UI - 映射配置
+## UI - 映射编辑器
 mapping-config-title = 映射配置模式
 mapping-config-profile-label = 配置名称：
+mapping-config-profile-none = 无配置
+mapping-config-instruction-add = 左键 - 添加映射
+mapping-config-instruction-delete = 右键 - 删除映射
 mapping-config-instruction-help = F1 - 显示帮助
 mapping-config-instruction-exit = 按 ESC 退出
-mapping-config-dialog-create-title = 创建映射
-mapping-config-dialog-create-message =
+
+## UI - 映射编辑器对话框
+editor-dialog-create-title = 创建映射
+editor-dialog-create-message =
     位置：({$x}, {$y})
     
     按任意键或 ESC 取消...
-mapping-config-dialog-delete-title = 删除映射
-mapping-config-dialog-delete-message = {$key}：({$x}, {$y})？
-mapping-config-dialog-override-title = 覆盖映射
-mapping-config-dialog-override-message =
-    {$key}：({$old_x}, {$old_y}) 已映射。
-    
-    覆盖到新位置（{$new_x}, {$new_y}）？
-mapping-config-dialog-rename-title = 重命名配置
-mapping-config-dialog-rename-placeholder = 新名称
-mapping-config-dialog-new-title = 创建新配置
-mapping-config-dialog-saveas-title = 另存为配置
-mapping-config-dialog-saveas-placeholder = 新配置名称
-mapping-config-dialog-switch-title = 选择要启用的配置
-mapping-config-dialog-profile-exists-title = 配置已存在
-mapping-config-dialog-conflict-title = 覆盖配置
-mapping-config-dialog-conflict-message = 配置 "{$name}" 已存在。是否覆盖？
+editor-dialog-delete-title = 删除映射
+editor-dialog-delete-message = {$key}：({$x}, {$y})？
+editor-dialog-delete-profile-title = 删除配置
+editor-dialog-delete-profile-message = 确定要删除配置 "{$name}" 吗？
+editor-dialog-rename-title = 重命名配置
+editor-dialog-rename-placeholder = 新名称
+editor-dialog-new-title = 创建新配置
+editor-dialog-new-placeholder = 配置名称
+editor-dialog-saveas-title = 另存为配置
+editor-dialog-saveas-placeholder = 新配置名称
+editor-dialog-switch-title = 选择要启用的配置
+editor-dialog-error-profile-exists-title = 配置已存在
+editor-dialog-error-profile-exists-message = 配置 "{$profile_name}" 已存在。
 mapping-config-help-title = 帮助
 mapping-config-help-message =
     可用快捷键：
@@ -77,7 +79,19 @@ mapping-config-help-message =
     F7  - 切换到上一个配置
     F8  - 切换到下一个配置
 
-    ESC - 关闭配置窗口    
+    ESC - 关闭编辑器      
+
+## UI - 通知
+notification-no-active-profile = 无活动配置
+notification-no-profiles = 无可用配置
+notification-create-profile-failed = 创建配置失败
+notification-delete-profile-failed = 删除配置失败
+notification-rename-profile-failed = 重命名配置失败
+notification-save-profile-as-failed = 另存配置失败
+notification-switch-profile-failed = 切换配置失败
+notification-add-mapping-failed = 添加映射失败
+notification-delete-mapping-failed = 删除映射失败
+notification-save-config-failed = 保存配置失败
 
 ## UI - 通用对话框按钮
 dialog-button-confirm = 确认
