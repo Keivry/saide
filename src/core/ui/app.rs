@@ -37,7 +37,8 @@ use {
         },
         error::Result,
         modal::{DialogState, ModalDialog},
-        t,
+        scrcpy::codec_probe::{ProfileDatabase, ProbeStep},
+        t, tf,
     },
     crossbeam_channel::{Receiver, bounded},
     std::{sync::Arc, thread, time::Instant},
@@ -49,6 +50,7 @@ use {
 #[derive(PartialEq)]
 pub(crate) enum InitState {
     NotStarted,
+    Probing,
     InProgress,
     Ready,
     Failed(String),
@@ -73,6 +75,9 @@ pub struct SAideApp {
     pub(super) init_state: InitState,
     pub(super) init_instant: Option<Instant>,
     pub(super) init_rx: Option<Receiver<InitEvent>>,
+
+    pub(super) probe_rx: Option<Receiver<ProbeStep>>,
+    pub(super) probe_current_step: Option<ProbeStep>,
 
     pub(super) last_paint_instant: Option<Instant>,
 
@@ -126,6 +131,9 @@ impl SAideApp {
             init_instant: None,
             init_rx: None,
 
+            probe_rx: None,
+            probe_current_step: None,
+
             last_paint_instant: None,
 
             notifier: Notifier::new(),
@@ -148,6 +156,25 @@ impl SAideApp {
             tx,
             self.app_state.cancel_token.clone(),
         );
+    }
+
+    fn start_probe(&mut self) {
+        self.init_state = InitState::Probing;
+        self.probe_current_step = None;
+
+        let (tx, rx) = bounded::<ProbeStep>(32);
+        self.probe_rx = Some(rx);
+
+        let serial = self.app_state.device_serial().to_owned();
+        let server_jar = self.config().general.scrcpy_server.clone();
+
+        thread::spawn(move || {
+            let result =
+                crate::scrcpy::codec_probe::probe_device(&serial, &server_jar, Some(&tx));
+            if let Err(ref e) = result {
+                let _ = tx.send(ProbeStep::Done(Err(e.to_string())));
+            }
+        });
     }
 
     /// Check initialization progress and update state
@@ -1092,6 +1119,12 @@ impl SAideApp {
             (PendingCommand::DeleteMapping(key), DialogState::Confirmed) => {
                 self.remove_mapping(key);
             }
+            (PendingCommand::ProbeCodec, DialogState::Confirmed) => {
+                self.start_probe();
+            }
+            (PendingCommand::ProbeCodec, DialogState::Cancelled) => {
+                self.init();
+            }
             (_, DialogState::Cancelled) => {}
             (cmd, result) => {
                 warn!(
@@ -1189,8 +1222,36 @@ impl eframe::App for SAideApp {
         // Handle initialization state transitions
         match self.init_state {
             InitState::NotStarted => {
-                // UI is ready, now start background initialization
-                self.init();
+                let serial = self.app_state.device_serial().to_owned();
+                let needs_probe = ProfileDatabase::load()
+                    .map(|db| db.get(&serial).is_none())
+                    .unwrap_or(true);
+                if needs_probe {
+                    self.show_probe_codec_dialog();
+                    self.pending_command = Some(PendingCommand::ProbeCodec);
+                } else {
+                    self.init();
+                }
+            }
+            InitState::Probing => {
+                if let Some(rx) = &self.probe_rx {
+                    while let Ok(step) = rx.try_recv() {
+                        let done = matches!(step, ProbeStep::Done(_));
+                        if let ProbeStep::Done(Err(ref e)) = step {
+                            let msg = tf!("probe-codec-done-failed", "error" => e.as_str());
+                            self.notifier.notify(msg.as_str());
+                        }
+                        self.probe_current_step = Some(step);
+                        if done {
+                            self.probe_rx = None;
+                            self.init();
+                            break;
+                        }
+                    }
+                }
+
+                self.draw_probe_codec_progress(ctx);
+                ctx.request_repaint();
             }
             InitState::InProgress => {
                 // Update player to receive events
@@ -1277,8 +1338,6 @@ impl eframe::App for SAideApp {
                 if let Some(editor_request) = self.draw_editor(ctx) {
                     self.handle_editor_request(editor_request);
                 }
-                let dialog_result = self.draw_dialog(ctx);
-                self.apply_dialog_result(dialog_result);
                 if self.dialog.is_none() {
                     self.process_input_events(ctx);
                 }
@@ -1289,6 +1348,9 @@ impl eframe::App for SAideApp {
                 // Player will show error state automatically
             }
         }
+
+        let dialog_result = self.draw_dialog(ctx);
+        self.apply_dialog_result(dialog_result);
 
         // Render player in center panel (no margin to maximize video area)
         egui::CentralPanel::default()

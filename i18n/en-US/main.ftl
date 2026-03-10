@@ -97,3 +97,14 @@ notification-save-config-failed = Failed to save config
 ## UI - Common Dialog Buttons
 dialog-button-confirm = Confirm
 dialog-button-cancel = Cancel
+
+probe-codec-dialog-title = Detect Codec Compatibility
+probe-codec-dialog-message = No codec profile found for device { $serial }. Run detection now? (~30-60s)
+probe-codec-progress-title = Detecting Codec Compatibility
+probe-codec-step-detecting-device = Reading device information...
+probe-codec-step-detecting-encoder = Detecting hardware encoder...
+probe-codec-step-testing-profile = Testing codec profile ({ $index }/{ $total }): { $name }
+probe-codec-step-testing-option = Testing codec option ({ $index }/{ $total }): { $key }
+probe-codec-step-validating = Validating combined configuration...
+probe-codec-done-success = Detection complete
+probe-codec-done-failed = Detection failed: { $error }

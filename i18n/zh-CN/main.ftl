@@ -97,3 +97,14 @@ notification-save-config-failed = 保存配置失败
 ## UI - 通用对话框按钮
 dialog-button-confirm = 确认
 dialog-button-cancel = 取消
+
+probe-codec-dialog-title = 检测编解码器兼容性
+probe-codec-dialog-message = 未找到设备 { $serial } 的编解码器配置文件。立即运行检测？（约 30-60 秒）
+probe-codec-progress-title = 正在检测编解码器兼容性
+probe-codec-step-detecting-device = 正在读取设备信息…
+probe-codec-step-detecting-encoder = 正在检测硬件编码器…
+probe-codec-step-testing-profile = 正在测试编解码器配置（{ $index }/{ $total }）：{ $name }
+probe-codec-step-testing-option = 正在测试编解码器选项（{ $index }/{ $total }）：{ $key }
+probe-codec-step-validating = 正在验证组合配置…
+probe-codec-done-success = 检测完成
+probe-codec-done-failed = 检测失败：{ $error }

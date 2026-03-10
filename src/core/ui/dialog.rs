@@ -1,6 +1,6 @@
 use {
     super::SAideApp,
-    crate::{core::coords::MappingPos, modal::ModalDialog, t, tf},
+    crate::{core::coords::MappingPos, modal::ModalDialog, scrcpy::codec_probe::ProbeStep, t, tf},
 };
 
 impl SAideApp {
@@ -147,5 +147,62 @@ impl SAideApp {
             ));
             self.dialog.replace(dialog);
         }
+    }
+
+    pub(super) fn show_probe_codec_dialog(&mut self) {
+        if self.dialog.is_none() {
+            let serial = self.app_state.device_serial().to_owned();
+            let title = t!("probe-codec-dialog-title");
+            let mut dialog = ModalDialog::new("probe_codec_dialog", title.as_str());
+            dialog.add_message(&tf!("probe-codec-dialog-message", "serial" => serial.as_str()));
+            self.dialog.replace(dialog);
+        }
+    }
+
+    pub(super) fn draw_probe_codec_progress(&self, ctx: &egui::Context) {
+        let step_text = match &self.probe_current_step {
+            None | Some(ProbeStep::DetectingDevice) => {
+                t!("probe-codec-step-detecting-device")
+            }
+            Some(ProbeStep::DetectingEncoder) => t!("probe-codec-step-detecting-encoder"),
+            Some(ProbeStep::TestingProfile { index, total, name }) => {
+                let idx = index.to_string();
+                let tot = total.to_string();
+                tf!(
+                    "probe-codec-step-testing-profile",
+                    "index" => idx.as_str(),
+                    "total" => tot.as_str(),
+                    "name" => name.as_str()
+                )
+            }
+            Some(ProbeStep::TestingOption { index, total, key }) => {
+                let idx = index.to_string();
+                let tot = total.to_string();
+                tf!(
+                    "probe-codec-step-testing-option",
+                    "index" => idx.as_str(),
+                    "total" => tot.as_str(),
+                    "key" => key.as_str()
+                )
+            }
+            Some(ProbeStep::Validating) => t!("probe-codec-step-validating"),
+            Some(ProbeStep::Done(Ok(_))) => t!("probe-codec-done-success"),
+            Some(ProbeStep::Done(Err(e))) => {
+                tf!("probe-codec-done-failed", "error" => e.as_str())
+            }
+        };
+
+        egui::Window::new(t!("probe-codec-progress-title"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_min_width(320.0);
+                ui.add_space(8.0);
+                ui.label(step_text);
+                ui.add_space(8.0);
+                ui.add(egui::ProgressBar::new(0.0).animate(true));
+                ui.add_space(4.0);
+            });
     }
 }

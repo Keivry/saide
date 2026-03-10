@@ -44,6 +44,7 @@ pub enum PendingCommand {
     SwitchProfile,
     AddMapping(MappingPos),
     DeleteMapping(Key),
+    ProbeCodec,
 }
 
 #[derive(Debug)]

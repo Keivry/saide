@@ -13,10 +13,21 @@ use {
         controller::AdbShell,
         error::{IoError, Result, SAideError},
     },
+    crossbeam_channel::Sender,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, fs, path::PathBuf},
     tracing::{debug, info},
 };
+
+#[derive(Debug, Clone)]
+pub enum ProbeStep {
+    DetectingDevice,
+    DetectingEncoder,
+    TestingProfile { index: usize, total: usize, name: String },
+    TestingOption { index: usize, total: usize, key: String },
+    Validating,
+    Done(std::result::Result<Option<String>, String>),
+}
 
 const CODEC_OPTIONS_BASE: &[(&str, &str)] = &[
     ("i-frame-interval", "2"),
@@ -142,15 +153,27 @@ impl ProfileDatabase {
     }
 }
 
-pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
+pub fn probe_device(
+    serial: &str,
+    server_jar: &str,
+    progress_tx: Option<&Sender<ProbeStep>>,
+) -> Result<Option<String>> {
     info!("🔍 Probing codec compatibility for device: {}", serial);
 
+    let send = |step: ProbeStep| {
+        if let Some(tx) = progress_tx {
+            let _ = tx.send(step);
+        }
+    };
+
+    send(ProbeStep::DetectingDevice);
     let mut profile = DeviceProfile::new(serial)?;
     info!(
         "Device: {} ({}), Android {}",
         profile.model, profile.platform, profile.android_version
     );
 
+    send(ProbeStep::DetectingEncoder);
     profile.video_encoder = super::hwcodec::detect_h264_encoder(serial)?;
     if let Some(ref encoder) = profile.video_encoder {
         info!("Detected hardware encoder: {}", encoder);
@@ -160,7 +183,13 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
 
     info!("Starting cascade profile testing (NVDEC → Baseline)...");
 
-    for (key, value) in CODEC_PROFILES {
+    let total_profiles = CODEC_PROFILES.len();
+    for (i, (key, value)) in CODEC_PROFILES.iter().enumerate() {
+        send(ProbeStep::TestingProfile {
+            index: i + 1,
+            total: total_profiles,
+            name: format!("{}={}", key, value),
+        });
         info!("Testing {}={}...", key, value);
         let options = format!("{}={}", key, value);
         if test_codec_options(
@@ -195,7 +224,13 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
 
     info!("Testing {} codec options...", candidate_options.len());
 
+    let total_options = candidate_options.len();
     for (i, (key, value)) in candidate_options.iter().enumerate() {
+        send(ProbeStep::TestingOption {
+            index: i + 1,
+            total: total_options,
+            key: key.to_string(),
+        });
         info!(
             "  [{}/{}] Testing {}={}...",
             i + 1,
@@ -221,6 +256,7 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
     profile.optimal_config = profile.build_options_string();
 
     if let Some(ref combined_config) = profile.optimal_config {
+        send(ProbeStep::Validating);
         info!("🔄 Validating combined configuration...");
         info!("   Testing: {}", combined_config);
 
@@ -254,6 +290,8 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
     let mut db = ProfileDatabase::load()?;
     db.insert(profile.clone());
     db.save()?;
+
+    send(ProbeStep::Done(Ok(profile.optimal_config.clone())));
 
     Ok(profile.optimal_config)
 }
