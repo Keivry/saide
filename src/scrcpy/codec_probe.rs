@@ -287,6 +287,13 @@ pub fn probe_device(
         info!("   No options supported, using defaults");
     }
 
+    // Clear heuristic encoder name if no options were validated, so the
+    // next connection falls back to scrcpy's default encoder instead of
+    // using an unverified guess.
+    if profile.supported_options.is_empty() {
+        profile.video_encoder = None;
+    }
+
     let mut db = ProfileDatabase::load()?;
     db.insert(profile.clone());
     db.save()?;

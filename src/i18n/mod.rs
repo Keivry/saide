@@ -140,7 +140,7 @@ mod tests {
                     if i % 2 == 0 {
                         t!("app-title")
                     } else {
-                        tf!("config-max-fps", "fps" => i)
+                        tf!("indicator-fps", "fps" => i)
                     }
                 })
             })

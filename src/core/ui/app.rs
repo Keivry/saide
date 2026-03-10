@@ -79,8 +79,6 @@ pub struct SAideApp {
     pub(super) probe_rx: Option<Receiver<ProbeStep>>,
     pub(super) probe_current_step: Option<ProbeStep>,
 
-    pub(super) last_paint_instant: Option<Instant>,
-
     pub(super) notifier: Notifier,
     pub(super) profile_manager: ProfileManager,
 }
@@ -133,8 +131,6 @@ impl SAideApp {
 
             probe_rx: None,
             probe_current_step: None,
-
-            last_paint_instant: None,
 
             notifier: Notifier::new(),
             profile_manager: ProfileManager::new(&config.mappings.profiles),
@@ -753,10 +749,12 @@ impl SAideApp {
         }
 
         // Update mouse state (check for long press and send drag updates)
-        if self.config_state.mouse_enabled()
-            && let Err(e) = self.app_state.mouse_mapper.as_ref().unwrap().update()
-        {
-            error!("Failed to update mouse mapper: {}", e);
+        if self.config_state.mouse_enabled() {
+            if let Some(mapper) = self.app_state.mouse_mapper.as_ref() {
+                if let Err(e) = mapper.update() {
+                    error!("Failed to update mouse mapper: {}", e);
+                }
+            }
         }
 
         ctx.input(|input| {
@@ -784,17 +782,16 @@ impl SAideApp {
                                 info!("Failed to handle keyboard event: {}", e);
                             }
                         }
-                    } else if !ignore_text_events
-                        && let egui::Event::Text(text) = event
-                        && !text.is_empty()
-                        && let Err(e) = self
-                            .app_state
-                            .keyboard_mapper
-                            .as_ref()
-                            .unwrap()
-                            .handle_text_input_event(text)
-                    {
-                        info!("Failed to handle text input event: {}", e);
+                    } else if !ignore_text_events {
+                        if let egui::Event::Text(text) = event {
+                            if !text.is_empty() {
+                                if let Some(mapper) = self.app_state.keyboard_mapper.as_ref() {
+                                    if let Err(e) = mapper.handle_text_input_event(text) {
+                                        info!("Failed to handle text input event: {}", e);
+                                    }
+                                }
+                            }
+                        }
                     };
                 }
 
@@ -1414,16 +1411,10 @@ impl eframe::App for SAideApp {
 
         // Frame rate limiting (only when streaming)
         if matches!(self.player.state(), PlayerState::Streaming) {
-            if let Some(limiter) = self.config_state.frame_rate_limiter() {
-                if let Some(last) = self.last_paint_instant {
-                    let elapsed = last.elapsed();
-                    if elapsed < limiter {
-                        thread::sleep(limiter - elapsed);
-                    }
-                }
-                self.last_paint_instant = Some(Instant::now());
+            match self.config_state.frame_rate_limiter() {
+                Some(limiter) => ctx.request_repaint_after(limiter),
+                None => ctx.request_repaint(),
             }
-            ctx.request_repaint();
         }
     }
 }

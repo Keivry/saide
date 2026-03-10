@@ -5,12 +5,12 @@ fn main() {
 
     // Test basic translation
     println!("App title: {}", t!("app-title"));
-    println!("App starting: {}", t!("app-starting"));
+    println!("Editor: {}", t!("toolbar-editor"));
 
     // Test translation with arguments
     println!("\nWith arguments:");
-    println!("{}", tf!("config-video-backend", "backend" => "Vulkan"));
-    println!("{}", tf!("config-max-fps", "fps" => "60"));
+    println!("{}", tf!("indicator-fps", "fps" => "60"));
+    println!("{}", tf!("indicator-latency", "ms" => "42"));
 
     // Check current locale
     let locale = L10N.read().current_locale().to_string();
@@ -23,18 +23,18 @@ fn main() {
     L10N.write().set_locale("zh-CN");
 
     println!("App title: {}", t!("app-title"));
-    println!("App starting: {}", t!("app-starting"));
-    println!("{}", tf!("config-video-backend", "backend" => "Vulkan"));
-    println!("{}", tf!("config-max-fps", "fps" => "60"));
+    println!("Editor: {}", t!("toolbar-editor"));
+    println!("{}", tf!("indicator-fps", "fps" => "60"));
+    println!("{}", tf!("indicator-latency", "ms" => "42"));
 
     // Switch back to English
     println!("\n=== Switching to English ===\n");
     L10N.write().set_locale("en-US");
 
     println!("App title: {}", t!("app-title"));
-    println!("App starting: {}", t!("app-starting"));
-    println!("{}", tf!("config-video-backend", "backend" => "Vulkan"));
-    println!("{}", tf!("config-max-fps", "fps" => "60"));
+    println!("Editor: {}", t!("toolbar-editor"));
+    println!("{}", tf!("indicator-fps", "fps" => "60"));
+    println!("{}", tf!("indicator-latency", "ms" => "42"));
 
     println!("\n=== i18n test completed ===");
 }

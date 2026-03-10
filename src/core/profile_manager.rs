@@ -12,13 +12,16 @@ pub enum ProfileError {
     NoActiveProfile,
 
     #[error("Profile not exists")]
-    ProfileNotExist,
+    ProfileNotFound,
 
     #[error("Profile name already exists")]
     ProfileConflict,
 
     #[error("Invalid profile format")]
     ProfileFormatError,
+
+    #[error("Only one profile available, cannot switch")]
+    NoProfileToSwitch,
 }
 
 pub type Result<T> = std::result::Result<T, ProfileError>;
@@ -60,7 +63,7 @@ impl ProfileManager {
         if self.profile_exists(profile_name) {
             Ok(())
         } else {
-            Err(ProfileError::ProfileNotExist)
+            Err(ProfileError::ProfileNotFound)
         }
     }
 
@@ -195,7 +198,7 @@ impl ProfileManager {
             profile.write().rename(new_name);
             Ok(())
         } else {
-            Err(ProfileError::ProfileNotExist)
+            Err(ProfileError::ProfileNotFound)
         }
     }
 
@@ -210,7 +213,7 @@ impl ProfileManager {
             profiles[idx].write().rename(new_name);
             Ok(())
         } else {
-            Err(ProfileError::ProfileNotExist)
+            Err(ProfileError::ProfileNotFound)
         }
     }
 
@@ -239,7 +242,7 @@ impl ProfileManager {
             profiles.remove(idx);
             Ok(())
         } else {
-            Err(ProfileError::ProfileNotExist)
+            Err(ProfileError::ProfileNotFound)
         }
     }
 
@@ -311,7 +314,7 @@ impl ProfileManager {
     pub fn switch_profile_next(&self) -> Result<()> {
         let avail_count = self.avail_profiles.len();
         if avail_count <= 1 {
-            return Err(ProfileError::ProfileNotExist);
+            return Err(ProfileError::NoProfileToSwitch);
         }
 
         match self.get_active_profile_idx() {
@@ -330,7 +333,7 @@ impl ProfileManager {
     pub fn switch_profile_prev(&self) -> Result<()> {
         let avail_count = self.avail_profiles.len();
         if avail_count <= 1 {
-            return Err(ProfileError::ProfileNotExist);
+            return Err(ProfileError::NoProfileToSwitch);
         }
 
         match self.get_active_profile_idx() {
@@ -349,7 +352,7 @@ impl ProfileManager {
     pub fn switch_to_profile(&self, idx: usize) -> Result<()> {
         let avail_count = self.avail_profiles.len();
         if idx >= avail_count {
-            return Err(ProfileError::ProfileNotExist);
+            return Err(ProfileError::ProfileNotFound);
         }
 
         self.active_profile
@@ -363,7 +366,7 @@ impl ProfileManager {
         if let Some(idx) = self.get_profile_idx_by_name(profile_name) {
             self.switch_to_profile(idx)
         } else {
-            Err(ProfileError::ProfileNotExist)
+            Err(ProfileError::ProfileNotFound)
         }
     }
 

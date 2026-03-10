@@ -1,4 +1,4 @@
-use crate::{SAideApp, config::mapping::Profile, t};
+use crate::{config::mapping::Profile, core::profile_manager::ProfileError, t, SAideApp};
 
 impl SAideApp {
     pub fn create_profile(&mut self, profile_name: &str) {
@@ -88,19 +88,17 @@ impl SAideApp {
     }
 
     pub fn next_profile(&mut self) {
-        self.profile_manager
-            .switch_profile_next()
-            .unwrap_or_else(|_| {
-                self.notify(&t!("notification-switch-profile-failed"));
-            });
+        match self.profile_manager.switch_profile_next() {
+            Ok(()) | Err(ProfileError::NoProfileToSwitch) => {}
+            Err(_) => self.notify(&t!("notification-switch-profile-failed")),
+        }
     }
 
     pub fn prev_profile(&mut self) {
-        self.profile_manager
-            .switch_profile_prev()
-            .unwrap_or_else(|_| {
-                self.notify(&t!("notification-switch-profile-failed"));
-            });
+        match self.profile_manager.switch_profile_prev() {
+            Ok(()) | Err(ProfileError::NoProfileToSwitch) => {}
+            Err(_) => self.notify(&t!("notification-switch-profile-failed")),
+        }
     }
 
     pub fn close_mapping_editor(&mut self) { self.mapping_editor.take(); }

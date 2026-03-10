@@ -109,7 +109,9 @@ impl ConfigState {
         let frame_rate_limiter = if vsync {
             None
         } else {
-            Some(Duration::from_millis(u64::from(1000 / max_fps)))
+            // max_fps is validated as 1..=240 by config, but guard against 0 to prevent
+            // +Infinity which would panic in Duration::from_secs_f64.
+            Some(Duration::from_secs_f64(1.0 / max_fps.max(1) as f64))
         };
 
         Self {

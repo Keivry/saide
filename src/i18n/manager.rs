@@ -14,7 +14,7 @@
 //! The cache is automatically invalidated when the locale changes.
 
 use {
-    fluent_bundle::{FluentArgs, FluentResource, bundle::FluentBundle},
+    fluent_bundle::{bundle::FluentBundle, FluentArgs, FluentResource},
     intl_memoizer::concurrent::IntlLangMemoizer,
     lru::LruCache,
     once_cell::sync::Lazy,
@@ -24,8 +24,8 @@ use {
         collections::HashMap,
         num::NonZeroUsize,
         sync::{
-            Arc,
             atomic::{AtomicU64, Ordering},
+            Arc,
         },
     },
     unic_langid::LanguageIdentifier,
@@ -149,7 +149,7 @@ impl I18nManager {
         let prefix = normalized.split('-').next().unwrap_or("en");
 
         for key in bundles.keys() {
-            if key.starts_with(prefix) || key.starts_with(&normalized[..2]) {
+            if key.starts_with(prefix) {
                 return key.clone();
             }
         }
@@ -186,14 +186,6 @@ impl I18nManager {
             self.current_locale = normalized;
             self.invalidate_cache();
             return;
-        }
-
-        for key in self.bundles.keys() {
-            if key.starts_with(&normalized[..2]) {
-                self.current_locale = key.clone();
-                self.invalidate_cache();
-                return;
-            }
         }
 
         let prefix = normalized.split('-').next().unwrap_or("en");
