@@ -23,8 +23,16 @@ use {
 pub enum ProbeStep {
     DetectingDevice,
     DetectingEncoder,
-    TestingProfile { index: usize, total: usize, name: String },
-    TestingOption { index: usize, total: usize, key: String },
+    TestingProfile {
+        index: usize,
+        total: usize,
+        name: String,
+    },
+    TestingOption {
+        index: usize,
+        total: usize,
+        key: String,
+    },
     Validating,
     Done(std::result::Result<Option<String>, String>),
 }

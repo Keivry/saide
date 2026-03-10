@@ -7,7 +7,7 @@
 //! - Support multiple FTL files per locale (auto-merged)
 //! - Hot reload: watch FTL files and auto-reload bundles (debug only)
 //!
-//! Useage:
+//! Usage:
 //! ```ignore
 //! use saide::{t, tf};
 //!

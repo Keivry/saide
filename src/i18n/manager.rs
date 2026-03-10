@@ -14,7 +14,7 @@
 //! The cache is automatically invalidated when the locale changes.
 
 use {
-    fluent_bundle::{bundle::FluentBundle, FluentArgs, FluentResource},
+    fluent_bundle::{FluentArgs, FluentResource, bundle::FluentBundle},
     intl_memoizer::concurrent::IntlLangMemoizer,
     lru::LruCache,
     once_cell::sync::Lazy,
@@ -24,8 +24,8 @@ use {
         collections::HashMap,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc,
+            atomic::{AtomicU64, Ordering},
         },
     },
     unic_langid::LanguageIdentifier,
