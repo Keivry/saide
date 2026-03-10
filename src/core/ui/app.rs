@@ -1005,15 +1005,25 @@ impl SAideApp {
                     }
                 }
                 AppCommand::CloseEditor => self.close_mapping_editor(),
-                AppCommand::ShowAddMappingDialog | AppCommand::ShowDeleteMappingDialog => {}
             }
         }
     }
 
     fn handle_editor_request(&mut self, request: EditorRequest) {
+        if self.dialog.is_some() {
+            return;
+        }
         let video_rect = self.player.video_rect();
         match request {
             EditorRequest::AddMapping(screen_pos) => {
+                let Some(mapping_pos) = self.ui_state.visual_coords().to_mapping(
+                    &screen_pos,
+                    &video_rect,
+                    self.app_state.scrcpy_coords(),
+                    self.ui_state.mapping_coords(),
+                ) else {
+                    return;
+                };
                 if self.profile_manager.get_active_profile().is_none() {
                     self.create_profile("Default");
                     if self.profile_manager.get_active_profile().is_none() {
@@ -1021,16 +1031,9 @@ impl SAideApp {
                     }
                 }
                 let had_dialog = self.dialog.is_some();
-                if let Some(mapping_pos) = self.ui_state.visual_coords().to_mapping(
-                    &screen_pos,
-                    &video_rect,
-                    self.app_state.scrcpy_coords(),
-                    self.ui_state.mapping_coords(),
-                ) {
-                    self.show_add_mapping_dialog(&mapping_pos);
-                    if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(PendingCommand::AddMapping(mapping_pos));
-                    }
+                self.show_add_mapping_dialog(&mapping_pos);
+                if !had_dialog && self.dialog.is_some() {
+                    self.pending_command = Some(PendingCommand::AddMapping(mapping_pos));
                 }
             }
             EditorRequest::DeleteMapping(screen_pos) => {
@@ -1048,13 +1051,15 @@ impl SAideApp {
                 };
                 let profile_lock = profile.read();
                 let mappings = profile_lock.mappings();
-                if let Some((nearest_key, nearest_pos)) =
+                if let Some((nearest_key, nearest_pos, dist)) =
                     find_nearest_mapping(&mapping_pos, mappings)
                 {
-                    let key_text = format!("{nearest_key:?}");
-                    self.show_delete_mapping_dialog(&nearest_pos, &key_text);
-                    if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(PendingCommand::DeleteMapping(nearest_key));
+                    if dist <= 0.04 {
+                        let key_text = format!("{nearest_key:?}");
+                        self.show_delete_mapping_dialog(&nearest_pos, &key_text);
+                        if !had_dialog && self.dialog.is_some() {
+                            self.pending_command = Some(PendingCommand::DeleteMapping(nearest_key));
+                        }
                     }
                 }
             }
@@ -1088,6 +1093,7 @@ impl SAideApp {
             (PendingCommand::DeleteMapping(key), DialogState::Confirmed) => {
                 self.remove_mapping(key);
             }
+            (_, DialogState::Cancelled) => {}
             (cmd, result) => {
                 warn!(
                     "apply_dialog_result: unhandled (pending={cmd:?}, result={result:?}) — command dropped"

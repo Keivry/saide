@@ -4,6 +4,7 @@ app-title = SAide
 ## UI - Toolbar
 toolbar-rotate = Rotate Video
 toolbar-configure = Configure Mapping
+toolbar-editor = Mapping Editor
 toolbar-create-profile = Create Mapping Profile
 toolbar-delete-profile = Delete Mapping Profile
 toolbar-keyboard-mapping = Toggle Keyboard Mapping

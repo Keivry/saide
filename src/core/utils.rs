@@ -12,7 +12,7 @@ use crate::{
 pub fn find_nearest_mapping(
     source: &MappingPos,
     mappings: &KeyMapping,
-) -> Option<(Key, MappingPos)> {
+) -> Option<(Key, MappingPos, f32)> {
     let mut nearest: Option<(Key, MappingPos, f32)> = None;
 
     for (key, action) in mappings.iter() {
@@ -31,7 +31,7 @@ pub fn find_nearest_mapping(
         }
     }
 
-    nearest.map(|(k, p, _)| (k, p))
+    nearest
 }
 
 /// Extract position from a mapping action, if applicable

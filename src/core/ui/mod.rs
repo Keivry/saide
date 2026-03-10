@@ -30,8 +30,6 @@ pub enum AppCommand {
     ShowCreateDialog,
     ShowDeleteDialog,
     ShowSaveAsDialog,
-    ShowAddMappingDialog,
-    ShowDeleteMappingDialog,
     CloseEditor,
 }
 
