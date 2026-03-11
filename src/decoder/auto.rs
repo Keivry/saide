@@ -8,7 +8,7 @@
 //! - Windows: NVDEC → D3D11VA → Software H.264
 
 use {
-    super::{error::Result, DecodedFrame, H264Decoder, NvdecDecoder, VideoDecoder},
+    super::{DecodedFrame, H264Decoder, NvdecDecoder, VideoDecoder, error::Result},
     tracing::{info, warn},
 };
 
@@ -148,7 +148,7 @@ impl AutoDecoder {
 
         #[cfg(not(target_os = "windows"))]
         {
-            use crate::gpu::{detect_gpu, GpuType};
+            use crate::gpu::{GpuType, detect_gpu};
 
             // Linux: Only NVDEC needs lock, VAAPI can handle dynamic resolution
             match detect_gpu() {

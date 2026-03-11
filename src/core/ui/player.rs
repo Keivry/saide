@@ -23,8 +23,10 @@ use {
         },
         error::Result,
         profiler::{LatencyProfiler, LatencyStats, latency::LatencySummary},
-        scrcpy::codec_probe::{DecoderProfileDatabase, EncoderProfileDatabase, encoder_fingerprint},
-        scrcpy::protocol::video::VideoPacket,
+        scrcpy::{
+            codec_probe::{DecoderProfileDatabase, EncoderProfileDatabase, encoder_fingerprint},
+            protocol::video::VideoPacket,
+        },
         t,
         tf,
     },
@@ -666,7 +668,7 @@ fn stream_worker(
         config.hwdecode,
         config.preferred_decoder,
     )?;
-    let mut last_resolution = (0u32, 0u32);
+    let mut last_resolution = video_resolution;
     let mut video_decoder: Option<AutoDecoder> = None;
 
     let stats = Arc::new(Mutex::new(StreamStats::default()));
@@ -951,57 +953,52 @@ impl VideoLoop {
             let estimated_capture = Instant::now() - Duration::from_millis(30);
             profiler.mark_capture(estimated_capture);
 
-            // Lazy decoder initialization: create decoder from first keyframe SPS
-            // Note: SPS parsing on every keyframe (~1-2/sec) has negligible cost (~1-5μs)
-            // We keep resolution change detection as defensive programming:
-            // - Software decoder (hwdecode=false): no orientation lock, resolution may change
-            // - Hardware decoder: capture_orientation lock may fail on some devices
-            // - Cost of check: single integer comparison, worth the safety
-            if video_packet.is_keyframe
-                && let Some((width_sps, height_sps)) =
-                    extract_resolution_from_stream(&video_packet.data)
+            let packet_resolution = extract_resolution_from_stream(&video_packet.data);
+            let init_resolution =
+                if video_packet.is_config && last_resolution.0 > 32 && last_resolution.1 > 32 {
+                    packet_resolution.or(Some(*last_resolution))
+                } else {
+                    packet_resolution
+                };
+
+            if let Some(new_res) = init_resolution
+                && new_res.0 > 32
+                && new_res.1 > 32
             {
-                let new_res = (width_sps, height_sps);
-                if new_res.0 > 32 && new_res.1 > 32 {
-                    if video_decoder.is_none() {
-                        info!(
-                            "Creating video decoder from SPS: {}x{}",
-                            new_res.0, new_res.1
-                        );
-                        *video_decoder = Some(AutoDecoder::new(
-                            new_res.0,
-                            new_res.1,
-                            hwdecode,
-                            preferred_decoder,
-                        )?);
-                        *last_resolution = new_res;
-                        let _ = event_tx.send(PlayerEvent::ResolutionChanged {
-                            width: new_res.0,
-                            height: new_res.1,
-                        });
-                    } else if new_res != *last_resolution {
-                        warn!(
-                            "Resolution change detected in SPS: {}x{} -> {}x{}, recreating decoder",
-                            last_resolution.0, last_resolution.1, new_res.0, new_res.1
-                        );
-                        *video_decoder = Some(AutoDecoder::new(
-                            new_res.0,
-                            new_res.1,
-                            hwdecode,
-                            preferred_decoder,
-                        )?);
-                        *last_resolution = new_res;
-                        let _ = event_tx.send(PlayerEvent::ResolutionChanged {
-                            width: new_res.0,
-                            height: new_res.1,
-                        });
-                    }
+                if video_decoder.is_none() {
+                    info!("Creating video decoder: {}x{}", new_res.0, new_res.1);
+                    *video_decoder = Some(AutoDecoder::new(
+                        new_res.0,
+                        new_res.1,
+                        hwdecode,
+                        preferred_decoder,
+                    )?);
+                    *last_resolution = new_res;
+                    let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                        width: new_res.0,
+                        height: new_res.1,
+                    });
+                } else if new_res != *last_resolution {
+                    warn!(
+                        "Resolution change detected in SPS: {}x{} -> {}x{}, recreating decoder",
+                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
+                    );
+                    *video_decoder = Some(AutoDecoder::new(
+                        new_res.0,
+                        new_res.1,
+                        hwdecode,
+                        preferred_decoder,
+                    )?);
+                    *last_resolution = new_res;
+                    let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                        width: new_res.0,
+                        height: new_res.1,
+                    });
                 }
             }
 
-            // Decode only if decoder exists (wait for first keyframe)
             let Some(decoder) = video_decoder.as_mut() else {
-                debug!("Waiting for first keyframe to initialize decoder");
+                debug!("Waiting for first config/SPS packet to initialize decoder");
                 continue;
             };
 

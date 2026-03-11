@@ -2,9 +2,9 @@
 
 use {
     super::{
-        error::{Result, VideoError},
         DecodedFrame,
         VideoDecoder,
+        error::{Result, VideoError},
     },
     ffmpeg::{
         codec,

@@ -1,7 +1,6 @@
 //! Automatic Video Codec Options Compatibility Detection
 //!
 //! Probes device capabilities to find optimal low-latency configuration.
-//!
 use {
     super::server::ServerParams,
     crate::{
@@ -91,6 +90,8 @@ enum EndToEndValidation {
     HostRejected,
     HostAccepted(DecoderPreference),
 }
+
+type FinalValidationResult = Option<(Option<&'static str>, Vec<String>, DecoderPreference)>;
 
 fn build_options_string_for(
     supported_profile: Option<&str>,
@@ -192,7 +193,9 @@ impl EncoderProfileDatabase {
         }
 
         let content = fs::read_to_string(&path).map_err(|e| {
-            SAideError::IoError(IoError::new(e).with_message("Failed to read encoder profile database"))
+            SAideError::IoError(
+                IoError::new(e).with_message("Failed to read encoder profile database"),
+            )
         })?;
         let config = toml::from_str(&content)?;
         Ok(config)
@@ -211,13 +214,9 @@ impl EncoderProfileDatabase {
         Ok(())
     }
 
-    fn config_path() -> Result<PathBuf> {
-        profile_path("encoder_profile.toml")
-    }
+    fn config_path() -> Result<PathBuf> { profile_path("encoder_profile.toml") }
 
-    fn legacy_path() -> Result<PathBuf> {
-        profile_path("device_profiles.toml")
-    }
+    fn legacy_path() -> Result<PathBuf> { profile_path("device_profiles.toml") }
 
     fn load_legacy() -> Result<Self> {
         let path = Self::legacy_path()?;
@@ -226,7 +225,9 @@ impl EncoderProfileDatabase {
         }
 
         let content = fs::read_to_string(&path).map_err(|e| {
-            SAideError::IoError(IoError::new(e).with_message("Failed to read legacy profile database"))
+            SAideError::IoError(
+                IoError::new(e).with_message("Failed to read legacy profile database"),
+            )
         })?;
         let legacy: LegacyProfileDatabase = toml::from_str(&content)?;
         Ok(Self {
@@ -268,7 +269,9 @@ impl DecoderProfileDatabase {
         }
 
         let content = fs::read_to_string(&path).map_err(|e| {
-            SAideError::IoError(IoError::new(e).with_message("Failed to read decoder profile database"))
+            SAideError::IoError(
+                IoError::new(e).with_message("Failed to read decoder profile database"),
+            )
         })?;
         let config = toml::from_str(&content)?;
         Ok(config)
@@ -287,13 +290,9 @@ impl DecoderProfileDatabase {
         Ok(())
     }
 
-    fn config_path() -> Result<PathBuf> {
-        profile_path("decoder_profile.toml")
-    }
+    fn config_path() -> Result<PathBuf> { profile_path("decoder_profile.toml") }
 
-    fn legacy_path() -> Result<PathBuf> {
-        profile_path("device_profiles.toml")
-    }
+    fn legacy_path() -> Result<PathBuf> { profile_path("device_profiles.toml") }
 
     fn load_legacy() -> Result<Self> {
         let path = Self::legacy_path()?;
@@ -302,7 +301,9 @@ impl DecoderProfileDatabase {
         }
 
         let content = fs::read_to_string(&path).map_err(|e| {
-            SAideError::IoError(IoError::new(e).with_message("Failed to read legacy profile database"))
+            SAideError::IoError(
+                IoError::new(e).with_message("Failed to read legacy profile database"),
+            )
         })?;
         let legacy: LegacyProfileDatabase = toml::from_str(&content)?;
         Ok(Self {
@@ -479,8 +480,10 @@ pub fn probe_device(
         )? {
             profile.supported_profile = validated_profile.map(str::to_string);
             profile.supported_options = validated_options;
-            profile.optimal_config =
-                build_options_string_for(profile.supported_profile.as_deref(), &profile.supported_options);
+            profile.optimal_config = build_options_string_for(
+                profile.supported_profile.as_deref(),
+                &profile.supported_options,
+            );
 
             if let Some(ref final_config) = profile.optimal_config {
                 info!("   ✅ Final end-to-end config: {}", final_config);
@@ -666,10 +669,12 @@ fn validate_end_to_end(
         return Ok(EndToEndValidation::DeviceRejected);
     }
 
-    Ok(match validate_decoder(serial, server_jar, options, video_encoder)? {
-        Some(decoder) => EndToEndValidation::HostAccepted(decoder),
-        None => EndToEndValidation::HostRejected,
-    })
+    Ok(
+        match validate_decoder(serial, server_jar, options, video_encoder)? {
+            Some(decoder) => EndToEndValidation::HostAccepted(decoder),
+            None => EndToEndValidation::HostRejected,
+        },
+    )
 }
 
 fn validate_final_config(
@@ -678,7 +683,7 @@ fn validate_final_config(
     video_encoder: Option<&str>,
     selected_profile: Option<&str>,
     supported_options: &[String],
-) -> Result<Option<(Option<&'static str>, Vec<String>, DecoderPreference)>> {
+) -> Result<FinalValidationResult> {
     for profile_candidate in profile_fallbacks(selected_profile) {
         if profile_candidate != selected_profile {
             info!(
@@ -815,7 +820,10 @@ fn validate_decoder_candidate(candidate: DecoderPreference, packets: &[(Vec<u8>,
     for (packet, pts) in packets {
         match decoder.decode(packet, *pts) {
             Ok(Some(_)) => {
-                info!("  ✅ {} decoded a validation frame", candidate.profile_name());
+                info!(
+                    "  ✅ {} decoded a validation frame",
+                    candidate.profile_name()
+                );
                 return true;
             }
             Ok(None) => continue,
@@ -890,7 +898,10 @@ mod tests {
             tested_at: "2025-01-01T00:00:00Z".to_string(),
         };
 
-        assert_eq!(profile.build_options_string().as_deref(), Some("profile=66"));
+        assert_eq!(
+            profile.build_options_string().as_deref(),
+            Some("profile=66")
+        );
     }
 
     #[test]

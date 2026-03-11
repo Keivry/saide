@@ -24,9 +24,9 @@ pub use {
     ffmpeg_next::format::Pixel,
     h264::H264Decoder,
     h264_parser::extract_resolution_from_stream,
-    nv12_render::{new_nv12_render_callback, Nv12RenderResources},
+    nv12_render::{Nv12RenderResources, new_nv12_render_callback},
     nvdec::NvdecDecoder,
-    rgba_render::{new_rgba_render_callback, RgbaRenderResources},
+    rgba_render::{RgbaRenderResources, new_rgba_render_callback},
     vaapi::VaapiDecoder,
 };
 

@@ -475,19 +475,49 @@ fn remove_reverse_tunnel(serial: &str, socket_name: &str) -> Result<()> {
 fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStream> {
     debug!("Waiting for {} connection...", channel);
 
-    // Set accept timeout
-    listener.set_nonblocking(false).map_err(|e| {
-        SAideError::IoError(IoError::new(e).with_message("Failed to set listener to blocking mode"))
-    })?;
+    let timeout = match channel {
+        Channel::Control => Duration::from_secs(2),
+        _ => Duration::from_secs(5),
+    };
 
-    // Accept connection
-    let (stream, addr) = listener.accept().map_err(|e| {
+    listener.set_nonblocking(true).map_err(|e| {
         SAideError::IoError(
-            IoError::new(e).with_message(format!("Failed to accept {} connection", channel)),
+            IoError::new(e).with_message("Failed to set listener to nonblocking mode"),
         )
     })?;
 
+    let deadline = Instant::now() + timeout;
+    let (stream, addr) = loop {
+        match listener.accept() {
+            Ok(connection) => break connection,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(SAideError::IoError(IoError::new_with_message(format!(
+                        "Timed out waiting for {} connection after {:?}",
+                        channel, timeout
+                    ))));
+                }
+
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                return Err(SAideError::IoError(
+                    IoError::new(e)
+                        .with_message(format!("Failed to accept {} connection", channel)),
+                ));
+            }
+        }
+    };
+
     debug!("{} connection accepted from {}", channel, addr);
+
+    stream.set_nonblocking(false).map_err(|e| {
+        SAideError::IoError(
+            IoError::new(e)
+                .with_message(format!("Failed to set {} stream to blocking mode", channel)),
+        )
+    })?;
 
     stream.set_nodelay(true).map_err(|e| {
         SAideError::IoError(IoError::new(e).with_message(format!(
@@ -528,10 +558,6 @@ fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStr
         }
     }
 
-    let timeout = match channel {
-        Channel::Control => Duration::from_secs(2),
-        _ => Duration::from_secs(5),
-    };
     stream.set_read_timeout(Some(timeout)).map_err(|e| {
         SAideError::IoError(IoError::new(e).with_message(format!(
             "Failed to set read timeout for {} connection",

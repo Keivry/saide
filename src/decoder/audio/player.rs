@@ -8,20 +8,20 @@
 
 use {
     super::{
-        error::{AudioError, Result},
         DecodedAudio,
+        error::{AudioError, Result},
     },
     cpal::{
-        traits::{DeviceTrait, HostTrait, StreamTrait},
         BufferSize,
         Stream,
         StreamConfig,
+        traits::{DeviceTrait, HostTrait, StreamTrait},
     },
     rtrb::{Consumer, Producer, RingBuffer},
     std::{
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread,
         time::Duration,
