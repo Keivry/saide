@@ -121,6 +121,9 @@ pub struct GeneralConfig {
     #[serde(default = "default_true")]
     pub mouse_enabled: bool,
 
+    #[serde(default)]
+    pub auto_hide_toolbar: bool,
+
     #[serde(default = "default_init_timeout")]
     pub init_timeout: u32,
 
@@ -161,6 +164,7 @@ impl Default for GeneralConfig {
         Self {
             keyboard_enabled: default_true(),
             mouse_enabled: default_true(),
+            auto_hide_toolbar: false,
             init_timeout: default_init_timeout(),
             indicator: default_true(),
             indicator_position: IndicatorPosition::default(),

@@ -80,6 +80,8 @@ pub struct ConfigState {
     /// Mouse mapping switch
     pub mouse_enabled: bool,
 
+    pub auto_hide_toolbar: bool,
+
     /// Keyboard custom mapping switch
     pub keyboard_custom_mapping_enabled: bool,
 
@@ -97,6 +99,7 @@ impl ConfigState {
 
         let keyboard_enabled = config.general.keyboard_enabled;
         let mouse_enabled = config.general.mouse_enabled;
+        let auto_hide_toolbar = config.general.auto_hide_toolbar;
         let keyboard_custom_mapping_enabled = config.mappings.initial_state;
 
         let min_fps = config.scrcpy.video.min_fps;
@@ -109,6 +112,7 @@ impl ConfigState {
             config_manager,
             keyboard_enabled,
             mouse_enabled,
+            auto_hide_toolbar,
             keyboard_custom_mapping_enabled,
             device_ime_state: false,
             active_frame_rate_limiter,
@@ -121,6 +125,8 @@ impl ConfigState {
     pub fn keyboard_enabled(&self) -> bool { self.keyboard_enabled }
 
     pub fn mouse_enabled(&self) -> bool { self.mouse_enabled }
+
+    pub fn auto_hide_toolbar(&self) -> bool { self.auto_hide_toolbar }
 
     pub fn keyboard_custom_mapping_enabled(&self) -> bool { self.keyboard_custom_mapping_enabled }
 
@@ -155,6 +161,8 @@ pub struct UIState {
 
     /// Mapping visualization enabled state
     pub mapping_visualization_enabled: bool,
+
+    pub floating_toolbar_visible: bool,
 }
 
 impl UIState {
@@ -166,6 +174,7 @@ impl UIState {
             visual_coords: VisualCoordSys::new(0),
             ui_initialized: false,
             mapping_visualization_enabled: false,
+            floating_toolbar_visible: false,
         }
     }
 
@@ -185,6 +194,12 @@ impl UIState {
 
     pub fn toggle_mapping_visualization(&mut self) {
         self.mapping_visualization_enabled = !self.mapping_visualization_enabled;
+    }
+
+    pub fn floating_toolbar_visible(&self) -> bool { self.floating_toolbar_visible }
+
+    pub fn set_floating_toolbar_visible(&mut self, visible: bool) {
+        self.floating_toolbar_visible = visible;
     }
 }
 
