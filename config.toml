@@ -11,6 +11,7 @@ smart_window_resize = true
 
 [scrcpy.video]
 bit_rate = "24M"
+min_fps = 5
 max_fps = 120
 max_size = 1600
 codec = "h264"

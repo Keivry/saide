@@ -31,6 +31,7 @@ scrcpy_server = "scrcpy-server-v3.3.3"  # Override local scrcpy-server path if n
 ```toml
 [scrcpy.video]
 bit_rate = "8M"              # Video bitrate (e.g., "8M" = 8 Mbps)
+min_fps = 5                  # Idle refresh rate when no new frame/input arrives
 max_fps = 60                 # Maximum frame rate (fps)
 max_size = 1920              # Maximum resolution (pixels, longer dimension)
 codec = "h264"               # Video codec: h264 (default)
@@ -141,6 +142,13 @@ SAide validates configuration values on load. Invalid values will produce error 
 | `buffer_frames` | 32-16384 | 64 | Lower = less latency; higher = fewer glitches |
 | `ring_capacity` | 1024-65536 | 5760 | Must be >= 3× buffer_frames for stability |
 
+### Video Ranges
+
+| Parameter | Valid Range | Default | Description |
+|-----------|-------------|---------|-------------|
+| `min_fps` | 1-240 and `<= max_fps` | 5 | Idle UI refresh rate when no new video frame or input activity exists |
+| `max_fps` | 1-240 | 60 | Active refresh rate while streaming new frames or handling input |
+
 ## Example: Low-Latency Configuration
 
 For competitive gaming or real-time control:
@@ -148,6 +156,7 @@ For competitive gaming or real-time control:
 ```toml
 [scrcpy.video]
 bit_rate = "12M"
+min_fps = 5
 max_fps = 120
 max_size = 1920
 
@@ -172,6 +181,7 @@ For video recording or unstable network:
 ```toml
 [scrcpy.video]
 bit_rate = "24M"
+min_fps = 5
 max_fps = 60
 max_size = 2560
 
