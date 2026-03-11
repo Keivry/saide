@@ -127,6 +127,8 @@ pub enum PlayerState {
 /// - Decoder failures emit [`PlayerEvent::Failed`] via event channel
 /// - Network errors trigger graceful shutdown with error message
 pub struct StreamPlayer {
+    repaint_ctx: egui::Context,
+
     /// Video frame receiver
     frame_rx: Option<Receiver<Arc<DecodedFrame>>>,
     /// Stats receiver
@@ -219,6 +221,7 @@ impl StreamPlayer {
         let (event_tx, event_rx) = bounded(PLAYER_EVENT_BUFFER_SIZE);
 
         Self {
+            repaint_ctx: cc.egui_ctx.clone(),
             frame_rx: None,
             stats_rx: None,
             current_frame: None,
@@ -267,6 +270,7 @@ impl StreamPlayer {
         self.state = PlayerState::Connecting;
 
         let event_tx = self.event_tx.clone();
+        let repaint_ctx = self.repaint_ctx.clone();
         let session_token = self.cancel_token.child_token();
         self.session_token = Some(session_token.clone());
         self.video_ctrl = video_stream.try_clone().ok();
@@ -318,6 +322,7 @@ impl StreamPlayer {
                     audio_ring_capacity,
                     hwdecode,
                     preferred_decoder,
+                    repaint_ctx,
                 },
             ) {
                 let is_cancelled = e.is_cancelled();
@@ -379,8 +384,9 @@ impl StreamPlayer {
         self.current_frame = None;
     }
 
-    /// Update player state (call every frame)
-    pub fn update(&mut self) {
+    pub fn update(&mut self) -> bool {
+        let mut received_new_frame = false;
+
         // Check for initialization events
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
@@ -421,6 +427,7 @@ impl StreamPlayer {
             while let Ok(frame) = frame_rx.try_recv() {
                 self.current_frame = Some(frame);
                 self.frame_count += 1;
+                received_new_frame = true;
             }
         }
 
@@ -438,6 +445,8 @@ impl StreamPlayer {
             self.frame_count = 0;
             self.fps_timer = Instant::now();
         }
+
+        received_new_frame
     }
 
     /// Draw video frame or placeholder in the UI
@@ -637,6 +646,7 @@ struct StreamWorkerConfig {
     audio_ring_capacity: usize,
     hwdecode: bool,
     preferred_decoder: Option<DecoderPreference>,
+    repaint_ctx: egui::Context,
 }
 
 /// Stream worker thread
@@ -662,11 +672,19 @@ fn stream_worker(
         height,
     })?;
 
+    let StreamWorkerConfig {
+        audio_buffer_frames,
+        audio_ring_capacity,
+        hwdecode,
+        preferred_decoder,
+        repaint_ctx,
+    } = config;
+
     let decoder_mgr = DecoderManager::init(
-        config.audio_buffer_frames,
-        config.audio_ring_capacity,
-        config.hwdecode,
-        config.preferred_decoder,
+        audio_buffer_frames,
+        audio_ring_capacity,
+        hwdecode,
+        preferred_decoder,
     )?;
     let mut last_resolution = video_resolution;
     let mut video_decoder: Option<AutoDecoder> = None;
@@ -693,6 +711,7 @@ fn stream_worker(
         &frame_tx,
         &stats_tx,
         &event_tx,
+        &repaint_ctx,
         &stats,
         &av_snapshot,
         &mut latency_stats,
@@ -894,6 +913,7 @@ impl VideoLoop {
         frame_tx: &Sender<Arc<DecodedFrame>>,
         stats_tx: &Sender<StreamStats>,
         event_tx: &Sender<PlayerEvent>,
+        repaint_ctx: &egui::Context,
         stats: &Arc<Mutex<StreamStats>>,
         av_snapshot: &crate::avsync::AVSyncSnapshot,
         latency_stats: &mut LatencyStats,
@@ -1049,7 +1069,7 @@ impl VideoLoop {
                 }
 
                 match frame_tx.try_send(Arc::new(frame)) {
-                    Ok(()) => {}
+                    Ok(()) => repaint_ctx.request_repaint(),
                     Err(crossbeam_channel::TrySendError::Full(_)) => {
                         let mut s = stats.lock();
                         s.dropped_frames += 1;

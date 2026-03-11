@@ -825,6 +825,33 @@ impl SAideApp {
         });
     }
 
+    fn has_active_pointer_interaction(&self) -> bool {
+        self.app_state
+            .mouse_mapper
+            .as_ref()
+            .is_some_and(|mouse_mapper| mouse_mapper.get_button_state() != MouseState::Idle)
+    }
+
+    fn schedule_streaming_repaint(
+        &self,
+        ctx: &egui::Context,
+        received_new_frame: bool,
+        saw_input_event: bool,
+    ) {
+        let is_active =
+            received_new_frame || saw_input_event || self.has_active_pointer_interaction();
+        let limiter = if is_active {
+            self.config_state.active_frame_rate_limiter()
+        } else {
+            self.config_state.idle_frame_rate_limiter()
+        };
+
+        match limiter {
+            Some(duration) => ctx.request_repaint_after(duration),
+            None => ctx.request_repaint(),
+        }
+    }
+
     pub(super) fn refresh_mapping_profiles(&mut self) {
         let Some(keyboard_mapper) = &self.app_state.keyboard_mapper else {
             debug!("Keyboard mapper not available for profile refresh");
@@ -1204,6 +1231,8 @@ impl eframe::App for SAideApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut received_new_frame = false;
+
         if !self.shutdown_requested {
             // Check for shutdown signal
             if self.shutdown_rx.try_recv().is_ok() {
@@ -1256,7 +1285,7 @@ impl eframe::App for SAideApp {
             }
             InitState::InProgress => {
                 // Update player to receive events
-                self.player.update();
+                received_new_frame = self.player.update();
 
                 // Check initialization progress
                 self.check_init_stage(ctx);
@@ -1274,7 +1303,7 @@ impl eframe::App for SAideApp {
                 };
 
                 // Update player state
-                self.player.update();
+                received_new_frame = self.player.update();
 
                 // Get new dimensions after update
                 let new_dimensions = self.player.video_dimensions();
@@ -1422,10 +1451,8 @@ impl eframe::App for SAideApp {
 
         // Frame rate limiting (only when streaming)
         if matches!(self.player.state(), PlayerState::Streaming) {
-            match self.config_state.frame_rate_limiter() {
-                Some(limiter) => ctx.request_repaint_after(limiter),
-                None => ctx.request_repaint(),
-            }
+            let saw_input_event = ctx.input(|input| !input.events.is_empty());
+            self.schedule_streaming_repaint(ctx, received_new_frame, saw_input_event);
         }
     }
 }

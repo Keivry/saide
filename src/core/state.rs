@@ -86,8 +86,9 @@ pub struct ConfigState {
     /// Android device input method state
     pub device_ime_state: bool,
 
-    /// Frame rate limiter duration
-    pub frame_rate_limiter: Option<Duration>,
+    pub active_frame_rate_limiter: Option<Duration>,
+
+    pub idle_frame_rate_limiter: Option<Duration>,
 }
 
 impl ConfigState {
@@ -98,16 +99,11 @@ impl ConfigState {
         let mouse_enabled = config.general.mouse_enabled;
         let keyboard_custom_mapping_enabled = config.mappings.initial_state;
 
+        let min_fps = config.scrcpy.video.min_fps;
         let max_fps = config.scrcpy.video.max_fps;
-        let vsync = config.gpu.vsync;
+        let active_frame_rate_limiter = Some(Duration::from_secs_f64(1.0 / max_fps.max(1) as f64));
 
-        let frame_rate_limiter = if vsync {
-            None
-        } else {
-            // max_fps is validated as 1..=240 by config, but guard against 0 to prevent
-            // +Infinity which would panic in Duration::from_secs_f64.
-            Some(Duration::from_secs_f64(1.0 / max_fps.max(1) as f64))
-        };
+        let idle_frame_rate_limiter = Some(Duration::from_secs_f64(1.0 / min_fps.max(1) as f64));
 
         Self {
             config_manager,
@@ -115,7 +111,8 @@ impl ConfigState {
             mouse_enabled,
             keyboard_custom_mapping_enabled,
             device_ime_state: false,
-            frame_rate_limiter,
+            active_frame_rate_limiter,
+            idle_frame_rate_limiter,
         }
     }
 
@@ -133,7 +130,9 @@ impl ConfigState {
 
     pub fn device_ime_state(&self) -> bool { self.device_ime_state }
 
-    pub fn frame_rate_limiter(&self) -> Option<Duration> { self.frame_rate_limiter }
+    pub fn active_frame_rate_limiter(&self) -> Option<Duration> { self.active_frame_rate_limiter }
+
+    pub fn idle_frame_rate_limiter(&self) -> Option<Duration> { self.idle_frame_rate_limiter }
 }
 
 /// UI state (visual components and transient UI data)
