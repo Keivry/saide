@@ -43,7 +43,8 @@ const CODEC_OPTIONS_BASE: &[(&str, &str)] = &[
     ("bitrate-mode", "1"),
 ];
 
-const CODEC_PROFILES: &[(&str, &str)] = &[("profile", "65536"), ("profile", "66")];
+const CODEC_PROFILES: &[(&str, &str)] =
+    &[("profile", "65536"), ("profile", "1"), ("profile", "66")];
 const PROBE_PACKET_TIMEOUT: Duration = Duration::from_secs(3);
 const VALIDATION_PACKET_LIMIT: usize = 12;
 
@@ -376,7 +377,7 @@ pub fn probe_device(
         info!("Using system default encoder");
     }
 
-    info!("Starting end-to-end profile testing (65536 → 66)...");
+    info!("Starting end-to-end profile testing (65536 → 1 → 66)...");
 
     let total_profiles = CODEC_PROFILES.len();
     for (i, (key, value)) in CODEC_PROFILES.iter().enumerate() {
@@ -911,7 +912,10 @@ mod tests {
 
     #[test]
     fn test_profile_fallbacks_from_65536() {
-        assert_eq!(profile_fallbacks(Some("65536")), vec![Some("65536"), Some("66")]);
+        assert_eq!(
+            profile_fallbacks(Some("65536")),
+            vec![Some("65536"), Some("1"), Some("66")]
+        );
     }
 
     #[test]
