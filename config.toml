@@ -1,6 +1,7 @@
 [general]
 keyboard_enabled = true
 mouse_enabled = true
+auto_hide_toolbar = false
 init_timeout = 15
 indicator = true
 indicator_position = "bottom-left"

@@ -16,6 +16,7 @@ SAide uses a TOML configuration file to customize behavior. The configuration fi
 [general]
 keyboard_enabled = true      # Enable keyboard input mapping
 mouse_enabled = true         # Enable mouse input handling
+auto_hide_toolbar = false    # Use a floating edge-reveal toolbar instead of a docked sidebar
 init_timeout = 15            # Connection initialization timeout (seconds)
 indicator = true             # Show on-screen indicator
 indicator_position = "bottom-left"  # Indicator position: top-left/top-right/bottom-left/bottom-right
