@@ -66,9 +66,14 @@ fn main() -> Result<()> {
 }
 
 fn start_ui(serial: &str, config_manager: ConfigManager, shutdown_rx: Receiver<()>) -> Result<()> {
-    let toolbar_width = SAideApp::toolbar_width();
-    let window_width = config_manager.config().general.window_width;
-    let window_height = config_manager.config().general.window_height;
+    let config = config_manager.config();
+    let toolbar_width = if config.general.auto_hide_toolbar {
+        0.0
+    } else {
+        SAideApp::toolbar_width()
+    };
+    let window_width = config.general.window_width;
+    let window_height = config.general.window_height;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -77,7 +82,7 @@ fn start_ui(serial: &str, config_manager: ConfigManager, shutdown_rx: Receiver<(
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             // Set present mode based on VSync config
-            present_mode: if config_manager.config().gpu.vsync {
+            present_mode: if config.gpu.vsync {
                 wgpu::PresentMode::AutoVsync
             } else {
                 wgpu::PresentMode::AutoNoVsync
@@ -86,7 +91,7 @@ fn start_ui(serial: &str, config_manager: ConfigManager, shutdown_rx: Receiver<(
             wgpu_setup: egui_wgpu::WgpuSetup::from(egui_wgpu::WgpuSetupCreateNew {
                 instance_descriptor: wgpu::InstanceDescriptor {
                     // Select GPU backend from config
-                    backends: (&config_manager.config().gpu.backend).into(),
+                    backends: (&config.gpu.backend).into(),
                     ..Default::default()
                 },
                 ..Default::default()

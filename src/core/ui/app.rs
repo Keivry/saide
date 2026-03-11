@@ -87,6 +87,8 @@ pub struct SAideApp {
     pub(super) profile_manager: ProfileManager,
 }
 
+const FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH: f32 = 4.0;
+
 impl SAideApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -142,6 +144,29 @@ impl SAideApp {
     }
 
     pub fn config(&self) -> Arc<SAideConfig> { self.config_state.config() }
+
+    fn toolbar_layout_width(&self) -> f32 {
+        if self.config_state.auto_hide_toolbar() {
+            0.0
+        } else {
+            Toolbar::width()
+        }
+    }
+
+    fn audio_warning_offset_x(&self) -> f32 {
+        if !self.config_state.auto_hide_toolbar() || self.ui_state.floating_toolbar_visible() {
+            Toolbar::width() + 10.0
+        } else {
+            10.0
+        }
+    }
+
+    fn is_in_floating_toolbar_rect(&self, ctx: &egui::Context, pos: &VisualPos) -> bool {
+        self.config_state.auto_hide_toolbar()
+            && self.ui_state.floating_toolbar_visible()
+            && ctx.content_rect().contains(*pos)
+            && pos.x <= ctx.content_rect().left() + Toolbar::width()
+    }
 
     fn init(&mut self) {
         self.init_state = InitState::InProgress;
@@ -311,7 +336,7 @@ impl SAideApp {
         );
 
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-            window_w as f32 + Toolbar::width(),
+            window_w as f32 + self.toolbar_layout_width(),
             window_h as f32,
         )));
     }
@@ -806,9 +831,19 @@ impl SAideApp {
                         pos,
                         ..
                     } => {
+                        if self.is_in_floating_toolbar_rect(ctx, pos)
+                            && (*pressed || !self.has_active_pointer_interaction())
+                        {
+                            continue;
+                        }
                         self.process_mouse_button_event(*button, *pressed, pos);
                     }
                     egui::Event::PointerMoved(pos) => {
+                        if self.is_in_floating_toolbar_rect(ctx, pos)
+                            && !self.has_active_pointer_interaction()
+                        {
+                            continue;
+                        }
                         if let Some(new_pos) =
                             self.process_mouse_move_event(pos, &self.ui_state.last_pointer_pos)
                         {
@@ -817,6 +852,9 @@ impl SAideApp {
                     }
                     egui::Event::MouseWheel { delta, .. } => {
                         let pointer_pos = input.pointer.hover_pos().unwrap_or_default();
+                        if self.is_in_floating_toolbar_rect(ctx, &pointer_pos) {
+                            continue;
+                        }
                         self.process_mouse_wheel_event(delta, &pointer_pos);
                     }
                     _ => {}
@@ -891,7 +929,35 @@ impl SAideApp {
         }
     }
 
-    fn draw_toolbar(&mut self, ctx: &egui::Context) {
+    fn handle_toolbar_event(&mut self, ctx: &egui::Context, event: ToolbarEvent) {
+        match event {
+            ToolbarEvent::RotateVideo => {
+                self.rotate(ctx);
+            }
+            ToolbarEvent::ToggleMappingEditor => {
+                self.toggle_editor(ctx);
+            }
+            ToolbarEvent::ToggleScreenPower => {
+                debug!("Turning off screen from toolbar");
+                if let Some(sender) = &self.app_state.control_sender {
+                    if let Err(e) = sender.send_set_display_power(false) {
+                        error!("Failed to turn off screen: {}", e);
+                    } else {
+                        info!("Screen OFF (press physical power button to wake up)");
+                    }
+                }
+            }
+            ToolbarEvent::ToggleKeyboardMapping => {
+                self.toggle_custom_keyboard_mapping();
+            }
+            ToolbarEvent::ToggleMappingVisualization => {
+                self.toggle_mapping_overlay();
+            }
+            ToolbarEvent::None => {}
+        }
+    }
+
+    fn sync_toolbar_state(&mut self) {
         let has_mappings = self
             .profile_manager
             .get_active_profile()
@@ -899,37 +965,76 @@ impl SAideApp {
             .unwrap_or(false);
 
         self.toolbar.set_has_active_mappings(has_mappings);
+    }
+
+    fn update_floating_toolbar_visibility(&mut self, ctx: &egui::Context) {
+        if !self.config_state.auto_hide_toolbar() {
+            self.ui_state.set_floating_toolbar_visible(false);
+            return;
+        }
+
+        let content_rect = ctx.content_rect();
+        let reveal_width = if self.ui_state.floating_toolbar_visible() {
+            Toolbar::width() + FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH
+        } else {
+            FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH
+        };
+        let should_show = ctx.input(|input| {
+            input.pointer.hover_pos().is_some_and(|pos| {
+                pos.x <= content_rect.left() + reveal_width
+                    && pos.y >= content_rect.top()
+                    && pos.y <= content_rect.bottom()
+            })
+        });
+
+        if should_show != self.ui_state.floating_toolbar_visible() {
+            self.ui_state.set_floating_toolbar_visible(should_show);
+            ctx.request_repaint();
+        }
+    }
+
+    fn draw_docked_toolbar(&mut self, ctx: &egui::Context) {
+        self.sync_toolbar_state();
 
         let colors = AppColors::from_context(ctx);
-        egui::SidePanel::left("Toolbar")
+        let event = egui::SidePanel::left("Toolbar")
             .frame(egui::Frame::NONE.fill(colors.toolbar_bg))
             .resizable(false)
             .exact_width(Toolbar::width())
-            .show(ctx, |ui| match self.toolbar.draw(ui) {
-                ToolbarEvent::RotateVideo => {
-                    self.rotate(ctx);
-                }
-                ToolbarEvent::ToggleMappingEditor => {
-                    self.toggle_editor(ctx);
-                }
-                ToolbarEvent::ToggleScreenPower => {
-                    debug!("Turning off screen from toolbar");
-                    if let Some(sender) = &self.app_state.control_sender {
-                        if let Err(e) = sender.send_set_display_power(false) {
-                            error!("Failed to turn off screen: {}", e);
-                        } else {
-                            info!("Screen OFF (press physical power button to wake up)");
-                        }
-                    }
-                }
-                ToolbarEvent::ToggleKeyboardMapping => {
-                    self.toggle_custom_keyboard_mapping();
-                }
-                ToolbarEvent::ToggleMappingVisualization => {
-                    self.toggle_mapping_overlay();
-                }
-                ToolbarEvent::None => {}
-            });
+            .show(ctx, |ui| self.toolbar.draw(ui))
+            .inner;
+        self.handle_toolbar_event(ctx, event);
+    }
+
+    fn draw_floating_toolbar(&mut self, ctx: &egui::Context) {
+        if !self.ui_state.floating_toolbar_visible() {
+            return;
+        }
+
+        self.sync_toolbar_state();
+
+        let colors = AppColors::from_context(ctx);
+        let content_rect = ctx.content_rect();
+        let event = egui::Area::new(egui::Id::new("floating_toolbar"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(content_rect.left(), content_rect.top()))
+            .show(ctx, |ui| {
+                egui::Frame::NONE.fill(colors.toolbar_bg).show(ui, |ui| {
+                    ui.set_min_size(egui::vec2(Toolbar::width(), content_rect.height()));
+                    self.toolbar.draw(ui)
+                })
+            })
+            .inner
+            .inner;
+        self.handle_toolbar_event(ctx, event);
+    }
+
+    fn draw_toolbar(&mut self, ctx: &egui::Context) {
+        if self.config_state.auto_hide_toolbar() {
+            self.draw_floating_toolbar(ctx);
+        } else {
+            self.draw_docked_toolbar(ctx);
+        }
     }
 
     /// Draw indicator overlay on video
@@ -1233,6 +1338,8 @@ impl eframe::App for SAideApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut received_new_frame = false;
 
+        self.update_floating_toolbar_visibility(ctx);
+
         if !self.shutdown_requested {
             // Check for shutdown signal
             if self.shutdown_rx.try_recv().is_ok() {
@@ -1411,7 +1518,7 @@ impl eframe::App for SAideApp {
             let colors = AppColors::from_context(ctx);
             let mut close_clicked = false;
             egui::Area::new(egui::Id::new("audio_warning"))
-                .fixed_pos(egui::pos2(Toolbar::width() + 10.0, 10.0))
+                .fixed_pos(egui::pos2(self.audio_warning_offset_x(), 10.0))
                 .show(ctx, |ui| {
                     egui::Frame::new()
                         .fill(colors.audio_warning_bg)
