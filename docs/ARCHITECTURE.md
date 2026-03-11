@@ -541,8 +541,9 @@ SAide uses a **cascade fallback** approach for video decoder selection, eliminat
 
 Device codec compatibility is tested using cascade approach:
 
-1. Test NVDEC profile (`profile=65536`)
-2. Fallback to Baseline profile (`profile=66`)
+1. Test Constrained Baseline profile (`profile=65536`)
+2. Fallback to Android Baseline constant (`profile=1`)
+3. Fallback to raw H.264 Baseline profile idc (`profile=66`)
 3. Use first profile that succeeds
 
 Results are cached in two files to avoid repeated testing:

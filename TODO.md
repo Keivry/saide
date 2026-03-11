@@ -34,7 +34,7 @@
 
 - [x] **[codec_probe]** 重构 `src/scrcpy/codec_probe.rs`  
       **移除**: `get_profile_for_gpu()` 函数  
-      **实现**: 级联 profile 测试 (NVDEC profile=65536 → Baseline profile=66)  
+      **实现**: 级联 profile 测试 (Constrained Baseline profile=65536 → Android Baseline profile=1 → raw Baseline profile=66)  
       **修改**: `DeviceProfile::build_options_string()` 不再需要 `gpu_type` 参数  
       **新增字段**: `supported_profile: Option<String>` 存储实测支持的 profile  
       **测试**: 单元测试更新通过  

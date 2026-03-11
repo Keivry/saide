@@ -2582,7 +2582,7 @@ pub fn new(width: u32, height: u32, hwdecode: bool) -> Result<Self> {
    
    let mut candidate_options: Vec<(&str, &str)> = vec![profile_option];
    ```
-   - NVIDIA GPU 检测失败 → 使用 Baseline profile (66) → NVDEC 性能下降
+- NVIDIA GPU 检测失败 → 使用更保守 profile（`1` / `66`）→ NVDEC 性能下降
    - Intel GPU 误检测为 Unknown → 强制 Baseline → 无法利用 VAAPI 高级 profile
 
 **修复后** (Cascade Fallback 策略):
@@ -2669,8 +2669,9 @@ pub fn probe_device(serial: &str, server_jar: &str) -> Result<Option<String>> {
    - `/proc/driver/nvidia` 不存在 → 仍会尝试 NVDEC (FFmpeg 内部检测)
 
 3. **Codec profile 自动测试**:
-   - 先测试 NVDEC profile (65536) → 成功则使用
-   - NVDEC 失败 → 测试 Baseline profile (66) → Fallback
+- 先测试 Constrained Baseline profile (65536) → 成功则使用
+- 主机端失败时回退到 Android Baseline 常量 (1)
+- 再失败时回退到原始 H.264 Baseline profile idc (66)
    - 设备实际验证,不依赖 GPU 检测猜测
 
 4. **跨平台统一策略**:
