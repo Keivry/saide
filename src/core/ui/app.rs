@@ -161,11 +161,26 @@ impl SAideApp {
         }
     }
 
-    fn is_in_floating_toolbar_rect(&self, ctx: &egui::Context, pos: &VisualPos) -> bool {
-        self.config_state.auto_hide_toolbar()
-            && self.ui_state.floating_toolbar_visible()
-            && ctx.content_rect().contains(*pos)
-            && pos.x <= ctx.content_rect().left() + Toolbar::width()
+    fn floating_toolbar_rect(&self, content_rect: egui::Rect) -> Option<egui::Rect> {
+        if self.config_state.auto_hide_toolbar() && self.ui_state.floating_toolbar_visible() {
+            Some(egui::Rect::from_min_max(
+                content_rect.left_top(),
+                egui::pos2(
+                    content_rect.left() + Toolbar::width(),
+                    content_rect.bottom(),
+                ),
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn is_in_floating_toolbar_rect(
+        &self,
+        floating_toolbar_rect: Option<egui::Rect>,
+        pos: &VisualPos,
+    ) -> bool {
+        floating_toolbar_rect.is_some_and(|rect| rect.contains(*pos))
     }
 
     fn init(&mut self) {
@@ -785,6 +800,8 @@ impl SAideApp {
             error!("Failed to update mouse mapper: {}", e);
         }
 
+        let floating_toolbar_rect = self.floating_toolbar_rect(ctx.content_rect());
+
         ctx.input(|input| {
             // Flag to ignore text events if egui::Event::Key was processed
             let mut ignore_text_events = false;
@@ -831,7 +848,7 @@ impl SAideApp {
                         pos,
                         ..
                     } => {
-                        if self.is_in_floating_toolbar_rect(ctx, pos)
+                        if self.is_in_floating_toolbar_rect(floating_toolbar_rect, pos)
                             && (*pressed || !self.has_active_pointer_interaction())
                         {
                             continue;
@@ -839,7 +856,7 @@ impl SAideApp {
                         self.process_mouse_button_event(*button, *pressed, pos);
                     }
                     egui::Event::PointerMoved(pos) => {
-                        if self.is_in_floating_toolbar_rect(ctx, pos)
+                        if self.is_in_floating_toolbar_rect(floating_toolbar_rect, pos)
                             && !self.has_active_pointer_interaction()
                         {
                             continue;
@@ -852,7 +869,7 @@ impl SAideApp {
                     }
                     egui::Event::MouseWheel { delta, .. } => {
                         let pointer_pos = input.pointer.hover_pos().unwrap_or_default();
-                        if self.is_in_floating_toolbar_rect(ctx, &pointer_pos) {
+                        if self.is_in_floating_toolbar_rect(floating_toolbar_rect, &pointer_pos) {
                             continue;
                         }
                         self.process_mouse_wheel_event(delta, &pointer_pos);
