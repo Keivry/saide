@@ -81,16 +81,16 @@ help-title = Help
 help-message =
     Available shortcuts:
     
-    F1  - Show this help        
-    F2  - Rename profile        
-    F3  - New profile           
-    F4  - Delete current profile
-    F5  - Save as               
-    F6  - Switch profile        
-    F7  - Previous profile      
-    F8  - Next profile          
+    F1  - Show this help            
+    F2  - Rename profile (*)        
+    F3  - New profile (*)           
+    F4  - Delete current profile (*)
+    F5  - Save as (*)               
+    F6  - Switch profile            
+    F7  - Previous profile          
+    F8  - Next profile              
 
-    ESC - Close editor          
+    {"*"} - ONLY IN EDITOR MODE
 
 ## UI - Notifications
 notification-no-active-profile = No active profile
