@@ -238,10 +238,24 @@ impl SAideConfig {
             )));
         }
 
+        if !(1..=240).contains(&self.scrcpy.video.min_fps) {
+            return Err(SAideError::ConfigError(format!(
+                "scrcpy.video.min_fps ({}) must be 1-240",
+                self.scrcpy.video.min_fps
+            )));
+        }
+
         if !(1..=240).contains(&self.scrcpy.video.max_fps) {
             return Err(SAideError::ConfigError(format!(
                 "scrcpy.video.max_fps ({}) must be 1-240",
                 self.scrcpy.video.max_fps
+            )));
+        }
+
+        if self.scrcpy.video.min_fps > self.scrcpy.video.max_fps {
+            return Err(SAideError::ConfigError(format!(
+                "scrcpy.video.min_fps ({}) must be <= scrcpy.video.max_fps ({})",
+                self.scrcpy.video.min_fps, self.scrcpy.video.max_fps
             )));
         }
 
@@ -424,6 +438,7 @@ mod tests {
         let mut config = SAideConfig {
             scrcpy: Arc::new(ScrcpyConfig {
                 video: VideoConfig {
+                    min_fps: 0,
                     max_fps: 0,
                     ..Default::default()
                 },
@@ -435,6 +450,7 @@ mod tests {
 
         config.scrcpy = Arc::new(ScrcpyConfig {
             video: VideoConfig {
+                min_fps: 1,
                 max_fps: 1,
                 ..Default::default()
             },
@@ -444,6 +460,7 @@ mod tests {
 
         config.scrcpy = Arc::new(ScrcpyConfig {
             video: VideoConfig {
+                min_fps: 60,
                 max_fps: 240,
                 ..Default::default()
             },
@@ -453,6 +470,7 @@ mod tests {
 
         config.scrcpy = Arc::new(ScrcpyConfig {
             video: VideoConfig {
+                min_fps: 60,
                 max_fps: 241,
                 ..Default::default()
             },
@@ -462,6 +480,17 @@ mod tests {
 
         config.scrcpy = Arc::new(ScrcpyConfig {
             video: VideoConfig {
+                min_fps: 61,
+                max_fps: 60,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(config.validate().is_err());
+
+        config.scrcpy = Arc::new(ScrcpyConfig {
+            video: VideoConfig {
+                min_fps: 5,
                 max_fps: 60,
                 max_size: 99,
                 ..Default::default()
@@ -472,6 +501,7 @@ mod tests {
 
         config.scrcpy = Arc::new(ScrcpyConfig {
             video: VideoConfig {
+                min_fps: 5,
                 max_fps: 60,
                 max_size: 100,
                 ..Default::default()
@@ -482,6 +512,7 @@ mod tests {
 
         config.scrcpy = Arc::new(ScrcpyConfig {
             video: VideoConfig {
+                min_fps: 5,
                 max_fps: 60,
                 max_size: 4096,
                 ..Default::default()
@@ -492,6 +523,7 @@ mod tests {
 
         config.scrcpy = Arc::new(ScrcpyConfig {
             video: VideoConfig {
+                min_fps: 5,
                 max_fps: 60,
                 max_size: 4097,
                 ..Default::default()

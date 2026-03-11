@@ -16,6 +16,8 @@ pub struct ScrcpyConfig {
 pub struct VideoConfig {
     #[serde(default = "default_bitrate")]
     pub bit_rate: String,
+    #[serde(default = "default_min_fps")]
+    pub min_fps: u32,
     #[serde(default = "default_max_fps")]
     pub max_fps: u32,
     #[serde(default = "default_max_size")]
@@ -34,6 +36,7 @@ impl Default for VideoConfig {
     fn default() -> Self {
         Self {
             bit_rate: default_bitrate(),
+            min_fps: default_min_fps(),
             max_fps: default_max_fps(),
             max_size: default_max_size(),
             codec: default_codec(),
@@ -44,6 +47,7 @@ impl Default for VideoConfig {
 }
 
 fn default_bitrate() -> String { "8M".to_string() }
+fn default_min_fps() -> u32 { 5 }
 fn default_max_fps() -> u32 { 60 }
 fn default_max_size() -> u32 { 1920 }
 fn default_codec() -> String { "h264".to_string() }
