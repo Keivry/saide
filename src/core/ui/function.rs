@@ -1,6 +1,14 @@
-use crate::{SAideApp, config::mapping::Profile, core::profile_manager::ProfileError, t};
+use crate::{SAideApp, config::mapping::Profile, core::profile_manager::ProfileError, t, tf};
 
 impl SAideApp {
+    fn notify_profile_switched(&self) {
+        if let Some(profile_name) = self.profile_manager.get_active_profile_name() {
+            self.notify(
+                &tf!("notification-switch-profile-success", "profile_name" => &profile_name),
+            );
+        }
+    }
+
     pub fn create_profile(&mut self, profile_name: &str) {
         let profile = Profile::new(
             profile_name,
@@ -89,14 +97,20 @@ impl SAideApp {
 
     pub fn next_profile(&mut self) {
         match self.profile_manager.switch_profile_next() {
-            Ok(()) | Err(ProfileError::NoProfileToSwitch) => {}
+            Ok(()) => self.notify_profile_switched(),
+            Err(ProfileError::NoProfileToSwitch) => {
+                self.notify(&t!("notification-no-profile-to-switch"))
+            }
             Err(_) => self.notify(&t!("notification-switch-profile-failed")),
         }
     }
 
     pub fn prev_profile(&mut self) {
         match self.profile_manager.switch_profile_prev() {
-            Ok(()) | Err(ProfileError::NoProfileToSwitch) => {}
+            Ok(()) => self.notify_profile_switched(),
+            Err(ProfileError::NoProfileToSwitch) => {
+                self.notify(&t!("notification-no-profile-to-switch"))
+            }
             Err(_) => self.notify(&t!("notification-switch-profile-failed")),
         }
     }
