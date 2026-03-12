@@ -14,7 +14,7 @@ const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
 const TOOLBAR_FONT_SIZE: f32 = 16.0;
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolbarEvent {
     None,
     ToggleKeyboardMapping,

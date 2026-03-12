@@ -947,6 +947,11 @@ impl SAideApp {
     }
 
     fn handle_toolbar_event(&mut self, ctx: &egui::Context, event: ToolbarEvent) {
+        if event != ToolbarEvent::None && self.init_state != InitState::Ready {
+            debug!("Ignoring toolbar event while app is not ready: {:?}", event);
+            return;
+        }
+
         match event {
             ToolbarEvent::RotateVideo => {
                 self.rotate(ctx);
@@ -1012,13 +1017,17 @@ impl SAideApp {
 
     fn draw_docked_toolbar(&mut self, ctx: &egui::Context) {
         self.sync_toolbar_state();
+        let toolbar_enabled = self.init_state == InitState::Ready;
 
         let colors = AppColors::from_context(ctx);
         let event = egui::SidePanel::left("Toolbar")
             .frame(egui::Frame::NONE.fill(colors.toolbar_bg))
             .resizable(false)
             .exact_width(Toolbar::width())
-            .show(ctx, |ui| self.toolbar.draw(ui))
+            .show(ctx, |ui| {
+                ui.add_enabled_ui(toolbar_enabled, |ui| self.toolbar.draw(ui))
+                    .inner
+            })
             .inner;
         self.handle_toolbar_event(ctx, event);
     }
@@ -1029,6 +1038,7 @@ impl SAideApp {
         }
 
         self.sync_toolbar_state();
+        let toolbar_enabled = self.init_state == InitState::Ready;
 
         let colors = AppColors::from_context(ctx);
         let content_rect = ctx.content_rect();
@@ -1038,7 +1048,8 @@ impl SAideApp {
             .show(ctx, |ui| {
                 egui::Frame::NONE.fill(colors.toolbar_bg).show(ui, |ui| {
                     ui.set_min_size(egui::vec2(Toolbar::width(), content_rect.height()));
-                    self.toolbar.draw(ui)
+                    ui.add_enabled_ui(toolbar_enabled, |ui| self.toolbar.draw(ui))
+                        .inner
                 })
             })
             .inner
