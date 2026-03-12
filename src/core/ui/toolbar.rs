@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Toolbar UI component
 //!
 //! Provides a vertical toolbar with buttons for common actions

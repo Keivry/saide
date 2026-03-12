@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Minimal H.264 NAL Unit Parser (Annex-B format)
 //!
 //! Extract resolution from SPS without full decoding.

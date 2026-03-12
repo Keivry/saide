@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Constants used throughout the application
 //!
 //! This module defines various constants used in the SAide application,

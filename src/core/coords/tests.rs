@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use {
     super::{mapping::MappingCoordSys, scrcpy::ScrcpyCoordSys, types::*, visual::VisualCoordSys},
     eframe::egui::{Pos2, Rect},

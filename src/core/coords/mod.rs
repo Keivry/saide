@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Coordinate system transformations for SAide
 //!
 //! This module implements 3 coordinate systems:

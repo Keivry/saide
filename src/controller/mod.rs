@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Controller module for handling input events and communication.
 
 pub mod adb;

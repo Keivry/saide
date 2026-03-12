@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // NV12 to RGB shader - Standard implementation with rotation support
 // Based on mpv/ffmpeg/chromium implementations
 //

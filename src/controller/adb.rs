@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Module for interacting with Android devices via adb commands.
 //!
 //! This module provides functions to retrieve device information such as

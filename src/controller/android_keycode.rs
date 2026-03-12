@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Android keycode and metastate constants
 //!
 //! Definitions from Android KeyEvent class:

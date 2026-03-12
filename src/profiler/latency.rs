@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Latency measurement and profiling
 //!
 //! Tracks end-to-end latency from device capture to screen display.

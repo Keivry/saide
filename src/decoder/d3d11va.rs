@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! D3D11VA hardware-accelerated H.264 decoder for Windows
 //!
 //! Uses FFmpeg's D3D11VA hardware acceleration via DirectX 11.

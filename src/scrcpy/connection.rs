@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Scrcpy Connection Management
 //!
 //! Handles socket connections and ADB tunneling.

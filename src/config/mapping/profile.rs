@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Profile management for key mappings
 //!
 //! Each profile is associated with a specific device (identified by serial) and rotation, and

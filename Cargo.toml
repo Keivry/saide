@@ -3,6 +3,7 @@ name = "saide"
 description = "Scrcpy companion app with key/mouse mapping"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [lib]
 name = "saide"
@@ -96,9 +97,9 @@ unic-langid = "0.9"
 sys-locale = "0.3"
 lru = "0.16"
 
-egui_cjk_font = { path = "crates/egui-cjk-font" }
-egui-command = { path = "crates/egui-command" }
-egui-command-binding = { path = "crates/egui-command-binding" }
+egui_cjk_font = { git = "https://github.com/Keivry/egui-cjk-font.git", branch = "main" }
+egui-command = { git = "https://github.com/Keivry/egui-command.git", branch = "main" }
+egui-command-binding = { git = "https://github.com/Keivry/egui-command-binding.git", branch = "main" }
 
 notify = "8"
 

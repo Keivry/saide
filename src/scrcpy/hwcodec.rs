@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Device Hardware Codec Capability Detection
 //!
 //! Detects hardware encoders and decoders on Android devices.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Modal dialog implementation using egui
 //!
 //! Provides a reusable modal dialog component with customizable title, message,

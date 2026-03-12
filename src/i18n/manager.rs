@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Internationalization manager using Fluent.
 //!
 //! This module provides a thread-safe internationalization (i18n) manager that

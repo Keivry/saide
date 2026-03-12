@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Configuration structures for scrcpy settings.
 //!
 //! This module defines the configuration structures used for scrcpy settings,

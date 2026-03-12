@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! AV-synced device renderer with AutoDecoder + audio playback
 //!
 //! Demonstrates scrcpy-style PTS synchronization:

@@ -1,9 +1,9 @@
 # SAide
 
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
-> **S**crcpy companion **A**pp with key/mouse mapp**i**ng - **A**n**de**
+> **S**crcpy companion **A**pp with key/mouse mapp**i**ng
 
 **SAide** is a high-performance Android device mirroring and control application written in Rust. It provides low-latency video streaming, audio capture, and customizable keyboard/mouse mapping for Android devices connected via USB or Wi-Fi.
 
@@ -38,7 +38,7 @@
 ### Technical Highlights
 
 - **Zero-copy GPU rendering** via wgpu (Vulkan/DirectX 12 backend)
-- **Hardware acceleration**: 
+- **Hardware acceleration**:
   - Linux: VAAPI (Intel/AMD), NVDEC (NVIDIA)
   - Windows: D3D11VA (Intel/AMD/NVIDIA), NVDEC (NVIDIA)
   - All platforms: Software H.264 fallback
@@ -90,7 +90,7 @@ sudo apt install libva-dev mesa-va-drivers
 #### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/saide.git
+git clone https://github.com/keivry/saide.git
 cd saide
 ```
 
@@ -283,6 +283,20 @@ cargo clippy -- -D warnings
 # Check formatting + linting
 cargo fmt --all -- --check && cargo clippy -- -D warnings
 ```
+
+### Automated Releases
+
+This repository includes `.github/workflows/release.yml` for GitHub Releases.
+
+- Trigger on tags matching `v*`, such as `v0.1.0`
+- Supports manual releases through `workflow_dispatch` with a `tag` input
+- Uses the Rust nightly toolchain for release builds
+- Builds and packages `windows-x64` and `linux-glibc-x64`
+- The Windows release job installs CUDA Toolkit and `ffmpeg[nvcodec]` from vcpkg for NVDEC-enabled FFmpeg builds
+- Each archive includes the release binary, the matching `scrcpy-server-vx.x.x`, bundled runtime libraries when discoverable, `README.md`, `LICENSE-MIT`, and `LICENSE-APACHE`
+- Release notes are generated from git history with `git-cliff`
+
+For best changelog output, keep using conventional commit prefixes like `feat:` and `fix:`.
 
 ### Examples
 
@@ -496,6 +510,7 @@ cargo run
 ```
 
 This is useful for:
+
 - Testing UI appearance in both themes without changing OS settings
 - Debugging theme-specific rendering issues
 - Screenshots/documentation with consistent colors
@@ -565,7 +580,7 @@ git push origin feature/my-feature
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is dual-licensed under MIT OR Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE) for details.
 
 ---
 
@@ -580,9 +595,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contact
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/saide/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/saide/discussions)
-
----
-
-**Made with ❤️ in Rust**
+- **Issues**: [GitHub Issues](https://github.com/keivry/saide/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/keivry/saide/discussions)

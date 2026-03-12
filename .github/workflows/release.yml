@@ -1,0 +1,322 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name for the release, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: saide
+  FFMPEG_PREFIX: /opt/ffmpeg8
+  FFMPEG_VERSION: 8.0.1
+
+jobs:
+  changelog:
+    name: Generate changelog
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      tag_exists: ${{ steps.meta.outputs.tag_exists }}
+      release_commit: ${{ steps.release.outputs.release_commit }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9].* ]]; then
+            printf 'Release tag must match v* and start with a digit after v: %s\n' "$tag" >&2
+            exit 1
+          fi
+          printf 'release_tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
+            printf 'tag_exists=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'tag_exists=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out existing release tag
+        if: github.event_name == 'workflow_dispatch' && steps.meta.outputs.tag_exists == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout "refs/tags/${{ steps.meta.outputs.release_tag }}"
+
+      - name: Create local tag for changelog generation
+        if: github.event_name == 'workflow_dispatch' && steps.meta.outputs.tag_exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag "${{ steps.meta.outputs.release_tag }}" "$GITHUB_SHA"
+
+      - name: Resolve release commit
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'release_commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        id: cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --current --tag ${{ steps.meta.outputs.release_tag }} --strip all
+
+      - name: Persist generated changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "${{ steps.cliff.outputs.changelog }}" release-notes.md
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: changelog
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_format: zip
+            binary_name: saide.exe
+            extra_runtime_lib_dirs: ''
+          - label: linux-glibc-x64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_format: tar.gz
+            binary_name: saide
+            extra_runtime_lib_dirs: /opt/ffmpeg8/lib
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changelog.outputs.tag_exists == 'true' && format('refs/tags/{0}', needs.changelog.outputs.release_tag) || needs.changelog.outputs.release_commit }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Download scrcpy server asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import urllib.request
+
+          constant_path = pathlib.Path('src/constant.rs')
+          constant_source = constant_path.read_text(encoding='utf-8')
+          match = re.search(r'pub const SCRCPY_SERVER_VERSION_STRING: &str = "(v[^"]+)";', constant_source)
+          if match is None:
+              raise SystemExit(f'failed to parse SCRCPY_SERVER_VERSION_STRING from {constant_path}')
+
+          version = match.group(1)
+          asset_name = f'scrcpy-server-{version}'
+          download_url = f'https://github.com/Genymobile/scrcpy/releases/download/{version}/{asset_name}'
+          asset_dir = pathlib.Path('.release-assets')
+          asset_dir.mkdir(exist_ok=True)
+          asset_path = asset_dir / asset_name
+
+          request = urllib.request.Request(download_url, headers={'User-Agent': 'saide-release-workflow'})
+          with urllib.request.urlopen(request) as response, asset_path.open('wb') as output:
+              output.write(response.read())
+
+          with pathlib.Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as env_file:
+              env_file.write(f'SCRCPY_SERVER_VERSION_STRING={version}\n')
+              env_file.write(f'SCRCPY_SERVER_ASSET_NAME={asset_name}\n')
+              env_file.write(f'SCRCPY_SERVER_ASSET_PATH={asset_path.as_posix()}\n')
+              env_file.write(f'SCRCPY_SERVER_DOWNLOAD_URL={download_url}\n')
+
+          print(f'downloaded {asset_name} from {download_url}')
+          PY
+
+      - name: Install Ubuntu build dependencies
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            libasound2-dev \
+            libdrm-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libopus-dev \
+            libssl-dev \
+            libva-dev \
+            libvdpau-dev \
+            libvulkan-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxcb-shm0-dev \
+            libxcb-xfixes0-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            nasm \
+            patchelf \
+            perl \
+            pkg-config \
+            tar \
+            xz-utils \
+            yasm \
+            zip
+
+      - name: Build FFmpeg 8 for Linux glibc
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" -o "/tmp/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+          rm -rf "/tmp/ffmpeg-${FFMPEG_VERSION}"
+          tar -xf "/tmp/ffmpeg-${FFMPEG_VERSION}.tar.xz" -C /tmp
+          cd "/tmp/ffmpeg-${FFMPEG_VERSION}"
+          ./configure \
+            --prefix="$FFMPEG_PREFIX" \
+            --enable-gpl \
+            --enable-pic \
+            --enable-shared \
+            --disable-static \
+            --disable-programs \
+            --disable-doc \
+            --disable-debug
+          make -j"$(getconf _NPROCESSORS_ONLN)"
+          sudo make install
+          printf 'FFMPEG_DIR=%s\n' "$FFMPEG_PREFIX" >> "$GITHUB_ENV"
+          printf 'PKG_CONFIG_PATH=%s/lib/pkgconfig\n' "$FFMPEG_PREFIX" >> "$GITHUB_ENV"
+          printf 'LD_LIBRARY_PATH=%s/lib\n' "$FFMPEG_PREFIX" >> "$GITHUB_ENV"
+
+      - name: Set up vcpkg
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_DEFAULT_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_TARGET_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_OVERLAY_TRIPLETS=$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKGRS_DYNAMIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install Windows pkg-config fallback
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          choco install -y pkgconfiglite
+          "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Install CUDA toolkit
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        uses: Jimver/cuda-toolkit@v0.2.30
+        with:
+          cuda: '13.1.0'
+          method: network
+
+      - name: Install Windows build dependencies
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install --overlay-triplets "$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" "ffmpeg[nvcodec]:x64-windows-release" "opus:x64-windows-release"
+          "VCPKG_INSTALLED_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "FFMPEG_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PKG_CONFIG_PATH=$env:VCPKG_ROOT\installed\x64-windows-release\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$env:VCPKG_ROOT\installed\x64-windows-release\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          if ($env:CUDA_PATH) {
+            "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
+      - name: Build release binary with cargo
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --target "${{ matrix.target }}"
+
+      - name: Package release archive
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          BINARY_NAME: ${{ matrix.binary_name }}
+          BINARY_PATH: target/${{ matrix.target }}/release/${{ matrix.binary_name }}
+          ARCHIVE_BASENAME: saide-${{ needs.changelog.outputs.release_tag }}-${{ matrix.label }}
+          PACKAGE_DIR_NAME: saide-${{ needs.changelog.outputs.release_tag }}-${{ matrix.label }}
+          ARCHIVE_FORMAT: ${{ matrix.archive_format }}
+          EXTRA_RUNTIME_LIB_DIRS: ${{ matrix.extra_runtime_lib_dirs }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/package-release.sh
+          scripts/package-release.sh
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.label }}
+          path: dist/saide-${{ needs.changelog.outputs.release_tag }}-${{ matrix.label }}.${{ matrix.archive_format }}
+
+  publish:
+    name: Publish GitHub release
+    needs:
+      - changelog
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name 'release-notes.md' \) -exec cp {} release-assets/ \;
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.changelog.outputs.release_tag }}
+          target_commitish: ${{ needs.changelog.outputs.release_commit }}
+          body_path: release-assets/release-notes.md
+          files: |
+            release-assets/*.zip
+            release-assets/*.tar.gz
+            release-assets/release-notes.md
+          draft: false
+          prerelease: false

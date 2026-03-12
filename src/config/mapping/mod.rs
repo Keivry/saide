@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Module for key mappings and profiles
 //!
 //! This module defines the structures and serialization logic for key mappings

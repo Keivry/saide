@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! RGBA frame rendering using wgpu in eframe
 //!
 //! Provides a custom wgpu render callback and shared resources for rendering RGBA frames

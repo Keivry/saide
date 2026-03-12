@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 pub mod avsync;
 pub mod config;
 pub mod constant;

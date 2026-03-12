@@ -1,0 +1,55 @@
+changelog = { header = "# Changelog\n\n", body = "{% if version %}## {{ version }} - {{ timestamp | date(format=\"%Y-%m-%d\") }}{% else %}## Unreleased{% endif %}\n{% for group, commits in commits | group_by(attribute=\"group\") %}\n### {{ group }}\n{% for commit in commits %}- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }} ({{ commit.id | truncate(length=7, end=\"\") }})\n{% endfor %}\n{% endfor %}\n", footer = "" }
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+tag_pattern = "v[0-9].*"
+skip_tags = ""
+ignore_tags = ""
+topo_order = false
+sort_commits = "oldest"
+
+[remote.github]
+owner = ""
+repo = ""
+
+[[git.commit_parsers]]
+message = "^feat"
+group = "Features"
+
+[[git.commit_parsers]]
+message = "^fix"
+group = "Fixes"
+
+[[git.commit_parsers]]
+message = "^perf"
+group = "Performance"
+
+[[git.commit_parsers]]
+message = "^refactor"
+group = "Refactoring"
+
+[[git.commit_parsers]]
+message = "^docs"
+group = "Documentation"
+
+[[git.commit_parsers]]
+message = "^test"
+group = "Tests"
+
+[[git.commit_parsers]]
+message = "^build"
+group = "Build"
+
+[[git.commit_parsers]]
+message = "^ci"
+group = "CI"
+
+[[git.commit_parsers]]
+message = "^chore"
+group = "Chores"
+
+[[git.commit_parsers]]
+message = ".*"
+group = "Other"

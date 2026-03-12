@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! This module provides an implementation of FtlSource that uses
 //! embedded Fluent translation files.
 //!

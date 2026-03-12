@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Mouse input mapper for Android touch events
 //!
 //! This module maps mouse input events (move, button, wheel) to Android touch events

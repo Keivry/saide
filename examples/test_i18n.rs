@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use saide::{i18n::L10N, t, tf};
 
 fn main() {

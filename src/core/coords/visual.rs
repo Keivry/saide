@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Visual (UI/screen) coordinate system implementation
 
 use {

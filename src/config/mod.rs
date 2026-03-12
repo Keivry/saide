@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Configuration management for SAide application
 //!
 //! This module defines the configuration structures and management for the SAide application,

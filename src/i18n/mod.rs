@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Thread-safe i18n manager with Fluent
 //!
 //! Features:

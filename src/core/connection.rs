@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Scrcpy connection service
 //!
 //! Handles establishing scrcpy connections, creating control senders,

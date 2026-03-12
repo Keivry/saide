@@ -1,9 +1,9 @@
 # SAide
 
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
-> **S**crcpy companion **A**pp with key/mouse mapp**i**ng - **A**n**de**
+> **S**crcpy companion **A**pp with key/mouse mapp**i**ng
 
 **SAide** 是一款基于 Rust 开发的高性能 Android 设备镜像与控制应用。通过 USB 或 Wi-Fi 连接 Android 设备,提供低延迟视频流、音频捕获和可自定义的键盘/鼠标映射功能。
 
@@ -38,7 +38,7 @@
 ### 技术亮点
 
 - **零拷贝 GPU 渲染** 通过 wgpu (Vulkan/DirectX 12 后端)
-- **硬件加速**: 
+- **硬件加速**:
   - Linux: VAAPI (Intel/AMD)、NVDEC (NVIDIA)
   - Windows: D3D11VA (Intel/AMD/NVIDIA)、NVDEC (NVIDIA)
   - 全平台: 软件 H.264 回退
@@ -90,7 +90,7 @@ sudo apt install libva-dev mesa-va-drivers
 #### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/yourusername/saide.git
+git clone https://github.com/keivry/saide.git
 cd saide
 ```
 
@@ -282,6 +282,20 @@ cargo clippy -- -D warnings
 # 检查格式 + Lint
 cargo fmt --all -- --check && cargo clippy -- -D warnings
 ```
+
+### 自动发布
+
+仓库内包含用于 GitHub Releases 的 `.github/workflows/release.yml`。
+
+- 推送匹配 `v*` 的标签时自动触发，例如 `v0.1.0`
+- 支持通过 `workflow_dispatch` 手动触发，并传入 `tag`
+- release 构建使用 Rust nightly 工具链
+- 会构建并打包 `windows-x64` 和 `linux-glibc-x64`
+- Windows release 任务会安装 CUDA Toolkit，并通过 vcpkg 安装 `ffmpeg[nvcodec]` 以支持 NVDEC 构建
+- 每个归档都会包含可执行文件、对应版本的 `scrcpy-server-vx.x.x`、可识别到的运行时依赖、`README.md`、`LICENSE-MIT` 和 `LICENSE-APACHE`
+- 发布说明通过 `git-cliff` 基于 git 提交历史自动生成
+
+为了得到更清晰的变更说明，建议继续使用 `feat:`、`fix:` 这类约定式提交前缀。
 
 ### 示例程序
 
@@ -533,7 +547,7 @@ git push origin feature/my-feature
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
+本项目采用 MIT OR Apache-2.0 双许可证 - 详见 [LICENSE-MIT](LICENSE-MIT) 与 [LICENSE-APACHE](LICENSE-APACHE) 文件。
 
 ---
 
@@ -548,9 +562,5 @@ git push origin feature/my-feature
 
 ## 联系方式
 
-- **问题反馈**: [GitHub Issues](https://github.com/yourusername/saide/issues)
-- **讨论**: [GitHub Discussions](https://github.com/yourusername/saide/discussions)
-
----
-
-**用 ❤️ 和 Rust 制作**
+- **问题反馈**: [GitHub Issues](https://github.com/keivry/saide/issues)
+- **讨论**: [GitHub Discussions](https://github.com/keivry/saide/discussions)

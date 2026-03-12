@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use {ffmpeg::Error as FfmpegError, ffmpeg_next as ffmpeg, thiserror::Error};
 
 pub type Result<T> = std::result::Result<T, VideoError>;

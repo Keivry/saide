@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Traits and types for Fluent translation sources.
 //!
 //! This module defines the `FtlSource` trait, which abstracts the loading of

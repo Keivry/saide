@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Keyboard input mapping and handling
 //!
 //! Handles mapping from egui Key events to Android keycodes and custom actions.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Scrcpy 真实设备连接测试（最终版本）
 
 mod utils;

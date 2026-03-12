@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Device monitoring service
 //!
 //! Monitors device state (online/offline), rotation, and IME (keyboard) state.

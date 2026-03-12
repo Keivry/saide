@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! NVIDIA NVDEC hardware-accelerated H.264 decoder
 
 use {

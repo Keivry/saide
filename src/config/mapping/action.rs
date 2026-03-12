@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Mapping actions that can be triggered by input events
 //!
 //! This module defines enumerations for mapping actions that can be triggered by key presses or

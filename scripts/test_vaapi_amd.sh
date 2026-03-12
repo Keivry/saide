@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 # Test script for AMD GPU VAAPI compatibility (Linux)
 # 用于测试 AMD GPU 在 Linux 上的 VAAPI 硬件加速兼容性
 
@@ -50,7 +52,7 @@ else
 fi
 
 # Test VAAPI decode capability
-if command -v vainfo &> /dev/null; then
+if command -v vainfo &>/dev/null; then
     echo -e "  ${COLOR_GRAY}Running vainfo to check H.264 decode support...${COLOR_RESET}"
     if vainfo 2>&1 | grep -q "VAProfileH264"; then
         echo -e "  ${COLOR_GREEN}✅ H.264 hardware decode supported${COLOR_RESET}"
@@ -64,7 +66,7 @@ echo ""
 
 # 4. Build SAide (release mode)
 echo -e "${COLOR_YELLOW}[4/5] Building SAide (release)...${COLOR_RESET}"
-if cargo build --release &> /dev/null; then
+if cargo build --release &>/dev/null; then
     echo -e "  ${COLOR_GREEN}✅ Build successful${COLOR_RESET}"
 else
     echo -e "  ${COLOR_RED}❌ Build failed${COLOR_RESET}"
@@ -78,7 +80,7 @@ echo -e "     ${COLOR_GRAY}Starting SAide with verbose logging...${COLOR_RESET}"
 echo -e "     ${COLOR_GRAY}(Will auto-stop after 10 seconds)${COLOR_RESET}"
 echo ""
 
-RUST_LOG=debug timeout 10s ./target/release/saide 2> vaapi_test.log || true
+RUST_LOG=debug timeout 10s ./target/release/saide 2>vaapi_test.log || true
 
 echo ""
 echo -e "${COLOR_CYAN}========================================"

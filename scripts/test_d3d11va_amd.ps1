@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 # Test script for AMD GPU D3D11VA compatibility
 # 用于测试 AMD GPU 在 Windows 上的 D3D11VA 硬件加速兼容性
 

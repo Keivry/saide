@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! AV synchronization clock (scrcpy-style)
 //!
 //! Reference: scrcpy/app/src/clock.c

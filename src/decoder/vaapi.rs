@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! VAAPI hardware-accelerated H.264 decoder
 
 use {

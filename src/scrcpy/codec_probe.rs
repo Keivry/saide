@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Automatic Video Codec Options Compatibility Detection
 //!
 //! Probes device capabilities to find optimal low-latency configuration.

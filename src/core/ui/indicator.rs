@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Video statistics indicator overlay for the video player.
 //!
 //! Displays FPS, latency, and other relevant information in a floating panel.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! 协议实现验证测试（无需真实设备）
 //!
 //! 测试控制协议和视频协议的正确性

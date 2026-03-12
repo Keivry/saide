@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! NV12 frame rendering using custom wgpu callback
 //!
 //! This module provides a custom wgpu render callback for rendering NV12

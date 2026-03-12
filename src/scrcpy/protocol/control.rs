@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 /// Scrcpy Control Protocol Implementation
 ///
 /// Reference: scrcpy/app/src/control_msg.c

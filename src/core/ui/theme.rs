@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! UI theme management, including color definitions and theme mode handling.
 //!
 //! Supports dark and light themes, with an option to automatically match the system theme. Colors

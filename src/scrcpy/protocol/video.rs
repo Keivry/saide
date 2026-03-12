@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 /// Scrcpy Video Stream Protocol Implementation
 ///
 /// Reference: scrcpy/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java

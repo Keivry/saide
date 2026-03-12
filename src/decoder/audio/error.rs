@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use {opus::Error as OpusError, thiserror::Error};
 
 pub type Result<T> = std::result::Result<T, AudioError>;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Video decoder module using FFmpeg
 
 pub mod audio;

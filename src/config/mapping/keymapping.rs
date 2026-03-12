@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Keyboard mapping configuration
 //!
 //! This module defines the structures and enums related to keyboard input mapping, including the

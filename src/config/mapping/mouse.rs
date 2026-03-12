@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Mouse input mapping configuration
 //!
 //! This module defines the structures and enums related to mouse input mapping, including mouse

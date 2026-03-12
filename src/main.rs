@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use {
     crossbeam_channel::Receiver,
     eframe::{egui, egui_wgpu},

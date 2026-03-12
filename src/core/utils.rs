@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Utility functions for mapping lookups
 //!
 //! This module provides functions to find the nearest key mapping

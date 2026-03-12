@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Scrcpy Control Channel Sender
 //!
 //! Encapsulates control stream and provides type-safe methods for sending

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! wgpu-hal prototype: Test external memory import capability
 //!
 //! This example verifies whether wgpu 0.27 hal module supports importing

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Filesystem-based FTL source with file watching capabilities.
 //!
 //! This module provides an implementation of the `FtlSource` trait that loads

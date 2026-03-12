@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Automatic decoder selection with cascade fallback
 //!
 //! This module provides an `AutoDecoder` that tries hardware decoders in priority order,

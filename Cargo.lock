@@ -1143,6 +1143,7 @@ dependencies = [
 [[package]]
 name = "egui-command"
 version = "0.1.0"
+source = "git+https://github.com/Keivry/egui-command.git?branch=main#2bbdab2251728b608b3f573a4bf3b64065cd141c"
 dependencies = [
  "rustc-hash 2.1.1",
 ]
@@ -1150,6 +1151,7 @@ dependencies = [
 [[package]]
 name = "egui-command-binding"
 version = "0.1.0"
+source = "git+https://github.com/Keivry/egui-command-binding.git?branch=main#9bfc10593dae0a359b2449c35a385605cc190b5d"
 dependencies = [
  "egui",
  "egui-command",
@@ -1202,6 +1204,7 @@ dependencies = [
 [[package]]
 name = "egui_cjk_font"
 version = "0.1.0"
+source = "git+https://github.com/Keivry/egui-cjk-font.git?branch=main#388d85ca836c7e29b3972eb78a69c8f231e742c5"
 dependencies = [
  "egui",
  "font-kit",

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Background initialization coordinator
 //!
 //! Coordinates scrcpy connection, device monitoring, and input mapper initialization.

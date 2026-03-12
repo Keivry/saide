@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Test Planar to Packed conversion correctness
 
 use saide::decoder::{AudioDecoder, OpusDecoder};

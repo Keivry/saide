@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Configuration for logging.
 
 use serde::{Deserialize, Serialize};
