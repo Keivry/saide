@@ -2877,6 +2877,9 @@ Timeline:
 - Locking orientation prevents device rotation → worse UX
 - GPU detection predicts decoder type, but cascade fallback may choose differently
 
+> **2026-03-12 更新**: `src/core/ui/player.rs` 现已按当前实际 decoder 类型决定是否在 SPS 分辨率变化时重建。
+> `NVDEC` / `D3D11VA` 仍保留重建；`VAAPI` / `Software` 仅更新分辨率状态，不再触发非必要 warning/recreate。
+
 ### Solution: Decoder-Driven Orientation Lock Decision
 
 **Design**: Move decision logic from GPU detection to `AutoDecoder` module
