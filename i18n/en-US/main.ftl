@@ -96,15 +96,21 @@ help-message =
 notification-no-active-profile = No active profile
 notification-no-profiles = No profiles available
 notification-create-profile-failed = Failed to create profile
+notification-create-profile-failed-with-reason = Failed to create profile: { $reason }
 notification-delete-profile-failed = Failed to delete profile
 notification-rename-profile-failed = Failed to rename profile
+notification-rename-profile-failed-with-reason = Failed to rename profile: { $reason }
 notification-save-profile-as-failed = Failed to save profile as
+notification-save-profile-as-failed-with-reason = Failed to save profile as: { $reason }
 notification-switch-profile-failed = Failed to switch profile
 notification-switch-profile-success = Switched to profile "{ $profile_name }"
 notification-no-profile-to-switch = No other profile available to switch
 notification-add-mapping-failed = Failed to add mapping
 notification-delete-mapping-failed = Failed to delete mapping
 notification-save-config-failed = Failed to save config
+profile-error-not-found = Profile not found
+profile-error-name-conflict = Profile name already exists
+profile-error-invalid-format = Profile name cannot be empty
 
 ## UI - Common Dialog Buttons
 dialog-button-confirm = Confirm

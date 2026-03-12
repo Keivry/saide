@@ -9,6 +9,16 @@ impl SAideApp {
         }
     }
 
+    fn profile_error_reason(&self, err: &ProfileError) -> String {
+        match err {
+            ProfileError::NoActiveProfile => t!("notification-no-active-profile"),
+            ProfileError::ProfileNotFound => t!("profile-error-not-found"),
+            ProfileError::ProfileConflict => t!("profile-error-name-conflict"),
+            ProfileError::ProfileFormatError => t!("profile-error-invalid-format"),
+            ProfileError::NoProfileToSwitch => t!("notification-no-profile-to-switch"),
+        }
+    }
+
     pub fn create_profile(&mut self, profile_name: &str) {
         let profile = Profile::new(
             profile_name,
@@ -16,21 +26,28 @@ impl SAideApp {
             self.app_state.device_orientation,
         );
 
-        if self.profile_manager.add_profile(profile).is_ok() {
-            self.profile_manager.update(
-                &self.app_state.device_serial,
-                self.app_state.device_orientation,
-            );
-            self.save_config();
-            if self
-                .profile_manager
-                .switch_to_profile_by_name(profile_name)
-                .is_err()
-            {
-                self.notify(&t!("notification-switch-profile-failed"));
+        match self.profile_manager.add_profile(profile) {
+            Ok(()) => {
+                self.profile_manager.update(
+                    &self.app_state.device_serial,
+                    self.app_state.device_orientation,
+                );
+                self.save_config();
+                if self
+                    .profile_manager
+                    .switch_to_profile_by_name(profile_name)
+                    .is_err()
+                {
+                    self.notify(&t!("notification-switch-profile-failed"));
+                }
             }
-        } else {
-            self.notify(&t!("notification-create-profile-failed"));
+            Err(err) => {
+                let reason = self.profile_error_reason(&err);
+                self.notify(&tf!(
+                    "notification-create-profile-failed-with-reason",
+                    "reason" => &reason
+                ));
+            }
         }
     }
 
@@ -57,18 +74,21 @@ impl SAideApp {
             return;
         }
 
-        if self
-            .profile_manager
-            .save_active_profile_as(new_name)
-            .is_ok()
-        {
-            self.profile_manager.update(
-                &self.app_state.device_serial,
-                self.app_state.device_orientation,
-            );
-            self.save_config();
-        } else {
-            self.notify(&t!("notification-save-profile-as-failed"));
+        match self.profile_manager.save_active_profile_as(new_name) {
+            Ok(()) => {
+                self.profile_manager.update(
+                    &self.app_state.device_serial,
+                    self.app_state.device_orientation,
+                );
+                self.save_config();
+            }
+            Err(err) => {
+                let reason = self.profile_error_reason(&err);
+                self.notify(&tf!(
+                    "notification-save-profile-as-failed-with-reason",
+                    "reason" => &reason
+                ));
+            }
         };
     }
 
@@ -78,13 +98,15 @@ impl SAideApp {
             return;
         }
 
-        if self.profile_manager.rename_active_profile(new_name).is_ok() {
-            self.save_config()
+        if let Err(err) = self.profile_manager.rename_active_profile(new_name) {
+            let reason = self.profile_error_reason(&err);
+            self.notify(&tf!(
+                "notification-rename-profile-failed-with-reason",
+                "reason" => &reason
+            ));
         } else {
-            {
-                self.notify(&t!("notification-rename-profile-failed"));
-            }
-        };
+            self.save_config()
+        }
     }
 
     pub fn switch_profile(&mut self, idx: usize) {

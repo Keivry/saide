@@ -96,15 +96,21 @@ help-message =
 notification-no-active-profile = 无活动配置
 notification-no-profiles = 无可用配置
 notification-create-profile-failed = 创建配置失败
+notification-create-profile-failed-with-reason = 创建配置失败：{ $reason }
 notification-delete-profile-failed = 删除配置失败
 notification-rename-profile-failed = 重命名配置失败
+notification-rename-profile-failed-with-reason = 重命名配置失败：{ $reason }
 notification-save-profile-as-failed = 另存配置失败
+notification-save-profile-as-failed-with-reason = 另存配置失败：{ $reason }
 notification-switch-profile-failed = 切换配置失败
 notification-switch-profile-success = 已切换到配置“{ $profile_name }”
 notification-no-profile-to-switch = 没有可切换的配置
 notification-add-mapping-failed = 添加映射失败
 notification-delete-mapping-failed = 删除映射失败
 notification-save-config-failed = 保存配置失败
+profile-error-not-found = 配置不存在
+profile-error-name-conflict = 配置名称已存在
+profile-error-invalid-format = 配置名称不能为空
 
 ## UI - 通用对话框按钮
 dialog-button-confirm = 确认
