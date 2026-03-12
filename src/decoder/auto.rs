@@ -68,6 +68,16 @@ impl DecoderPreference {
             &[DecoderPreference::Nvdec, DecoderPreference::Vaapi];
         CANDIDATES
     }
+
+    pub fn requires_decoder_recreation_on_resolution_change(self) -> bool {
+        match self {
+            Self::Nvdec => true,
+            #[cfg(target_os = "windows")]
+            Self::D3d11va => true,
+            #[cfg(not(target_os = "windows"))]
+            Self::Vaapi => false,
+        }
+    }
 }
 
 /// Auto-selecting video decoder based on available GPU
@@ -314,6 +324,32 @@ impl AutoDecoder {
             Self::Software(_) => "Software",
         }
     }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn requires_decoder_recreation_on_resolution_change(&self) -> bool {
+        match self {
+            Self::Nvdec(_) => {
+                DecoderPreference::Nvdec.requires_decoder_recreation_on_resolution_change()
+            }
+            Self::Vaapi(_) => {
+                DecoderPreference::Vaapi.requires_decoder_recreation_on_resolution_change()
+            }
+            Self::Software(_) => false,
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn requires_decoder_recreation_on_resolution_change(&self) -> bool {
+        match self {
+            Self::Nvdec(_) => {
+                DecoderPreference::Nvdec.requires_decoder_recreation_on_resolution_change()
+            }
+            Self::D3d11va(_) => {
+                DecoderPreference::D3d11va.requires_decoder_recreation_on_resolution_change()
+            }
+            Self::Software(_) => false,
+        }
+    }
 }
 
 impl VideoDecoder for AutoDecoder {
@@ -351,5 +387,27 @@ impl VideoDecoder for AutoDecoder {
             Self::D3d11va(d) => d.flush(),
             Self::Software(d) => d.flush(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DecoderPreference;
+
+    #[test]
+    fn nvdec_requires_decoder_recreation_on_resolution_change() {
+        assert!(DecoderPreference::Nvdec.requires_decoder_recreation_on_resolution_change());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn d3d11va_requires_decoder_recreation_on_resolution_change() {
+        assert!(DecoderPreference::D3d11va.requires_decoder_recreation_on_resolution_change());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn vaapi_does_not_require_decoder_recreation_on_resolution_change() {
+        assert!(!DecoderPreference::Vaapi.requires_decoder_recreation_on_resolution_change());
     }
 }

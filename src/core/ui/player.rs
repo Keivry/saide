@@ -924,6 +924,7 @@ impl VideoLoop {
         token: &CancellationToken,
     ) -> Result<()> {
         let mut consecutive_read_errors = 0u32;
+        let mut pending_resolution: Option<(u32, u32)> = None;
 
         loop {
             if token.is_cancelled() {
@@ -994,26 +995,54 @@ impl VideoLoop {
                         preferred_decoder,
                     )?);
                     *last_resolution = new_res;
+                    pending_resolution = None;
                     let _ = event_tx.send(PlayerEvent::ResolutionChanged {
                         width: new_res.0,
                         height: new_res.1,
                     });
                 } else if new_res != *last_resolution {
-                    warn!(
-                        "Resolution change detected in SPS: {}x{} -> {}x{}, recreating decoder",
-                        last_resolution.0, last_resolution.1, new_res.0, new_res.1
-                    );
-                    *video_decoder = Some(AutoDecoder::new(
-                        new_res.0,
-                        new_res.1,
-                        hwdecode,
-                        preferred_decoder,
-                    )?);
-                    *last_resolution = new_res;
-                    let _ = event_tx.send(PlayerEvent::ResolutionChanged {
-                        width: new_res.0,
-                        height: new_res.1,
-                    });
+                    let recreate_decoder = video_decoder
+                        .as_ref()
+                        .is_some_and(AutoDecoder::requires_decoder_recreation_on_resolution_change);
+
+                    if recreate_decoder {
+                        warn!(
+                            "Resolution change detected in SPS: {}x{} -> {}x{}, recreating {} decoder",
+                            last_resolution.0,
+                            last_resolution.1,
+                            new_res.0,
+                            new_res.1,
+                            video_decoder
+                                .as_ref()
+                                .map_or("unknown", AutoDecoder::decoder_type)
+                        );
+                        *video_decoder = Some(AutoDecoder::new(
+                            new_res.0,
+                            new_res.1,
+                            hwdecode,
+                            preferred_decoder,
+                        )?);
+                        *last_resolution = new_res;
+                        pending_resolution = None;
+                        let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                            width: new_res.0,
+                            height: new_res.1,
+                        });
+                    } else {
+                        if pending_resolution != Some(new_res) {
+                            info!(
+                                "Resolution change detected in SPS: {}x{} -> {}x{}, keeping {} decoder until frames confirm the new size",
+                                last_resolution.0,
+                                last_resolution.1,
+                                new_res.0,
+                                new_res.1,
+                                video_decoder
+                                    .as_ref()
+                                    .map_or("unknown", AutoDecoder::decoder_type)
+                            );
+                            pending_resolution = Some(new_res);
+                        }
+                    }
                 }
             }
 
@@ -1039,6 +1068,23 @@ impl VideoLoop {
 
             if let Some(frame) = frame_opt {
                 profiler.mark_upload();
+
+                let frame_resolution = (frame.width, frame.height);
+                if frame_resolution != *last_resolution {
+                    info!(
+                        "Decoded frame resolution changed: {}x{} -> {}x{}",
+                        last_resolution.0,
+                        last_resolution.1,
+                        frame_resolution.0,
+                        frame_resolution.1
+                    );
+                    *last_resolution = frame_resolution;
+                    pending_resolution = None;
+                    let _ = event_tx.send(PlayerEvent::ResolutionChanged {
+                        width: frame_resolution.0,
+                        height: frame_resolution.1,
+                    });
+                }
 
                 let current_stats = {
                     let mut s = stats.lock();
