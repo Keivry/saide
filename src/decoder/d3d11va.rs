@@ -287,9 +287,9 @@ impl D3d11vaDecoder {
                             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                                 return Err(VideoError::DecodingError(format!(
                                     "D3D11VA: {} consecutive GPU transfer failures. Common causes:\n\
-                                     1. AMD APU: Increase BIOS UMA memory to 2GB (see docs/AMD_D3D11VA_TROUBLESHOOTING.md)\n\
-                                     2. Update GPU drivers to latest version\n\
-                                     3. Disable hardware decoding (hwdecode=false in config.toml)",
+                                      1. AMD APU: Increase BIOS UMA memory to 2GB\n\
+                                      2. Update GPU drivers to latest version\n\
+                                      3. Disable hardware decoding (hwdecode=false in config.toml)",
                                     consecutive_failures
                                 )));
                             }

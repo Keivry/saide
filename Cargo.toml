@@ -41,6 +41,22 @@ path = "examples/test_audio_native.rs"
 name = "probe_codec"
 path = "examples/probe_codec.rs"
 
+[[example]]
+name = "render_avsync"
+path = "examples/render_avsync.rs"
+
+[[example]]
+name = "test_auto_decoder"
+path = "examples/test_auto_decoder.rs"
+
+[[example]]
+name = "test_i18n"
+path = "examples/test_i18n.rs"
+
+[[example]]
+name = "test_vulkan_import"
+path = "examples/test_vulkan_import.rs"
+
 
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }
@@ -98,8 +114,8 @@ sys-locale = "0.3"
 lru = "0.16"
 
 egui_cjk_font = { git = "https://github.com/Keivry/egui-cjk-font.git", branch = "main" }
-egui-command = { git = "https://github.com/Keivry/egui-command.git", branch = "main" }
-egui-command-binding = { git = "https://github.com/Keivry/egui-command-binding.git", branch = "main" }
+egui-command = "0.1"
+egui-command-binding = "0.1"
 
 notify = "8"
 

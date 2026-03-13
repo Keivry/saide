@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Latency measurement and profiling
+//! Latency measurement and profiling.
 //!
-//! Tracks end-to-end latency from device capture to screen display.
-//! Reference: docs/LATENCY_OPTIMIZATION.md
-
+//! Tracks end-to-end latency from device capture to screen display across
+//! the receive, decode, upload, and display stages used by the current app.
 use std::time::{Duration, Instant};
 
 /// Latency profiler - tracks timestamps at each pipeline stage

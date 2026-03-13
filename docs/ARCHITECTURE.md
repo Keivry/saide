@@ -1,686 +1,237 @@
-# SAide Architecture Overview
+# SAide Architecture
 
-## Project Overview
+This document describes the current code structure of SAide as it exists in this repository.
 
-SAide is a Rust-based Android device remote control application inspired by scrcpy. It provides
-high-performance video streaming, audio capture, and low-latency input control from Android devices
-to a desktop UI built with egui.
+## Runtime overview
 
-### Key Features
+SAide is a desktop scrcpy companion built around three pieces:
 
-- **High-Performance Video Streaming**: H.264/H.265/AV1 video decoding with hardware acceleration (NVDEC, VAAPI, D3D11VA)
-- **Low-Latency Input**: Direct scrcpy control channel for keyboard and mouse input (40-90ms reduction vs ADB)
-- **Audio Capture**: Opus audio streaming from Android 11+ devices
-- **Keyboard Mapping**: Custom key mappings with coordinate systems supporting screen rotation
-- **Cross-Platform**: Linux primary, with architecture designed for Windows/macOS expansion
+1. `src/main.rs` starts the application, loads configuration, verifies `adb`, initializes logging, and launches the egui/eframe desktop window with the WGPU renderer.
+2. `src/core/` owns application lifecycle, UI state, device selection, stream startup, and the player/editor experience.
+3. `src/scrcpy/`, `src/controller/`, `src/decoder/`, and `src/avsync/` implement device communication, input injection, media decoding, and playback timing.
 
----
+At runtime the app:
 
-## System Architecture
+1. Loads config through `ConfigManager::new()`.
+2. Applies config defaults, which may include the path returned by `constant::resolve_scrcpy_server_path()`.
+3. Verifies `adb` is available.
+4. Launches the desktop UI.
+5. Connects to the selected Android device.
+6. Establishes scrcpy video / audio / control sockets.
+7. Decodes media, renders video in egui, and forwards keyboard or mouse actions over the control channel.
 
-```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            SAide Application                              │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐│
-│  │                         UI Layer (egui)                              ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               ││
-│  │  │   SAideApp   │  │   Toolbar    │  │   Indicator  │               ││
-│  │  │  (Main App)  │  │   Controls   │  │    Panel     │               ││
-│  │  └──────────────┘  └──────────────┘  └──────────────┘               ││
-│  └─────────────────────────────────────────────────────────────────────┘│
-│                                    │                                      │
-│                                    ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────────────┐│
-│  │                     Controller Layer                                  ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               ││
-│  │  │KeyboardMapper│  │  MouseMapper │  │ControlSender │               ││
-│  │  └──────────────┘  └──────────────┘  └──────────────┘               ││
-│  └─────────────────────────────────────────────────────────────────────┘│
-│                                    │                                      │
-│                                    ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────────────┐│
-│  │                      Scrcpy Protocol Layer                            ││
-│  │  ┌───────────────────────────────────────────────────────────────┐  ││
-│  │  │                  ScrcpyConnection                              │  ││
-│  │  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐  ││
-│  │  │  │ VideoStream │ │ AudioStream │ │    ControlStream        │  ││
-│  │  │  └─────────────┘ └─────────────┘ └─────────────────────────┘  ││
-│  │  └───────────────────────────────────────────────────────────────┘  ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               ││
-│  │  │ControlSender │  │DeviceMsgRecv │  │  ServerMgr   │               ││
-│  │  └──────────────┘  └──────────────┘  └──────────────┘               ││
-│  └─────────────────────────────────────────────────────────────────────┘│
-│                                    │                                      │
-│                                    ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────────────┐│
-│  │                      Decoder Layer                                    ││
-│  │  ┌───────────────────────────────────────────────────────────────┐  ││
-│  │  │                    VideoDecoder                                 │  ││
-│  │  │  ┌──────────────┐ ┌──────────────┐ ┌────────────────────────┐ │  ││
-│  │  │  │ H264Decoder  │ │  NvdecDecoder│ │ VAAPI / D3D11VA        │ │  ││
-│  │  │  │  (Software)  │ │  (NVIDIA)    │ │ (Intel/AMD)            │ │  ││
-│  │  │  └──────────────┘ └──────────────┘ └────────────────────────┘ │  ││
-│  │  └───────────────────────────────────────────────────────────────┘  ││
-│  │  ┌───────────────────────────────────────────────────────────────┐  ││
-│  │  │                    AudioDecoder                                 │  ││
-│  │  │  ┌──────────────┐ ┌──────────────┐                            │  ││
-│  │  │  │ OpusDecoder  │ │  AacDecoder  │                            │  ││
-│  │  │  └──────────────┘ └──────────────┘                            │  ││
-│  │  └───────────────────────────────────────────────────────────────┘  ││
-│  └─────────────────────────────────────────────────────────────────────┘│
-│                                    │                                      │
-│                                    ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────────────┐│
-│  │                      Renderer Layer                                   ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               ││
-│  │  │ StreamPlayer │  │  CoordSys    │  │   Renderer   │               ││
-│  │  └──────────────┘  └──────────────┘  └──────────────┘               ││
-│  └─────────────────────────────────────────────────────────────────────┘│
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    │ ADB Tunnel
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       Android Device (scrcpy-server)                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                   │
-│  │ Video Encoder│  │ Audio Capture│  │ Input Injector│                   │
-│  │  (H.264)     │  │   (Opus)     │  │              │                   │
-│  └──────────────┘  └──────────────┘  └──────────────┘                   │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Module Structure
-
-### Core Modules
+## Module layout
 
 ```text
 src/
-├── main.rs                 # Application entry point
-├── lib.rs                 # Library root
-├── error.rs               # Unified error types
-├── constant.rs            # Constants and default values
+├── main.rs                 Application entry point
+├── lib.rs                  Public module exports
+├── constant.rs             Version strings, default paths, packet size guards
+├── error.rs                Top-level error types
 │
-├── core/                  # Application layer
-│   ├── mod.rs
-│   ├── init.rs            # Initialization logic
-│   ├── state.rs           # App/config/UI state structures
-│   ├── profile_manager.rs # Mapping profile management
-│   ├── connection.rs      # Connection management service
-│   ├── device_monitor.rs  # Device monitoring service
-│   ├── utils.rs           # Utility functions
-│   ├── coords/            # Coordinate system management
-│   └── ui/                # UI components
-│       ├── mod.rs
-│       ├── app.rs         # Main application state and event loop
-│       ├── editor.rs      # Mapping editor
-│       ├── dialog.rs      # Dialog components
-│       ├── function.rs    # Profile/mapping actions
-│       ├── player.rs      # Video/audio rendering
-│       ├── toolbar.rs     # Toolbar controls
-│       └── indicator.rs   # Status indicators
+├── core/                   App lifecycle and UI orchestration
+│   ├── mod.rs              Re-exports `ui::SAideApp`
+│   ├── connection.rs       Connection service integration for the UI layer
+│   ├── coords/             Mapping/view/scrcpy coordinate systems
+│   ├── device_monitor.rs   ADB device discovery and refresh
+│   ├── init.rs             Startup orchestration
+│   ├── state.rs            Shared app/config/runtime state
+│   └── ui/                 Main UI, player, dialogs, toolbar, editor
 │
-├── config/                # Configuration management
-│   ├── mod.rs
-│   ├── log.rs             # Logging configuration
-│   ├── scrcpy.rs          # Scrcpy-specific config
-│   └── mapping.rs         # Key mapping configuration
+├── config/                 TOML-backed configuration structures and validation
+│   ├── mod.rs              `SAideConfig`, `ConfigManager`, ranges, persistence
+│   ├── log.rs              Logging level config
+│   ├── mapping/            Mapping profiles and action definitions
+│   └── scrcpy.rs           scrcpy video/audio/options config
 │
-├── controller/            # Input control layer
-│   ├── mod.rs
-│   ├── adb.rs             # ADB shell interface
-│   ├── control_sender.rs  # Control message sending
-│   ├── keyboard.rs        # Keyboard mapping
-│   └── mouse.rs           # Mouse input handling
+├── controller/             Input translation and control sending
+│   ├── adb.rs              `adb` shell helpers and device queries
+│   ├── control_sender.rs   Typed control message dispatch
+│   ├── keyboard.rs         Key mapping execution
+│   └── mouse.rs            Mouse/touch gesture logic
 │
-├── scrcpy/                # Scrcpy protocol implementation
-│   ├── mod.rs
-│   ├── connection.rs      # Connection management
-│   ├── server.rs          # Server startup
-│   ├── codec_probe.rs     # Codec detection
-│   ├── hwcodec.rs         # Hardware codec support
-│   └── protocol/          # Protocol message handling
-│       ├── mod.rs
-│       ├── control.rs     # Control messages (PC→Device)
-│       ├── video.rs       # Video packet parsing
-│       └── audio.rs       # Audio packet parsing
+├── scrcpy/                 scrcpy server startup and protocol handling
+│   ├── connection.rs       Reverse tunnel, socket handshake, metadata parsing
+│   ├── server.rs           Server launch parameters and process management
+│   ├── codec_probe.rs      Device encoder/profile probing
+│   ├── hwcodec.rs          Host/device codec capability helpers
+│   └── protocol/           Control, video, and audio packet formats
 │
-├── decoder/               # Media decoding
-│   ├── mod.rs
-│   ├── auto.rs            # Cascade fallback decoder selection
-│   ├── error.rs           # Decoder error types
-│   ├── h264.rs            # Software H.264 decoder
-│   ├── h264_parser.rs     # H.264 NAL parser
-│   ├── nvdec.rs           # NVIDIA NVDEC decoder (cross-platform)
-│   ├── vaapi.rs           # Linux VAAPI decoder (Intel/AMD)
-│   ├── d3d11va.rs         # Windows D3D11VA decoder (Intel/AMD/NVIDIA)
-│   ├── nv12_render.rs     # NV12 rendering pipeline
-│   ├── rgba_render.rs     # RGBA rendering pipeline
-│   └── audio/             # Audio decoders
-│       ├── mod.rs
-│       ├── error.rs       # Audio error types
-│       ├── opus.rs        # Opus decoder
-│       └── player.rs      # Audio playback (cpal)
+├── decoder/                Video and audio decode implementations
+│   ├── auto.rs             Decoder selection and fallback
+│   ├── h264.rs             Software H.264 path
+│   ├── nvdec.rs            NVIDIA NVDEC path
+│   ├── vaapi.rs            Linux VAAPI path
+│   ├── d3d11va.rs          Windows D3D11VA path
+│   ├── nv12_render.rs      NV12 rendering helpers
+│   ├── rgba_render.rs      RGBA rendering helpers
+│   └── audio/              Opus decode and audio playback
 │
-├── avsync/                # Audio-video synchronization
-│   ├── mod.rs
-│   └── clock.rs           # AV sync clock (lock-free)
-│
-├── profiler/              # Performance profiling
-│   ├── mod.rs
-│   └── latency.rs         # Latency profiler
-│
-├── i18n/                  # Internationalization
-│   ├── mod.rs
-│   ├── manager.rs         # i18n manager
-│   ├── source.rs          # i18n source trait
-│   ├── embedded.rs        # Embedded resources
-│   └── fs_source.rs       # Filesystem source
-│
-└── gpu/                   # GPU detection (legacy - used for optimization hints only)
-    └── mod.rs             # GPU type detection
+├── avsync/                 Audio/video timing coordination
+├── profiler/               Latency breakdown and rolling stats
+├── i18n/                   Locale loading and source management
+├── shortcut/               Shortcut-related helpers
+├── modal/                  UI modal primitives
+└── gpu/                    GPU-type hints used by some optimizations
 ```
 
----
+## Startup and configuration flow
 
-## Key Components
+The application startup path is anchored in `src/main.rs` and `src/config/mod.rs`.
 
-### 1. StreamPlayer
+### Configuration loading
 
-The central component for video and audio rendering.
+`ConfigManager::new()` uses this order:
 
-**Responsibilities:**
+1. Standard platform config path returned by `constant::config_dir()`.
+2. `./config.toml` in the current working directory if the standard file does not exist.
+3. If neither exists, create a default config at the standard path.
+4. If platform directories cannot be resolved, fall back to `/tmp/saide/config.toml` (or the platform temp directory equivalent).
 
-- Manage video/audio decode threads
-- Coordinate frame rendering with egui
-- Handle device rotation and resolution changes
-- Implement lock-free AV synchronization
+### scrcpy server path resolution
 
-**Key Features:**
+`constant::resolve_scrcpy_server_path()` looks for `scrcpy-server-v3.3.3` in this order:
 
-- Hardware acceleration (VAAPI, NVDEC, Software)
-- NV12 and RGBA rendering pipelines
-- Dynamic resolution switching
-- Frame dropping for AV sync
+1. The application data directory.
+2. The current working directory.
+3. The legacy repository path `3rd-party/`.
+4. If none exists, it still returns the current-directory candidate path string.
 
-**Source**: `src/core/ui/player.rs`
+### Window and renderer setup
 
-### 2. ScrcpyConnection
+`src/main.rs` launches eframe with `eframe::Renderer::Wgpu`. The selected backend comes from `config.gpu.backend`, which currently supports only:
 
-Manages the three-way TCP connection to the Android device.
+- `VULKAN`
+- `OPENGL`
 
-**Connections:**
+`config.gpu.vsync` controls whether the app requests `AutoVsync` or `AutoNoVsync` present mode.
 
-1. **Video Stream**: H.264/H.265/AV1 encoded video
-2. **Audio Stream**: Opus encoded audio (optional)
-3. **Control Channel**: Bidirectional control messages
+Theme selection is applied by `src/core/ui/theme.rs`, and the optional `SAIDE_THEME` override accepts only `dark`, `light`, or `auto`.
 
-**Responsibilities:**
+## Core runtime responsibilities
 
-- ADB reverse tunnel setup
-- Server process management
-- Socket lifecycle (connect, shutdown)
-- Codec metadata extraction
+### `src/core/`
 
-**Source**: `src/scrcpy/connection.rs`
+This layer turns low-level protocol and decoding code into an interactive desktop app.
 
-### 3. ControlSender
+- `ui/` owns the visible application state, player, dialogs, and mapping editor.
+- `device_monitor.rs` refreshes available ADB devices.
+- `connection.rs` bridges the UI and the scrcpy connection lifecycle.
+- `coords/` keeps mapping coordinates stable across resolution and rotation changes.
 
-Type-safe control message sender via scrcpy control channel.
+The root export is `SAideApp`, re-exported from both `src/core/mod.rs` and `src/lib.rs`.
 
-**Supported Messages:**
+### Coordinate systems
 
-- Inject keycode (keyboard input)
-- Inject text (clipboard paste)
-- Inject touch event (mouse/touch)
-- Inject scroll event (mouse wheel)
-- Set clipboard
-- Screen power control
+The coordinate modules separate three concerns:
 
-**Source**: `src/controller/control_sender.rs`
+- mapping-space coordinates stored in profiles (`0.0..=1.0` style positions)
+- scrcpy/device-space coordinates used by the protocol
+- visual/UI-space coordinates used by rendering and editor interaction
 
-### 4. Coordinate Systems
+That separation is what allows profile mappings to survive device rotation and different stream resolutions.
 
-Three coordinate systems for input mapping:
+## scrcpy connection architecture
 
-| System              | Purpose                     | Transformations                                |
-| ------------------- | --------------------------- | ---------------------------------------------- |
-| **MappingCoordSys** | User-defined key mappings   | Percentage → Pixel based on device orientation |
-| **ScrcpyCoordSys**  | Scrcpy protocol coordinates | Video resolution, capture orientation          |
-| **VisualCoordSys**  | UI display coordinates      | Video rect, window size, visual rotation       |
+`src/scrcpy/connection.rs` implements the real handshake used by SAide.
 
-**Source**: `src/core/coords/`
+### Connection order
 
-### 5. Lock-Free AV Sync
+When a session starts, SAide:
 
-Atomic snapshot architecture for audio/video synchronization.
+1. Pushes the server jar to the device.
+2. Sets up an ADB reverse tunnel.
+3. Starts the scrcpy server process.
+4. Accepts sockets in this order:
+   - video
+   - audio (if enabled)
+   - control
 
-**Architecture:**
+If `send_device_meta` is enabled, the device name is read from the video stream. If `send_codec_meta` is enabled, SAide reads video codec metadata from the video stream and audio codec metadata from the audio stream.
 
-- **Audio Thread**: Only writer (`&mut AVSync`) → updates PTS
-- **Video Thread**: Only reader (`Arc<AVSyncSnapshot>`) → reads PTS snapshot
+### Audio availability
 
-**Performance:**
+Before enabling audio, SAide checks the Android API level through ADB. If the device is older than Android 11 / API 30, audio is disabled automatically and the reason is stored as `AudioDisabledReason::UnsupportedAndroidVersion`.
 
-- Audio write: ~10ns (vs ~100ns with Mutex)
-- Video read: ~10ns (vs ~100ns + contention with Mutex)
-- Zero contention between threads
+### Socket tuning
 
-**Source**: `src/avsync/clock.rs`
+The connection layer enables `TCP_NODELAY` on the scrcpy sockets. On Linux it also attempts `TCP_QUICKACK`. Read timeouts differ by channel:
 
----
+- control channel: 2 seconds
+- video/audio channels: 5 seconds
 
-### 6. Command & Shortcut System
+These settings exist to reduce latency while still surfacing disconnects promptly.
 
-SAide uses a two-crate command system to decouple keyboard shortcuts from application logic.
+## Protocol coverage in this repository
 
-**Crates**:
+The protocol code lives under `src/scrcpy/protocol/`.
 
-| Crate | Responsibility |
-|---|---|
-| `egui-command` | Pure command identity (`CommandId`, `CommandSpec`, `CommandState`) — no egui dependency |
-| `egui-command-binding` | egui-aware dispatch: `ShortcutManager<C>`, `ShortcutMap<C>`, `ShortcutScope<C>` |
+- `control.rs` serializes the control messages that SAide actually sends.
+- `video.rs` parses the frame metadata and payload wrapper used by the video stream.
+- `audio.rs` parses the audio packet wrapper used by the current audio path.
 
-**`AppCommand` Enum** (`src/core/ui/mod.rs`):
-
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AppCommand {
-    ShowHelp,              // F1
-    ShowProfileSelection,  // F6
-    PrevProfile,           // F7
-    NextProfile,           // F8
-    ShowRenameDialog,      // F2 (editor scope)
-    ShowCreateDialog,      // F3 (editor scope)
-    ShowDeleteDialog,      // F4 (editor scope)
-    ShowSaveAsDialog,      // F5 (editor scope)
-    CloseEditor,           // Esc (editor scope)
-}
-```
-
-`AppCommand` must be `Copy + Hash` to be used as a `ShortcutMap` key. Commands that need to carry data (e.g., a file path or mapping position) use `PendingCommand` instead, which is stored separately in application state.
-
-**`PendingCommand` Enum** — dialog-result carriers:
-
-```rust
-pub enum PendingCommand {
-    RenameProfile, CreateProfile, SaveProfileAs, DeleteProfile, SwitchProfile,
-    AddMapping(MappingPos), DeleteMapping(Key), ProbeCodec,
-}
-```
-
-**Shortcut Registration** (`src/core/ui/mod.rs`):
-
-```rust
-// Global shortcuts (always active)
-lazy_static! {
-    pub static ref GLOBAL_SHORTCUTS: Arc<RwLock<ShortcutMap<AppCommand>>> =
-        Arc::new(RwLock::new(shortcut_map! {
-            "F1" => AppCommand::ShowHelp,
-            "F6" => AppCommand::ShowProfileSelection,
-            "F7" => AppCommand::PrevProfile,
-            "F8" => AppCommand::NextProfile,
-        }));
-    pub static ref SHORTCUT_MANAGER: ShortcutManager<AppCommand> =
-        ShortcutManager::new(GLOBAL_SHORTCUTS.clone());
-}
-```
-
-Editor-specific shortcuts (F2–F5, Esc) are registered as a `ShortcutScope` pushed onto the `SHORTCUT_MANAGER` stack when the editor panel is active, and popped on close.
-
-**Dispatch Flow**:
-
-```text
-egui frame input
-       │
-       ▼
-ShortcutManager::dispatch(ctx)
-       │  lookup order:
-       │  1. Extra scope (if provided, always consuming)
-       │  2. Scope stack top-down (stop at consuming scope)
-       │  3. Global ShortcutMap
-       │
-       ▼
-Vec<AppCommand>   ───►   app.rs process_commands()
-                               │
-                   ┌───────────┴───────────┐
-                   ▼                       ▼
-           Direct action           Set PendingCommand
-           (e.g., prev profile)    (opens dialog; result
-                                    processed next frame)
-```
-
-**Key Design Properties**:
-
-- `ShortcutManager` does not block; consumed keys are removed from egui's input queue in the same frame
-- `SHORTCUT_MANAGER` is a `lazy_static` singleton — no per-frame allocation
-- Scopes enable context-sensitive shortcuts without global state mutation
-
-**Source**: `crates/egui-command/`, `crates/egui-command-binding/`, `src/shortcut/`, `src/core/ui/mod.rs`
-
----
-
-## Data Flow
-
-### Video Streaming Path
-
-```text
-Android Device                    PC (SAide)
-     │                                │
-     │  H.264 NAL Units               │
-     ├────────────────────────────────►│
-     │                                │
-     │                          ┌─────┴─────┐
-     │                          │ Scrcpy    │
-     │                          │ Connection│
-     │                          └─────┬─────┘
-     │                                │
-     │                          ┌─────┴─────┐
-     │                          │ Video     │
-     │                          │ Decoder   │
-     │                          │(NVDEC/    │
-     │                          │ VAAPI)    │
-     │                          └─────┬─────┘
-     │                                │
-     │                          ┌─────┴─────┐
-     │                          │  Texture  │
-     │                          │  Upload   │
-     │                          └─────┬─────┘
-     │                                │
-     │                          ┌─────┴─────┐
-     │                          │   egui    │
-     │                          │ Render    │
-     │                          └───────────┘
-```
-
-### Input Control Path
-
-```text
-User Input                    SAide                          Android
-    │                           │                               │
-    │ Mouse/Keyboard Event      │                               │
-    ├───────────────────────────►│                               │
-    │                           │                               │
-    │                     ┌─────┴─────┐                         │
-    │                     │ Coordinate│                         │
-    │                     │ Transform │                         │
-    │                     └─────┬─────┘                         │
-    │                           │                               │
-    │                     ┌─────┴─────┐                         │
-    │                     │  Control  │                         │
-    │                     │  Sender   │                         │
-    │                     └─────┬─────┘                         │
-    │                           │                               │
-    │                           │ Control Message               │
-    │                           ├──────────────────────────────►│
-    │                           │                               │
-    │                           │                         ┌─────┴─────┐
-    │                           │                         │ Input     │
-    │                           │                         │ Injector  │
-    │                           │                         └───────────┘
-```
-
----
-
-## Configuration System
-
-### Configuration File
-
-```toml
-[general]
-keyboard_enabled = true
-mouse_enabled = true
-init_timeout = 15
-window_width = 1280
-window_height = 720
-smart_window_resize = true
-bind_address = "127.0.0.1"
-scrcpy_server = "scrcpy-server-v3.3.3"
-
-[scrcpy.video]
-bit_rate = "8M"
-max_fps = 60
-max_size = 1920
-codec = "h264"
-
-[scrcpy.audio]
-enabled = true
-codec = "opus"
-source = "playback"
-buffer_frames = 64
-ring_capacity = 5760
-
-[scrcpy.options]
-stay_awake = true
-turn_screen_off = false
-
-[gpu]
-backend = "VULKAN"
-vsync = false
-hwdecode = true
-
-[input]
-long_press_ms = 300
-drag_threshold_px = 5.0
-drag_interval_ms = 8
-```
-
-### Profile System
-
-Keyboard mappings organized by device orientation:
-
-```toml
-[profiles.0]  # Portrait (0°)
-[profiles.0.mappings]
-"F1" = { action = "tap", x = 0.5, y = 0.5 }
-
-[profiles.1]  # Landscape (90° CCW)
-[profiles.1.mappings]
-"F1" = { action = "tap", x = 0.3, y = 0.7 }
-```
-
----
-
-## Dependencies
-
-### Core Dependencies
-
-| Dependency      | Version | Purpose                           |
-| --------------- | ------- | --------------------------------- |
-| eframe          | 0.33    | UI framework (egui + wgpu)        |
-| egui            | 0.33    | Immediate mode GUI                |
-| wgpu            | 27      | GPU abstraction                   |
-| tokio           | 1.x     | Async runtime for network I/O     |
-| ffmpeg-next     | 8       | Media decoding (FFmpeg bindings)  |
-| cpal            | 0.17    | Audio playback                    |
-| opus            | 0.3     | Opus codec (direct libopus)       |
-| fluent-bundle   | 0.16    | i18n localization (Fluent)        |
-| tracing         | 0.1     | Structured logging                |
-| serde           | 1.0     | Serialization/deserialization     |
-| toml            | 1       | Configuration file format         |
-
-### Build Dependencies
-
-| Dependency                      | Purpose                 |
-| ------------------------------- | ----------------------- |
-| cargo                           | Build system            |
-| clang                           | C library binding       |
-| pkg-config                      | Library detection       |
-| FFmpeg development headers      | Media codec support     |
-| VAAPI/NVDEC development headers | Hardware decode support |
-
----
-
-## Decoder Selection Strategy
-
-SAide uses a **cascade fallback** approach for video decoder selection, eliminating dependency on GPU detection.
-
-### Cascade Fallback Algorithm
-
-**Linux**:
-1. Try NVDEC (NVIDIA hardware decoder)
-2. Fallback to VAAPI (Intel/AMD hardware decoder)
-3. Fallback to Software H.264 decoder
-
-**Windows**:
-1. Try NVDEC (NVIDIA hardware decoder)
-2. Fallback to D3D11VA (DirectX 11 hardware decoder - Intel/AMD/NVIDIA)
-3. Fallback to Software H.264 decoder
-
-**Key Benefits**:
-- **Multi-GPU Support**: Works with integrated + discrete GPU setups (e.g., Intel iGPU + NVIDIA dGPU)
-- **Self-Detection**: FFmpeg decoders internally validate hardware availability
-- **Robust**: Works on unknown/misconfigured GPU systems
-- **Platform Agnostic**: Same strategy across Linux/Windows (only decoder order differs)
-
-### Codec Profile Testing
-
-Device codec compatibility is tested using cascade approach:
-
-1. Test Constrained Baseline profile (`profile=65536`)
-2. Fallback to Android Baseline constant (`profile=1`)
-3. Fallback to raw H.264 Baseline profile idc (`profile=66`)
-3. Use first profile that succeeds
-
-Results are cached in two files to avoid repeated testing:
-
-- `encoder_profile.toml`: device-side encoder selection and codec options
-- `decoder_profile.toml`: host-side validated decoder preference (used only when it matches the current encoder profile fingerprint)
-
-**Source**: `src/decoder/auto.rs`, `src/scrcpy/codec_probe.rs`
-
----
-
-## Platform Considerations
-
-### Linux (Primary)
-
-- **Video**: NVDEC (NVIDIA), VAAPI (Intel/AMD), Software fallback
-- **Audio**: PulseAudio, ALSA via cpal
-- **Display**: X11 and Wayland support via winit
-- **ADB**: Standard Android SDK tools
-
-### Windows (Experimental - v0.3)
-
-- **Video**: NVDEC (NVIDIA), D3D11VA (Intel/AMD/NVIDIA), Software fallback
-- **Audio**: WASAPI via cpal
-- **Display**: DirectComposition
-- **ADB**: Windows SDK
-
-### macOS (Planned)
-
-- **Video**: VideoToolbox, Metal
-- **Audio**: CoreAudio via cpal
-- **Display**: CAMetalLayer
-- **ADB**: iOS not supported (Android only)
-
----
-
-## Performance Characteristics
-
-### Latency Breakdown
-
-| Component      | Typical Latency | Optimization                       |
-| -------------- | --------------- | ---------------------------------- |
-| Android Encode | 15-35ms         | Hardware encoder, Baseline profile |
-| Network (USB)  | 1-3ms           | TCP_NODELAY                        |
-| PC Decode      | 5-15ms          | Hardware decode (VAAPI/NVDEC)      |
-| Render         | 5-10ms          | NV12 zero-copy                     |
-| **Total**      | **30-60ms**     | Near scrcpy performance            |
-
-### Resource Usage
-
-| Resource | Typical Usage           | Notes                         |
-| -------- | ----------------------- | ----------------------------- |
-| CPU      | 5-15% (hardware decode) | Higher with software decode   |
-| GPU      | 5-10% (VAAPI/NVDEC)     | Video decode and rendering    |
-| Memory   | 50-100MB                | Frame buffers, codec contexts |
-| Network  | 2-10 Mbps               | Depends on bit_rate setting   |
-
----
-
-## Error Handling
-
-### Error Categories
-
-```rust
-pub enum SaideError {
-    Connection(ConnectionError),
-    Protocol(ProtocolError),
-    Decode(DecodeError),
-    IO(IOError),
-    Audio(AudioError),
-    Config(ConfigError),
-    Cancelled,      // User cancelled, no error logging
-    ConnectionLost, // Connection dropped, expected during shutdown
-    Unknown,
-}
-```
-
-### Error Handling Strategy
-
-- **Cancelled**: Silent handling, no logging
-- **ConnectionLost**: Info level, expected during normal shutdown
-- **Decode/Protocol**: Warning level, may be recoverable
-- **IO/Config**: Error level, requires attention
-
-**Source**: `src/error.rs`
-
----
-
-## Threading Model
-
-### Thread Layout
-
-```text
-Main Thread (egui)
-    │
-    ├── Stream Worker Thread
-    │   ├── Video Decode Thread
-    │   ├── Audio Decode Thread
-    │   └── Render Thread (called from egui)
-    │
-    ├── Control Thread (tokio runtime)
-    │   ├── Control Message Send
-    │   └── Device Message Receive
-    │
-    └── Audio Playback Thread (cpal)
-```
-
-### Synchronization
-
-- **AV Sync**: Lock-free atomic snapshots (no Mutex)
-- **Frame Delivery**: Bounded channel (capacity: 1)
-- **State Access**: Thread-safe interior mutability (Arc, AtomicBool)
-
----
-
-## Build Variants
-
-### Development
-
-```bash
-cargo build
-```
-
-### Release (Hardware Acceleration)
-
-```bash
-cargo build --release
-```
-
-### Software Decode Only
-
-```bash
-cargo build --no-default-features --features software_decode
-```
-
----
-
-## Related Documentation
-
-- [Protocol Specification](SCRCPY_PROTOCOL.md) - Scrcpy protocol details
+The repository does **not** implement the full scrcpy feature surface. For the exact coverage and wire-format notes, see [SCRCPY_PROTOCOL.md](SCRCPY_PROTOCOL.md).
+
+## Decoder pipeline
+
+The decoder layer is split by backend.
+
+### Video
+
+- `decoder/auto.rs` chooses and falls back between decoder implementations.
+- Linux paths include NVDEC and VAAPI, then software H.264 fallback.
+- Windows includes D3D11VA and NVDEC support in the codebase, with software fallback when hardware decoding is unavailable.
+
+### Audio
+
+- `decoder/audio/opus.rs` handles the current Opus decode path.
+- `decoder/audio/player.rs` feeds decoded audio into CPAL.
+
+### Rendering
+
+SAide uses egui + WGPU for presentation. The player code renders decoded frames into the UI rather than running a separate native video window.
+
+## Mapping system
+
+The mapping configuration lives in `src/config/mapping/`.
+
+### Data model
+
+- `MappingsConfig` stores the global toggle key, initial enabled state, notification preference, and all profiles.
+- Each `Profile` is bound to a `device_serial` and a `rotation`.
+- `KeyMapping` serializes as a list of mapping items in TOML.
+- `MappingAction` is tagged by `action` and supports tap, swipe, drag-related touch events, scroll, Android key events, text, and a few special actions such as back/home/menu/power.
+
+### Why profiles are rotation-aware
+
+Profiles match on both device serial and rotation. That lets SAide keep separate mappings for portrait and landscape layouts without guessing how to transform every game HUD.
+
+## Latency and synchronization
+
+Two modules matter here:
+
+- `src/avsync/clock.rs` handles A/V timing coordination.
+- `src/profiler/latency.rs` tracks capture, receive, decode, upload, and display timestamps so the UI can report latency breakdowns.
+
+The profiler is code-backed and self-contained; no extra design document is required to understand its stages.
+
+## Examples and release automation
+
+### Examples
+
+The repository includes runnable examples under `examples/`, including:
+
+- `test_connection.rs`
+- `test_audio.rs`
+- `audio_diagnostic.rs`
+- `render_avsync.rs`
+- `probe_codec.rs`
+
+### Release
+
+The CI workflow (`.github/workflows/release.yml`) triggers on `v*` tags and `workflow_dispatch`, and publishes `windows-x64` and `linux-glibc-x64` artifacts to GitHub Releases.
+
+## Related documents
+
+- [configuration.md](configuration.md): config file structure, defaults, and validation ranges
+- [SCRCPY_PROTOCOL.md](SCRCPY_PROTOCOL.md): wire-format details and current protocol coverage
