@@ -152,7 +152,7 @@ cargo clippy -- -D warnings
 cargo test --quiet
 ```
 
-示例：`test_connection`、`test_audio`、`audio_diagnostic`、`render_avsync`、`probe_codec`、`test_protocol`、`test_auto_decoder`、`test_audio_native`、`test_i18n`、`test_vulkan_import`。
+示例：`test_connection`、`test_audio`、`audio_diagnostic`、`render_avsync`、`probe_codec`、`test_protocol`、`test_auto_decoder`、`test_audio_native`、`test_i18n`、`test_planar_interleave`、`test_vulkan_import`。
 
 请使用约定式提交前缀（`feat:`、`fix:`、`docs:`、`refactor:`），修改代码时同步更新相关文档与示例。
 

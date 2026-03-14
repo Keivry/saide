@@ -152,7 +152,7 @@ cargo clippy -- -D warnings
 cargo test --quiet
 ```
 
-Examples: `test_connection`, `test_audio`, `audio_diagnostic`, `render_avsync`, `probe_codec`, `test_protocol`, `test_auto_decoder`, `test_audio_native`, `test_i18n`, `test_vulkan_import`.
+Examples: `test_connection`, `test_audio`, `audio_diagnostic`, `render_avsync`, `probe_codec`, `test_protocol`, `test_auto_decoder`, `test_audio_native`, `test_i18n`, `test_planar_interleave`, `test_vulkan_import`.
 
 Conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`). Keep docs and examples in sync with code changes.
 

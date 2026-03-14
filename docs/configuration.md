@@ -6,10 +6,9 @@ SAide stores its runtime settings in a TOML file.
 
 Configuration is loaded in this order:
 
-1. the standard platform config path (e.g. `~/.config/saide/config.toml` on Linux)
-2. `./config.toml` in the current working directory if the standard file does not exist
-3. if neither exists, write a default config to the standard path
-4. if the platform config directory cannot be determined, fall back to the system temp directory
+1. the standard platform config path (e.g. `~/.config/saide/config.toml` on Linux); if the platform config directory cannot be determined, `<temp_dir>/saide/config.toml` is used instead
+2. `./config.toml` in the current working directory if the path from step 1 does not exist
+3. if neither exists, write a default config to the path from step 1
 
 If you want to inspect the repository's sample file, see [`config.toml`](../config.toml).
 

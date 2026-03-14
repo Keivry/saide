@@ -13,12 +13,11 @@ SAide is a desktop scrcpy companion built around three pieces:
 At runtime the app:
 
 1. Loads config through `ConfigManager::new()`.
-2. Applies config defaults, which may include the path returned by `constant::resolve_scrcpy_server_path()`.
-3. Verifies `adb` is available.
-4. Launches the desktop UI.
-5. Connects to the selected Android device.
-6. Establishes scrcpy video / audio / control sockets.
-7. Decodes media, renders video in egui, and forwards keyboard or mouse actions over the control channel.
+2. Verifies `adb` is available.
+3. Launches the desktop UI.
+4. Connects to the selected Android device.
+5. Establishes scrcpy video / audio / control sockets.
+6. Decodes media, renders video in egui, and forwards keyboard or mouse actions over the control channel.
 
 ## Module layout
 
@@ -35,7 +34,9 @@ src/
 │   ├── coords/             Mapping/view/scrcpy coordinate systems
 │   ├── device_monitor.rs   ADB device discovery and refresh
 │   ├── init.rs             Startup orchestration
+│   ├── profile_manager.rs  Profile CRUD and active-profile selection
 │   ├── state.rs            Shared app/config/runtime state
+│   ├── utils.rs            Nearest-mapping lookup and position extraction helpers
 │   └── ui/                 Main UI, player, dialogs, toolbar, editor
 │
 ├── config/                 TOML-backed configuration structures and validation
@@ -60,9 +61,12 @@ src/
 ├── decoder/                Video and audio decode implementations
 │   ├── auto.rs             Decoder selection and fallback
 │   ├── h264.rs             Software H.264 path
+│   ├── h264_parser.rs      Annex-B NAL parser; extracts resolution from SPS without full decode
 │   ├── nvdec.rs            NVIDIA NVDEC path
 │   ├── vaapi.rs            Linux VAAPI path
 │   ├── d3d11va.rs          Windows D3D11VA path
+│   ├── error.rs            `VideoError` type and `Result` alias for the decoder layer
+│   ├── packet.rs           Helper to wrap raw frame bytes into an `ffmpeg::Packet`
 │   ├── nv12_render.rs      NV12 rendering helpers
 │   ├── rgba_render.rs      RGBA rendering helpers
 │   └── audio/              Opus decode and audio playback
@@ -83,10 +87,9 @@ The application startup path is anchored in `src/main.rs` and `src/config/mod.rs
 
 `ConfigManager::new()` uses this order:
 
-1. Standard platform config path returned by `constant::config_dir()`.
+1. Standard platform config path returned by `constant::config_dir()` (falls back to the system temp directory if the platform config directory cannot be resolved).
 2. `./config.toml` in the current working directory if the standard file does not exist.
 3. If neither exists, create a default config at the standard path.
-4. If platform directories cannot be resolved, fall back to `/tmp/saide/config.toml` (or the platform temp directory equivalent).
 
 ### scrcpy server path resolution
 
@@ -219,13 +222,19 @@ The profiler is code-backed and self-contained; no extra design document is requ
 
 ### Examples
 
-The repository includes runnable examples under `examples/`, including:
+The repository includes runnable examples under `examples/`:
 
 - `test_connection.rs`
 - `test_audio.rs`
 - `audio_diagnostic.rs`
 - `render_avsync.rs`
 - `probe_codec.rs`
+- `test_protocol.rs`
+- `test_auto_decoder.rs`
+- `test_audio_native.rs`
+- `test_i18n.rs`
+- `test_planar_interleave.rs`
+- `test_vulkan_import.rs`
 
 ### Release
 
