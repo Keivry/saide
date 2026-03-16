@@ -136,7 +136,12 @@ impl Toolbar {
         }
 
         let mut result = ToolbarEvent::None;
-        let full_rect = ui.available_rect_before_wrap();
+        let available = ui.available_rect_before_wrap();
+        let screen_bottom = ui.ctx().content_rect().max.y;
+        let full_rect = egui::Rect::from_min_max(
+            available.min,
+            egui::pos2(available.max.x, available.max.y.min(screen_bottom)),
+        );
 
         let toggle_btn_height = TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING * 2.0;
         let main_rect = egui::Rect::from_min_max(
