@@ -329,6 +329,10 @@ impl SAideApp {
     fn resize(&mut self, ctx: &egui::Context) {
         let (video_w, video_h) = self.player.video_dimensions();
 
+        if video_w == 0 || video_h == 0 {
+            return;
+        }
+
         let config = self.config_state.config();
         let smart_resize = config.general.smart_window_resize;
 
@@ -843,6 +847,17 @@ impl SAideApp {
                     continue;
                 }
 
+                // Skip pointer/wheel events on the frame when toolbar mode was toggled
+                // to prevent click-through to the video layer after layout changes.
+                if self.ui_state.pending_toggle_float {
+                    match event {
+                        egui::Event::PointerButton { .. }
+                        | egui::Event::PointerMoved(_)
+                        | egui::Event::MouseWheel { .. } => continue,
+                        _ => {}
+                    }
+                }
+
                 match event {
                     egui::Event::PointerButton {
                         button,
@@ -880,6 +895,7 @@ impl SAideApp {
                 }
             }
         });
+        self.ui_state.pending_toggle_float = false;
     }
 
     fn has_active_pointer_interaction(&self) -> bool {
@@ -979,6 +995,10 @@ impl SAideApp {
             }
             ToolbarEvent::ToggleFloat => {
                 self.config_state.toggle_auto_hide_toolbar();
+                self.ui_state.pending_toggle_float = true;
+                if self.config_state.auto_hide_toolbar() {
+                    self.ui_state.set_floating_toolbar_visible(true);
+                }
                 self.resize(ctx);
                 ctx.request_repaint();
                 info!(

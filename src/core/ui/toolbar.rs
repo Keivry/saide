@@ -129,7 +129,6 @@ impl Toolbar {
 
     pub fn set_floating_mode(&mut self, floating: bool) { self.is_floating_mode = floating; }
 
-    /// Draw the toolbar, return the event if any button is clicked
     pub fn draw(&mut self, ui: &mut egui::Ui) -> ToolbarEvent {
         let count = TOOLBAR_BUTTONS_BASE.len();
         if count == 0 {
@@ -137,35 +136,40 @@ impl Toolbar {
         }
 
         let mut result = ToolbarEvent::None;
+        let full_rect = ui.available_rect_before_wrap();
 
         let toggle_btn_height = TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING * 2.0;
-        let available_for_main = ui.available_height() - toggle_btn_height;
+        let main_rect = egui::Rect::from_min_max(
+            full_rect.min,
+            egui::pos2(full_rect.max.x, full_rect.max.y - toggle_btn_height),
+        );
+        let toggle_rect = egui::Rect::from_min_max(
+            egui::pos2(full_rect.min.x, full_rect.max.y - toggle_btn_height),
+            full_rect.max,
+        );
 
-        ui.vertical_centered(|ui| {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(main_rect), |ui| {
             ui.spacing_mut().item_spacing.y = TOOLBAR_BTN_SPACING;
-
-            let rect = ui.available_rect_before_wrap();
-            let desired_height =
-                (TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING) * count as f32 + TOOLBAR_BTN_SPACING;
-            let top_padding = ((available_for_main - desired_height) / 2.0).max(0.0);
-            ui.add_space(top_padding);
-
-            ui.add_space(TOOLBAR_BTN_SPACING);
-
-            for btn in TOOLBAR_BUTTONS_BASE.iter() {
-                if self.draw_button(btn, ui) {
-                    result = btn.event;
+            ui.vertical_centered(|ui| {
+                let desired_height = (TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING) * count as f32;
+                let top_padding = ((main_rect.height() - desired_height) / 2.0).max(0.0);
+                ui.add_space(top_padding);
+                for btn in TOOLBAR_BUTTONS_BASE.iter() {
+                    if self.draw_button(btn, ui) {
+                        result = btn.event;
+                    }
                 }
-            }
+            });
+        });
 
-            let remaining = (rect.height() - top_padding - desired_height - toggle_btn_height)
-                .max(TOOLBAR_BTN_SPACING);
-            ui.add_space(remaining);
-
-            ui.add_space(TOOLBAR_BTN_SPACING);
-            if self.draw_toggle_float_button(ui) {
-                result = ToolbarEvent::ToggleFloat;
-            }
+        ui.scope_builder(egui::UiBuilder::new().max_rect(toggle_rect), |ui| {
+            ui.spacing_mut().item_spacing.y = TOOLBAR_BTN_SPACING;
+            ui.vertical_centered(|ui| {
+                ui.add_space(TOOLBAR_BTN_SPACING);
+                if self.draw_toggle_float_button(ui) {
+                    result = ToolbarEvent::ToggleFloat;
+                }
+            });
         });
 
         result

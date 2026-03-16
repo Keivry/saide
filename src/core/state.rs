@@ -167,6 +167,11 @@ pub struct UIState {
     pub mapping_visualization_enabled: bool,
 
     pub floating_toolbar_visible: bool,
+
+    /// Set to true when toolbar mode is toggled this frame.
+    /// Causes process_input_events to skip pointer/button/wheel events for that frame
+    /// to prevent click-through to the video layer after layout changes.
+    pub pending_toggle_float: bool,
 }
 
 impl UIState {
@@ -179,6 +184,7 @@ impl UIState {
             ui_initialized: false,
             mapping_visualization_enabled: false,
             floating_toolbar_visible: false,
+            pending_toggle_float: false,
         }
     }
 
