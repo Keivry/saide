@@ -110,7 +110,7 @@ jobs:
             binary_name: saide.exe
             extra_runtime_lib_dirs: ''
           - label: linux-glibc-x64
-            runner: ubuntu-latest
+            runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             archive_format: tar.gz
             binary_name: saide
