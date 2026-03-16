@@ -7,6 +7,7 @@
 use {
     crate::{
         config::mapping::{Modifiers, ProfileRef, ScrcpyAction},
+        constant::CUSTOM_KEYMAPPING_POS_JITTER,
         controller::{
             android_keycode::{keycode as kc, metastate},
             control_sender::ControlSender,
@@ -16,6 +17,7 @@ use {
     },
     egui::Key,
     parking_lot::RwLock,
+    rand::RngExt,
     std::collections::HashMap,
     tracing::trace,
 };
@@ -231,6 +233,27 @@ impl KeyboardMapper {
         Ok(false)
     }
 
+    /// Apply ±0.5% random jitter to touch coordinates before sending via custom key mapping
+    fn jitter_pos(&self, x: u32, y: u32) -> (u32, u32) {
+        let (width, height) = self.sender.get_screen_size();
+        if width == 0 || height == 0 {
+            return (x, y);
+        }
+
+        let max_dx = width as f32 * CUSTOM_KEYMAPPING_POS_JITTER;
+        let max_dy = height as f32 * CUSTOM_KEYMAPPING_POS_JITTER;
+
+        let mut rng = rand::rng();
+        let dx: f32 = rng.random_range(-max_dx..=max_dx);
+        let dy: f32 = rng.random_range(-max_dy..=max_dy);
+
+        let new_x = (x as f32 + dx).clamp(0.0, width as f32 - 1.0) as u32;
+        let new_y = (y as f32 + dy).clamp(0.0, height as f32 - 1.0) as u32;
+
+        trace!("Key mapping jitter: ({x}, {y}) -> ({new_x}, {new_y}) delta=({dx:.1}, {dy:.1})");
+        (new_x, new_y)
+    }
+
     /// Send input action via control sender
     fn send_input_action(&self, action: &ScrcpyAction) -> Result<()> {
         match action {
@@ -266,31 +289,37 @@ impl KeyboardMapper {
                 self.sender.send_key_press(kc::POWER as u32, 0)?;
             }
             ScrcpyAction::Tap { pos } => {
-                self.sender.send_touch_down(pos.x, pos.y)?;
-                self.sender.send_touch_up(pos.x, pos.y)?;
+                let (x, y) = self.jitter_pos(pos.x, pos.y);
+                self.sender.send_touch_down(x, y)?;
+                self.sender.send_touch_up(x, y)?;
             }
             ScrcpyAction::TouchDown { pos } => {
-                self.sender.send_touch_down(pos.x, pos.y)?;
+                let (x, y) = self.jitter_pos(pos.x, pos.y);
+                self.sender.send_touch_down(x, y)?;
             }
             ScrcpyAction::TouchMove { pos } => {
-                self.sender.send_touch_move(pos.x, pos.y)?;
+                let (x, y) = self.jitter_pos(pos.x, pos.y);
+                self.sender.send_touch_move(x, y)?;
             }
             ScrcpyAction::TouchUp { pos } => {
-                self.sender.send_touch_up(pos.x, pos.y)?;
+                let (x, y) = self.jitter_pos(pos.x, pos.y);
+                self.sender.send_touch_up(x, y)?;
             }
             ScrcpyAction::Scroll { pos, direction } => {
                 use crate::config::mapping::WheelDirection;
+                let (x, y) = self.jitter_pos(pos.x, pos.y);
                 let (h, v) = match direction {
                     WheelDirection::Up => (0.0, -5.0),
                     WheelDirection::Down => (0.0, 5.0),
                 };
-                self.sender.send_scroll(pos.x, pos.y, h, v)?;
+                self.sender.send_scroll(x, y, h, v)?;
             }
             ScrcpyAction::Swipe { path, .. } => {
-                // Simulate swipe with touch down + move + up
-                self.sender.send_touch_down(path[0].x, path[0].y)?;
-                self.sender.send_touch_move(path[1].x, path[1].y)?;
-                self.sender.send_touch_up(path[1].x, path[1].y)?;
+                let (x0, y0) = self.jitter_pos(path[0].x, path[0].y);
+                let (x1, y1) = self.jitter_pos(path[1].x, path[1].y);
+                self.sender.send_touch_down(x0, y0)?;
+                self.sender.send_touch_move(x1, y1)?;
+                self.sender.send_touch_up(x1, y1)?;
             }
             ScrcpyAction::Ignore => {}
         }

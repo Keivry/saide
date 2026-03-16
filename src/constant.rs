@@ -103,3 +103,8 @@ pub const VIDEO_RESOLUTION_TIERS: &[u32] = &[
     640,  // VGA
     480,  // HVGA
 ];
+
+/// Jitter factor for custom keymapping position adjustments
+/// This small value is added to the position of each keymapping to prevent
+/// multiple keymappings from having the exact same position.
+pub const CUSTOM_KEYMAPPING_POS_JITTER: f32 = 0.005;
