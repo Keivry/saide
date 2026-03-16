@@ -24,7 +24,7 @@ use {
         notifier::Notifier,
         player::{PlayerState, StreamPlayer},
         theme::AppColors,
-        toolbar::{Toolbar, ToolbarEvent},
+        toolbar::{Toolbar, ToolbarEvent, ToolbarViewState},
     },
     crate::{
         config::{
@@ -34,6 +34,7 @@ use {
         controller::mouse::MouseState,
         core::{
             coords::{MappingCoordSys, ScrcpyCoordSys, VisualCoordSys},
+            state::ToolbarMode,
             ui::editor::EditorParams,
             utils::find_nearest_mapping,
         },
@@ -99,7 +100,6 @@ impl SAideApp {
         shutdown_rx: Receiver<()>,
     ) -> Self {
         let config = config_manager.config();
-        let keyboard_custom_mapping_enabled = config.mappings.initial_state;
         let indicator_position = config.general.indicator_position;
         let max_fps = config.scrcpy.video.max_fps;
         let audio_buffer_frames = config.scrcpy.audio.buffer_frames;
@@ -108,14 +108,11 @@ impl SAideApp {
 
         let cancel_token = CancellationToken::new();
 
-        let mut toolbar = Toolbar::new();
-        toolbar.set_keyboard_mapping_enabled(keyboard_custom_mapping_enabled);
-
         Self {
             shutdown_rx,
             shutdown_requested: false,
 
-            toolbar,
+            toolbar: Toolbar::new(),
             indicator: Indicator::new(indicator_position, max_fps as f32),
             player: StreamPlayer::new(
                 cc,
@@ -147,8 +144,10 @@ impl SAideApp {
 
     pub fn config(&self) -> Arc<SAideConfig> { self.config_state.config() }
 
+    fn toolbar_mode(&self) -> ToolbarMode { self.config_state.toolbar_mode() }
+
     fn toolbar_layout_width(&self) -> f32 {
-        if self.config_state.auto_hide_toolbar() {
+        if self.toolbar_mode().is_floating() {
             0.0
         } else {
             Toolbar::width()
@@ -156,15 +155,15 @@ impl SAideApp {
     }
 
     fn audio_warning_offset_x(&self) -> f32 {
-        if !self.config_state.auto_hide_toolbar() || self.ui_state.floating_toolbar_visible() {
+        if self.toolbar_mode().is_docked() || self.ui_state.floating_toolbar_visible() {
             Toolbar::width() + 10.0
         } else {
             10.0
         }
     }
 
-    fn floating_toolbar_rect(&self, content_rect: egui::Rect) -> Option<egui::Rect> {
-        if self.config_state.auto_hide_toolbar() && self.ui_state.floating_toolbar_visible() {
+    fn visible_floating_toolbar_rect(&self, content_rect: egui::Rect) -> Option<egui::Rect> {
+        if self.toolbar_mode().is_floating() && self.ui_state.floating_toolbar_visible() {
             Some(egui::Rect::from_min_max(
                 content_rect.left_top(),
                 egui::pos2(
@@ -177,12 +176,44 @@ impl SAideApp {
         }
     }
 
-    fn is_in_floating_toolbar_rect(
+    fn is_in_toolbar_input_block_rect(
         &self,
         floating_toolbar_rect: Option<egui::Rect>,
         pos: &VisualPos,
     ) -> bool {
         floating_toolbar_rect.is_some_and(|rect| rect.contains(*pos))
+    }
+
+    fn has_active_mappings(&self) -> bool {
+        self.profile_manager
+            .get_active_profile()
+            .map(|profile| !profile.read().is_empty())
+            .unwrap_or(false)
+    }
+
+    fn toolbar_view_state(&self) -> ToolbarViewState {
+        ToolbarViewState {
+            keyboard_mapping_enabled: self.config_state.keyboard_custom_mapping_enabled(),
+            mapping_visualization_enabled: self.ui_state.mapping_visualization_enabled(),
+            has_active_mappings: self.has_active_mappings(),
+            mode: self.toolbar_mode(),
+        }
+    }
+
+    fn set_toolbar_mode(&mut self, ctx: &egui::Context, mode: ToolbarMode) {
+        let previous_mode = self.toolbar_mode();
+        if previous_mode == mode {
+            return;
+        }
+
+        self.config_state.set_toolbar_mode(mode);
+        self.ui_state.pending_toggle_float = true;
+        self.ui_state
+            .set_floating_toolbar_visible(mode.is_floating());
+        self.resize(ctx);
+        ctx.request_repaint();
+
+        info!("Toolbar mode toggled: {}", mode.as_str());
     }
 
     fn init(&mut self) {
@@ -402,10 +433,6 @@ impl SAideApp {
     fn toggle_custom_keyboard_mapping(&mut self) {
         self.config_state.toggle_keyboard_custom_mapping();
 
-        // Update toolbar button state
-        self.toolbar
-            .set_keyboard_mapping_enabled(self.config_state.keyboard_custom_mapping_enabled());
-
         info!(
             "Keyboard custom mapping toggled: {}",
             self.config_state.keyboard_custom_mapping_enabled()
@@ -415,9 +442,6 @@ impl SAideApp {
     /// Toggle mapping visualization overlay
     fn toggle_mapping_overlay(&mut self) {
         self.ui_state.toggle_mapping_visualization();
-
-        self.toolbar
-            .set_mapping_visualization_enabled(self.ui_state.mapping_visualization_enabled());
 
         info!(
             "Mapping visualization toggled: {}",
@@ -806,7 +830,7 @@ impl SAideApp {
             error!("Failed to update mouse mapper: {}", e);
         }
 
-        let floating_toolbar_rect = self.floating_toolbar_rect(ctx.content_rect());
+        let floating_toolbar_rect = self.visible_floating_toolbar_rect(ctx.content_rect());
         let skip_pointer_events = std::mem::take(&mut self.ui_state.pending_toggle_float);
 
         ctx.input(|input| {
@@ -866,7 +890,7 @@ impl SAideApp {
                         pos,
                         ..
                     } => {
-                        if self.is_in_floating_toolbar_rect(floating_toolbar_rect, pos)
+                        if self.is_in_toolbar_input_block_rect(floating_toolbar_rect, pos)
                             && (*pressed || !self.has_active_pointer_interaction())
                         {
                             continue;
@@ -874,7 +898,7 @@ impl SAideApp {
                         self.process_mouse_button_event(*button, *pressed, pos);
                     }
                     egui::Event::PointerMoved(pos) => {
-                        if self.is_in_floating_toolbar_rect(floating_toolbar_rect, pos)
+                        if self.is_in_toolbar_input_block_rect(floating_toolbar_rect, pos)
                             && !self.has_active_pointer_interaction()
                         {
                             continue;
@@ -887,7 +911,8 @@ impl SAideApp {
                     }
                     egui::Event::MouseWheel { delta, .. } => {
                         let pointer_pos = input.pointer.hover_pos().unwrap_or_default();
-                        if self.is_in_floating_toolbar_rect(floating_toolbar_rect, &pointer_pos) {
+                        if self.is_in_toolbar_input_block_rect(floating_toolbar_rect, &pointer_pos)
+                        {
                             continue;
                         }
                         self.process_mouse_wheel_event(delta, &pointer_pos);
@@ -994,36 +1019,14 @@ impl SAideApp {
                 self.toggle_mapping_overlay();
             }
             ToolbarEvent::ToggleFloat => {
-                self.config_state.toggle_auto_hide_toolbar();
-                self.ui_state.pending_toggle_float = true;
-                if self.config_state.auto_hide_toolbar() {
-                    self.ui_state.set_floating_toolbar_visible(true);
-                }
-                self.resize(ctx);
-                ctx.request_repaint();
-                info!(
-                    "Toolbar mode toggled: {}",
-                    if self.config_state.auto_hide_toolbar() { "floating" } else { "docked" }
-                );
+                self.set_toolbar_mode(ctx, self.toolbar_mode().toggled());
             }
             ToolbarEvent::None => {}
         }
     }
 
-    fn sync_toolbar_state(&mut self) {
-        let has_mappings = self
-            .profile_manager
-            .get_active_profile()
-            .map(|p| !p.read().is_empty())
-            .unwrap_or(false);
-
-        self.toolbar.set_has_active_mappings(has_mappings);
-        self.toolbar
-            .set_floating_mode(self.config_state.auto_hide_toolbar());
-    }
-
     fn update_floating_toolbar_visibility(&mut self, ctx: &egui::Context) {
-        if !self.config_state.auto_hide_toolbar() {
+        if self.toolbar_mode().is_docked() {
             self.ui_state.set_floating_toolbar_visible(false);
             return;
         }
@@ -1049,8 +1052,8 @@ impl SAideApp {
     }
 
     fn draw_docked_toolbar(&mut self, ctx: &egui::Context) {
-        self.sync_toolbar_state();
         let toolbar_enabled = self.init_state == InitState::Ready;
+        let toolbar_state = self.toolbar_view_state();
 
         let colors = AppColors::from_context(ctx);
         let event = egui::SidePanel::left("Toolbar")
@@ -1058,7 +1061,7 @@ impl SAideApp {
             .resizable(false)
             .exact_width(Toolbar::width())
             .show(ctx, |ui| {
-                ui.add_enabled_ui(toolbar_enabled, |ui| self.toolbar.draw(ui))
+                ui.add_enabled_ui(toolbar_enabled, |ui| self.toolbar.draw(ui, toolbar_state))
                     .inner
             })
             .inner;
@@ -1070,18 +1073,29 @@ impl SAideApp {
             return;
         }
 
-        self.sync_toolbar_state();
         let toolbar_enabled = self.init_state == InitState::Ready;
+        let toolbar_state = self.toolbar_view_state();
 
         let colors = AppColors::from_context(ctx);
         let content_rect = ctx.content_rect();
+        let toolbar_rect = self
+            .visible_floating_toolbar_rect(content_rect)
+            .unwrap_or_else(|| {
+                egui::Rect::from_min_max(
+                    content_rect.left_top(),
+                    egui::pos2(
+                        content_rect.left() + Toolbar::width(),
+                        content_rect.bottom(),
+                    ),
+                )
+            });
         let event = egui::Area::new(egui::Id::new("floating_toolbar"))
             .order(egui::Order::Foreground)
-            .fixed_pos(egui::pos2(content_rect.left(), content_rect.top()))
+            .fixed_pos(toolbar_rect.left_top())
             .show(ctx, |ui| {
                 egui::Frame::NONE.fill(colors.toolbar_bg).show(ui, |ui| {
-                    ui.set_min_size(egui::vec2(Toolbar::width(), content_rect.height()));
-                    ui.add_enabled_ui(toolbar_enabled, |ui| self.toolbar.draw(ui))
+                    ui.set_min_size(toolbar_rect.size());
+                    ui.add_enabled_ui(toolbar_enabled, |ui| self.toolbar.draw(ui, toolbar_state))
                         .inner
                 })
             })
@@ -1091,7 +1105,7 @@ impl SAideApp {
     }
 
     fn draw_toolbar(&mut self, ctx: &egui::Context) {
-        if self.config_state.auto_hide_toolbar() {
+        if self.toolbar_mode().is_floating() {
             self.draw_floating_toolbar(ctx);
         } else {
             self.draw_docked_toolbar(ctx);

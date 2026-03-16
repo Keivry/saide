@@ -72,6 +72,40 @@ impl AppState {
 }
 
 /// Configuration and settings state
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolbarMode {
+    Docked,
+    Floating,
+}
+
+impl ToolbarMode {
+    pub fn from_auto_hide(auto_hide_toolbar: bool) -> Self {
+        if auto_hide_toolbar {
+            Self::Floating
+        } else {
+            Self::Docked
+        }
+    }
+
+    pub fn is_docked(self) -> bool { matches!(self, Self::Docked) }
+
+    pub fn is_floating(self) -> bool { matches!(self, Self::Floating) }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Docked => Self::Floating,
+            Self::Floating => Self::Docked,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Docked => "docked",
+            Self::Floating => "floating",
+        }
+    }
+}
+
 pub struct ConfigState {
     /// Configuration manager
     pub config_manager: ConfigManager,
@@ -130,13 +164,21 @@ impl ConfigState {
 
     pub fn auto_hide_toolbar(&self) -> bool { self.auto_hide_toolbar }
 
+    pub fn toolbar_mode(&self) -> ToolbarMode {
+        ToolbarMode::from_auto_hide(self.auto_hide_toolbar)
+    }
+
     pub fn keyboard_custom_mapping_enabled(&self) -> bool { self.keyboard_custom_mapping_enabled }
 
     pub fn toggle_keyboard_custom_mapping(&mut self) {
         self.keyboard_custom_mapping_enabled = !self.keyboard_custom_mapping_enabled;
     }
 
-    pub fn toggle_auto_hide_toolbar(&mut self) { self.auto_hide_toolbar = !self.auto_hide_toolbar; }
+    pub fn set_toolbar_mode(&mut self, mode: ToolbarMode) {
+        self.auto_hide_toolbar = mode.is_floating();
+    }
+
+    pub fn toggle_toolbar_mode(&mut self) { self.set_toolbar_mode(self.toolbar_mode().toggled()); }
 
     pub fn device_ime_state(&self) -> bool { self.device_ime_state }
 
