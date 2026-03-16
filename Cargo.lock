@@ -1141,6 +1141,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-cjk-font"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc36fd3fad689f23247f3eddb05897fa73435dd71ea7bed1c47b3db6218f0cb5"
+dependencies = [
+ "egui",
+ "font-kit",
+ "sys-locale",
+]
+
+[[package]]
 name = "egui-command"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1200,16 +1211,6 @@ dependencies = [
  "web-time",
  "webbrowser",
  "winit",
-]
-
-[[package]]
-name = "egui_cjk_font"
-version = "0.1.0"
-source = "git+https://github.com/Keivry/egui-cjk-font.git?branch=main#388d85ca836c7e29b3972eb78a69c8f231e742c5"
-dependencies = [
- "egui",
- "font-kit",
- "sys-locale",
 ]
 
 [[package]]
@@ -3352,7 +3353,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "saide"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3367,9 +3368,9 @@ dependencies = [
  "directories",
  "eframe",
  "egui",
+ "egui-cjk-font",
  "egui-command",
  "egui-command-binding",
- "egui_cjk_font",
  "ffmpeg-next",
  "fluent-bundle",
  "intl-memoizer",
