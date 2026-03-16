@@ -807,6 +807,7 @@ impl SAideApp {
         }
 
         let floating_toolbar_rect = self.floating_toolbar_rect(ctx.content_rect());
+        let skip_pointer_events = std::mem::take(&mut self.ui_state.pending_toggle_float);
 
         ctx.input(|input| {
             // Flag to ignore text events if egui::Event::Key was processed
@@ -849,7 +850,7 @@ impl SAideApp {
 
                 // Skip pointer/wheel events on the frame when toolbar mode was toggled
                 // to prevent click-through to the video layer after layout changes.
-                if self.ui_state.pending_toggle_float {
+                if skip_pointer_events {
                     match event {
                         egui::Event::PointerButton { .. }
                         | egui::Event::PointerMoved(_)
@@ -895,7 +896,6 @@ impl SAideApp {
                 }
             }
         });
-        self.ui_state.pending_toggle_float = false;
     }
 
     fn has_active_pointer_interaction(&self) -> bool {

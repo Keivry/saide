@@ -151,7 +151,8 @@ impl Toolbar {
         ui.scope_builder(egui::UiBuilder::new().max_rect(main_rect), |ui| {
             ui.spacing_mut().item_spacing.y = TOOLBAR_BTN_SPACING;
             ui.vertical_centered(|ui| {
-                let desired_height = (TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING) * count as f32;
+                let desired_height =
+                    TOOLBAR_BTN_SIZE[1] * count as f32 + TOOLBAR_BTN_SPACING * (count - 1) as f32;
                 let top_padding = ((main_rect.height() - desired_height) / 2.0).max(0.0);
                 ui.add_space(top_padding);
                 for btn in TOOLBAR_BUTTONS_BASE.iter() {
