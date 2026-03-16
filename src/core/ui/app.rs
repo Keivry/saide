@@ -977,6 +977,15 @@ impl SAideApp {
             ToolbarEvent::ToggleMappingVisualization => {
                 self.toggle_mapping_overlay();
             }
+            ToolbarEvent::ToggleFloat => {
+                self.config_state.toggle_auto_hide_toolbar();
+                self.resize(ctx);
+                ctx.request_repaint();
+                info!(
+                    "Toolbar mode toggled: {}",
+                    if self.config_state.auto_hide_toolbar() { "floating" } else { "docked" }
+                );
+            }
             ToolbarEvent::None => {}
         }
     }
@@ -989,6 +998,8 @@ impl SAideApp {
             .unwrap_or(false);
 
         self.toolbar.set_has_active_mappings(has_mappings);
+        self.toolbar
+            .set_floating_mode(self.config_state.auto_hide_toolbar());
     }
 
     fn update_floating_toolbar_visibility(&mut self, ctx: &egui::Context) {

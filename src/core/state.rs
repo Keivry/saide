@@ -136,6 +136,8 @@ impl ConfigState {
         self.keyboard_custom_mapping_enabled = !self.keyboard_custom_mapping_enabled;
     }
 
+    pub fn toggle_auto_hide_toolbar(&mut self) { self.auto_hide_toolbar = !self.auto_hide_toolbar; }
+
     pub fn device_ime_state(&self) -> bool { self.device_ime_state }
 
     pub fn active_frame_rate_limiter(&self) -> Option<Duration> { self.active_frame_rate_limiter }

@@ -24,6 +24,7 @@ pub enum ToolbarEvent {
     RotateVideo,
     ToggleMappingEditor,
     ToggleScreenPower,
+    ToggleFloat,
 }
 
 enum ButtonType {
@@ -86,6 +87,7 @@ pub struct Toolbar {
     keyboard_mapping_enabled: bool,
     mapping_visualization_enabled: bool,
     has_active_mappings: bool,
+    is_floating_mode: bool,
 }
 
 impl Default for Toolbar {
@@ -98,6 +100,7 @@ impl Toolbar {
             keyboard_mapping_enabled: false,
             mapping_visualization_enabled: false,
             has_active_mappings: false,
+            is_floating_mode: false,
         }
     }
 
@@ -124,6 +127,8 @@ impl Toolbar {
         self.has_active_mappings = has_mappings;
     }
 
+    pub fn set_floating_mode(&mut self, floating: bool) { self.is_floating_mode = floating; }
+
     /// Draw the toolbar, return the event if any button is clicked
     pub fn draw(&mut self, ui: &mut egui::Ui) -> ToolbarEvent {
         let count = TOOLBAR_BUTTONS_BASE.len();
@@ -133,13 +138,16 @@ impl Toolbar {
 
         let mut result = ToolbarEvent::None;
 
+        let toggle_btn_height = TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING * 2.0;
+        let available_for_main = ui.available_height() - toggle_btn_height;
+
         ui.vertical_centered(|ui| {
             ui.spacing_mut().item_spacing.y = TOOLBAR_BTN_SPACING;
 
             let rect = ui.available_rect_before_wrap();
             let desired_height =
                 (TOOLBAR_BTN_SIZE[1] + TOOLBAR_BTN_SPACING) * count as f32 + TOOLBAR_BTN_SPACING;
-            let top_padding = (rect.height() - desired_height) / 2.0;
+            let top_padding = ((available_for_main - desired_height) / 2.0).max(0.0);
             ui.add_space(top_padding);
 
             ui.add_space(TOOLBAR_BTN_SPACING);
@@ -148,6 +156,15 @@ impl Toolbar {
                 if self.draw_button(btn, ui) {
                     result = btn.event;
                 }
+            }
+
+            let remaining = (rect.height() - top_padding - desired_height - toggle_btn_height)
+                .max(TOOLBAR_BTN_SPACING);
+            ui.add_space(remaining);
+
+            ui.add_space(TOOLBAR_BTN_SPACING);
+            if self.draw_toggle_float_button(ui) {
+                result = ToolbarEvent::ToggleFloat;
             }
         });
 
@@ -176,6 +193,20 @@ impl Toolbar {
             .on_hover_text(t!(btn.tooltip_key))
             .on_disabled_hover_text(t!(btn.tooltip_key));
 
+        response.clicked()
+    }
+
+    fn draw_toggle_float_button(&self, ui: &mut egui::Ui) -> bool {
+        let (label, tooltip_key) = if self.is_floating_mode {
+            ("\u{1F532}", "toolbar-pin-toolbar")
+        } else {
+            ("\u{1F4CC}", "toolbar-float-toolbar")
+        };
+
+        let button = Button::new(RichText::new(label).size(TOOLBAR_FONT_SIZE));
+        let response = ui
+            .add_sized(TOOLBAR_BTN_SIZE, button)
+            .on_hover_text(t!(tooltip_key));
         response.clicked()
     }
 }

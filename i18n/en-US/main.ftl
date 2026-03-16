@@ -11,6 +11,8 @@ toolbar-keyboard-mapping = Toggle Keyboard Mapping
 toolbar-mapping-visualization = Show Mapping Visualization
 toolbar-screen-off = Screen Off
 toolbar-screen-off-hint = (Press physical power button to wake)
+toolbar-pin-toolbar = Pin Toolbar
+toolbar-float-toolbar = Float Toolbar
 
 ## UI - Audio Warning
 audio-warning-title = Audio Unavailable
