@@ -189,9 +189,9 @@ impl Toolbar {
 
     fn draw_toggle_float_button(&self, ui: &mut egui::Ui, mode: ToolbarMode) -> bool {
         let (label, tooltip_key) = if mode.is_floating() {
-            ("\u{1F532}", "toolbar-pin-toolbar")
+            ("🔒", "toolbar-pin-toolbar")
         } else {
-            ("\u{1F4CC}", "toolbar-float-toolbar")
+            ("🔓", "toolbar-float-toolbar")
         };
 
         let button = Button::new(RichText::new(label).size(TOOLBAR_FONT_SIZE));
