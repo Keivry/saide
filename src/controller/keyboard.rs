@@ -143,7 +143,14 @@ impl KeyboardMapper {
         self.mappings.write().insert(key, action);
     }
 
+    pub fn clear_mappings(&self) { self.mappings.write().clear(); }
+
     pub fn remove_mapping(&self, key: &Key) { self.mappings.write().remove(key); }
+
+    #[cfg(test)]
+    pub(crate) fn get_mapping(&self, key: &Key) -> Option<ScrcpyAction> {
+        self.mappings.read().get(key).cloned()
+    }
 
     /// Handle keyboard event, returns true if handled
     pub fn handle_standard_key_event(&self, key: &Key) -> Result<bool> {
@@ -324,5 +331,88 @@ impl KeyboardMapper {
             ScrcpyAction::Ignore => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::KeyboardMapper,
+        crate::{
+            config::mapping::{Key, MappingAction, Profile, ScrcpyAction},
+            controller::control_sender::ControlSender,
+            core::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys},
+        },
+        parking_lot::RwLock,
+        std::{net::TcpListener, sync::Arc, thread, time::Duration},
+    };
+
+    fn setup_control_sender() -> ControlSender {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_millis(50));
+        });
+
+        let stream = std::net::TcpStream::connect(addr).unwrap();
+        ControlSender::new(stream, 1080, 2400)
+    }
+
+    #[test]
+    fn update_mappings_rebuilds_cached_scrcpy_positions_for_current_display_rotation() {
+        let sender = setup_control_sender();
+        let mapper = KeyboardMapper::new(sender);
+
+        let mut profile = Profile::new("test", "serial", 1);
+        profile.add_mapping(
+            Key::A,
+            MappingAction::Tap {
+                pos: MappingPos::new(1.0, 1.0),
+            },
+        );
+        let profile = Arc::new(RwLock::new(profile));
+
+        let scrcpy_coords = ScrcpyCoordSys::new(1080, 2400, Some(0));
+
+        mapper.update_mappings(&profile, &scrcpy_coords, &MappingCoordSys::new(0));
+        let stale = mapper.get_mapping(&Key::A).unwrap();
+
+        mapper.update_mappings(&profile, &scrcpy_coords, &MappingCoordSys::new(1));
+        let refreshed = mapper.get_mapping(&Key::A).unwrap();
+
+        match (stale, refreshed) {
+            (ScrcpyAction::Tap { pos: stale }, ScrcpyAction::Tap { pos: refreshed }) => {
+                assert_eq!((stale.x, stale.y), (1080, 2400));
+                assert_eq!((refreshed.x, refreshed.y), (0, 2400));
+            }
+            other => panic!("unexpected actions: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clear_mappings_removes_cached_actions() {
+        let sender = setup_control_sender();
+        let mapper = KeyboardMapper::new(sender);
+
+        let mut profile = Profile::new("test", "serial", 0);
+        profile.add_mapping(
+            Key::A,
+            MappingAction::Tap {
+                pos: MappingPos::new(0.5, 0.5),
+            },
+        );
+        let profile = Arc::new(RwLock::new(profile));
+
+        mapper.update_mappings(
+            &profile,
+            &ScrcpyCoordSys::new(1080, 2400, Some(0)),
+            &MappingCoordSys::new(0),
+        );
+        assert!(mapper.get_mapping(&Key::A).is_some());
+
+        mapper.clear_mappings();
+        assert!(mapper.get_mapping(&Key::A).is_none());
     }
 }

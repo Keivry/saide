@@ -9,8 +9,8 @@ use super::{
 
 /// Mapping coordinate system (0.0-1.0 normalized, stored in config)
 ///
-/// Bound to device orientation at time of mapping creation.
-/// - device_orientation: 0=0°, 1=90°CW, 2=180°, 3=270°CW (Android Display Rotation)
+/// Bound to Android display rotation at time of mapping creation.
+/// - display_rotation: 0=0°, 1=90°, 2=180°, 3=270° from `Display.getRotation()`
 ///
 /// Coordinates are percentage values (0.0-1.0) relative to device screen at that orientation.
 ///
@@ -18,18 +18,18 @@ use super::{
 /// 90% from left edge, 50% from top edge of the landscape screen.
 #[derive(Debug, Clone, Copy)]
 pub struct MappingCoordSys {
-    pub device_orientation: u32,
+    pub display_rotation: u32,
 }
 
 impl MappingCoordSys {
-    pub fn new(device_orientation: u32) -> Self {
+    pub fn new(display_rotation: u32) -> Self {
         Self {
-            device_orientation: device_orientation % 4,
+            display_rotation: display_rotation % 4,
         }
     }
 
-    pub fn update_device_orientation(&mut self, orientation: u32) {
-        self.device_orientation = orientation % 4;
+    pub fn update_display_rotation(&mut self, rotation: u32) {
+        self.display_rotation = rotation % 4;
     }
 
     /// Convert mapping coordinate (0.0-1.0) to ScrcpyCoordSys
@@ -41,19 +41,24 @@ impl MappingCoordSys {
     /// # Notes
     /// - When capture_orientation is None, video resolution matches device orientation, so no
     ///   rotation transform needed
-    /// - When capture_orientation is Some(orientation), video is locked to that orientation, must
-    ///   rotate coords from device_orientation to capture_orientation
+    /// - When capture_orientation is Some(orientation), mapping-space lives in the corrected
+    ///   display-space shown to the user. Converting to the locked scrcpy frame must therefore use
+    ///   the inverse of the display-side video compensation.
     pub fn to_scrcpy(&self, pos: &MappingPos, target: &ScrcpyCoordSys) -> ScrcpyPos {
         let (px, py) = if let Some(capture_orient) = target.capture_orientation {
             // Capture orientation locked - need rotation transform
             // Different orientation - rotate coordinates
-            // Transform from device_orientation to capture_orientation
+            // Transform from mapping/display-space to the locked scrcpy frame.
             //
-            // Device orientation is CW (Android): 0=0°, 1=90°CW, 2=180°, 3=270°CW
-            // Capture orientation is also CCW: 0=0°, 1=90°CCW, 2=180°, 3=270°CCW
-            // Rotation delta: (device_orientation + capture_orient) % 4
+            // Display rotation uses Android display rotation values (`Surface.ROTATION_*`).
+            // The player/shader path compensates locked capture with:
+            //   video_rotation = (4 - ((capture_orient + display_rotation) % 4)) % 4
+            // Mapping/editor coordinates already live in the corrected display-space, so the
+            // locked frame orientation relative to mapping-space is the inverse of that display
+            // compensation:
+            //   effective_frame_orientation = (capture_orient + display_rotation) % 4
 
-            let rotation = (self.device_orientation + capture_orient) % 4;
+            let rotation = (capture_orient + self.display_rotation) % 4;
             match rotation {
                 0 => {
                     // No rotation
@@ -78,7 +83,7 @@ impl MappingCoordSys {
                     )
                 }
                 3 => {
-                    // 270° CW = 90° CCW: (x, y) -> (y, 1-x)
+                    // 270° CW: (x, y) -> (y, 1-x)
                     // Swap dimensions
                     (
                         pos.y * target.video_width as f32,
@@ -115,22 +120,24 @@ impl MappingCoordSys {
         let py = pos.y as f32 / source.video_height as f32;
 
         let (x, y) = if let Some(capture_orient) = source.capture_orientation {
-            let rotation = (self.device_orientation + capture_orient) % 4;
+            // Same effective frame orientation as to_scrcpy; apply the inverse transform.
+            //   = (capture_orient + display_rotation) % 4
+            let rotation = (capture_orient + self.display_rotation) % 4;
             match rotation {
                 0 => {
                     // No rotation
                     (px, py)
                 }
                 1 => {
-                    // 90° CCW: (x, y) -> (y, 1-x)
+                    // Inverse of 90° CW (1-y,x): (x,y) -> (y, 1-x)
                     (py, 1.0 - px)
                 }
                 2 => {
-                    // 180°: (x, y) -> (1-x, 1-y)
+                    // 180° is self-inverse: (x, y) -> (1-x, 1-y)
                     (1.0 - px, 1.0 - py)
                 }
                 3 => {
-                    // 270° CCW: (x, y) -> (1-y, x)
+                    // Inverse of 270° CW (y,1-x): (x,y) -> (1-y, x)
                     (1.0 - py, px)
                 }
                 _ => {

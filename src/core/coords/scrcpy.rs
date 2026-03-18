@@ -14,12 +14,12 @@ use {
 ///
 /// These coordinates are sent to scrcpy-server in control messages.
 /// - video_width/height: Video capture resolution
-/// - capture_orientation: Scrcpy capture orientation lock (0-3, CCW)
+/// - capture_orientation: Scrcpy capture orientation lock (0-3, clockwise quarter-turns)
 ///   - None: Video follows device rotation
 ///   - Some(0): Locked to portrait 0°
-///   - Some(1): Locked to landscape 90°CCW
+///   - Some(1): Locked to landscape 90°CW
 ///   - Some(2): Locked to portrait 180°
-///   - Some(3): Locked to landscape 270°CCW
+///   - Some(3): Locked to landscape 270°CW
 #[derive(Debug, Clone, Copy)]
 pub struct ScrcpyCoordSys {
     pub capture_orientation: Option<u32>,

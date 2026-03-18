@@ -24,10 +24,9 @@ pub struct Indicator {
     /// Currently selected custom keyboard mapping profile
     active_profile_name: Option<String>,
 
-    /// Device orientation (0-3), clockwise
-    device_orientation: u32,
+    /// Android display rotation (0-3 from `Display.getRotation()` / `Surface.ROTATION_*`)
+    display_rotation: u32,
 
-    // Scrcpy-server capture orientation (0-3), counter-clockwise
     capture_orientation: Option<u32>,
 
     // Video render rotation state (0-3), clockwise
@@ -55,7 +54,7 @@ impl Indicator {
     pub fn new(position: IndicatorPosition, max_fps: f32) -> Self {
         Self {
             active_profile_name: None,
-            device_orientation: 0,
+            display_rotation: 0,
             capture_orientation: None,
             video_rotation: 0,
             video_original_width: 0,
@@ -98,8 +97,8 @@ impl Indicator {
         self
     }
 
-    pub fn update_device_orientation(&mut self, orientation: u32) -> &mut Self {
-        self.device_orientation = orientation % 4;
+    pub fn update_display_rotation(&mut self, rotation: u32) -> &mut Self {
+        self.display_rotation = rotation % 4;
         self
     }
 
@@ -262,8 +261,8 @@ impl Indicator {
                                 ui.label(format!("{}°", self.video_rotation * 90));
                                 ui.end_row();
 
-                                ui.label(t!("indicator-panel-device-rotation"));
-                                ui.label(format!("{}°", self.device_orientation * 90));
+                                ui.label(t!("indicator-panel-display-rotation"));
+                                ui.label(format!("{}°", self.display_rotation * 90));
                                 ui.end_row();
 
                                 ui.label(t!("indicator-panel-fps"));

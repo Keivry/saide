@@ -132,6 +132,8 @@ The coordinate modules separate three concerns:
 - scrcpy/device-space coordinates used by the protocol
 - visual/UI-space coordinates used by rendering and editor interaction
 
+`capture_orientation` and display-side `video_rotation` use the same clockwise quarter-turn convention (`0/1/2/3 = 0°/90°/180°/270°`). `display_rotation` is the Android `Display.getRotation()` / `Surface.ROTATION_*` value, i.e. the screen-content rotation reported by Android rather than a direct physical turn direction. In locked-capture mode, `video_rotation` compensates the combined frame rotation (`capture_orientation + display_rotation`, modulo 4), while mapping/editor coordinates use the inverse transform so input stays aligned with the corrected on-screen image.
+
 That separation is what allows profile mappings to survive device rotation and different stream resolutions.
 
 ## scrcpy connection architecture

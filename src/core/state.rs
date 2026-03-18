@@ -37,8 +37,8 @@ pub struct AppState {
     /// Device serial
     pub device_serial: String,
 
-    /// Device orientation (0-3), clockwise
-    pub device_orientation: u32,
+    /// Android display rotation (0-3 from `Display.getRotation()` / `Surface.ROTATION_*`)
+    pub display_rotation: u32,
 
     /// Scrcpy coordinate system
     pub scrcpy_coords: ScrcpyCoordSys,
@@ -56,7 +56,7 @@ impl AppState {
             keyboard_mapper: None,
             device_monitor_rx: None,
             device_serial,
-            device_orientation: 0,
+            display_rotation: 0,
             scrcpy_coords: ScrcpyCoordSys::new(1, 1, None),
             cancel_token,
         }
@@ -64,7 +64,7 @@ impl AppState {
 
     pub fn device_serial(&self) -> &str { &self.device_serial }
 
-    pub fn device_orientation(&self) -> u32 { self.device_orientation }
+    pub fn display_rotation(&self) -> u32 { self.display_rotation }
 
     pub fn scrcpy_coords(&self) -> &ScrcpyCoordSys { &self.scrcpy_coords }
 

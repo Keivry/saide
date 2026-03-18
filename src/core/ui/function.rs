@@ -25,14 +25,14 @@ impl SAideApp {
         let profile = Profile::new(
             profile_name,
             &self.app_state.device_serial,
-            self.app_state.device_orientation,
+            self.app_state.display_rotation,
         );
 
         match self.profile_manager.add_profile(profile) {
             Ok(()) => {
                 self.profile_manager.update(
                     &self.app_state.device_serial,
-                    self.app_state.device_orientation,
+                    self.app_state.display_rotation,
                 );
                 self.save_config();
                 if self
@@ -41,6 +41,8 @@ impl SAideApp {
                     .is_err()
                 {
                     self.notify(&t!("notification-switch-profile-failed"));
+                } else {
+                    self.refresh_mapping_profiles();
                 }
             }
             Err(err) => {
@@ -62,8 +64,9 @@ impl SAideApp {
         if self.profile_manager.remove_active_profile().is_ok() {
             self.profile_manager.update(
                 &self.app_state.device_serial,
-                self.app_state.device_orientation,
+                self.app_state.display_rotation,
             );
+            self.refresh_mapping_profiles();
             self.save_config();
         } else {
             self.notify(&t!("notification-delete-profile-failed"));
@@ -80,7 +83,7 @@ impl SAideApp {
             Ok(()) => {
                 self.profile_manager.update(
                     &self.app_state.device_serial,
-                    self.app_state.device_orientation,
+                    self.app_state.display_rotation,
                 );
                 self.save_config();
             }
@@ -114,6 +117,7 @@ impl SAideApp {
     pub fn switch_profile(&mut self, idx: usize) {
         self.profile_manager
             .switch_to_profile(idx)
+            .map(|()| self.refresh_mapping_profiles())
             .unwrap_or_else(|_| {
                 self.notify(&t!("notification-switch-profile-failed"));
             });
@@ -121,7 +125,10 @@ impl SAideApp {
 
     pub fn next_profile(&mut self) {
         match self.profile_manager.switch_profile_next() {
-            Ok(()) => self.notify_profile_switched(),
+            Ok(()) => {
+                self.refresh_mapping_profiles();
+                self.notify_profile_switched()
+            }
             Err(ProfileError::NoProfileToSwitch) => {
                 self.notify(&t!("notification-no-profile-to-switch"))
             }
@@ -131,7 +138,10 @@ impl SAideApp {
 
     pub fn prev_profile(&mut self) {
         match self.profile_manager.switch_profile_prev() {
-            Ok(()) => self.notify_profile_switched(),
+            Ok(()) => {
+                self.refresh_mapping_profiles();
+                self.notify_profile_switched()
+            }
             Err(ProfileError::NoProfileToSwitch) => {
                 self.notify(&t!("notification-no-profile-to-switch"))
             }

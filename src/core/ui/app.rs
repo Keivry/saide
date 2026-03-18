@@ -92,6 +92,10 @@ pub struct SAideApp {
 
 const FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH: f32 = 4.0;
 
+fn locked_capture_video_rotation(capture_orient: u32, display_rotation: u32) -> u32 {
+    (4 - ((capture_orient + display_rotation) % 4)) % 4
+}
+
 impl SAideApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -291,10 +295,14 @@ impl SAideApp {
                             self.app_state.device_serial(),
                         );
 
-                        // Initialize capture orientation for ScrcpyCoordSys
-                        self.app_state
-                            .scrcpy_coords_mut()
-                            .update_capture_orientation(corientation);
+                        {
+                            let coords = self.app_state.scrcpy_coords_mut();
+                            coords.update_capture_orientation(corientation);
+                            coords.update_video_size(
+                                video_resolution.0 as u16,
+                                video_resolution.1 as u16,
+                            );
+                        }
 
                         self.indicator.update_capture_orientation(corientation);
                     }
@@ -332,10 +340,10 @@ impl SAideApp {
                 // Initialize coordinate systems now that video is ready
                 self.ui_state
                     .mapping_coords_mut()
-                    .update_device_orientation(self.app_state.device_orientation());
+                    .update_display_rotation(self.app_state.display_rotation());
                 debug!(
-                    "Initial device orientation: {}",
-                    self.app_state.device_orientation()
+                    "Initial display rotation: {}",
+                    self.app_state.display_rotation()
                 );
                 self.ui_state
                     .visual_coords_mut()
@@ -474,7 +482,7 @@ impl SAideApp {
                 match event {
                     DeviceMonitorEvent::Rotated(new_orientation) => {
                         debug!("Device rotated to orientation: {}", new_orientation * 90);
-                        self.app_state.device_orientation = new_orientation % 4;
+                        self.app_state.display_rotation = new_orientation % 4;
                         rotated = true;
                     }
                     DeviceMonitorEvent::ImStateChanged(im_state) => {
@@ -494,33 +502,38 @@ impl SAideApp {
         }
 
         if rotated {
-            self.refresh_mapping_profiles();
-
             self.indicator
-                .update_device_orientation(self.app_state.device_orientation());
+                .update_display_rotation(self.app_state.display_rotation());
 
             self.ui_state
                 .mapping_coords_mut()
-                .update_device_orientation(self.app_state.device_orientation());
+                .update_display_rotation(self.app_state.display_rotation());
             debug!(
-                "Updated device orientation to {}",
-                self.app_state.device_orientation()
+                "Updated display rotation to {}",
+                self.app_state.display_rotation()
             );
 
             self.apply_auto_rotation(ctx);
+            self.refresh_mapping_profiles();
         }
     }
 
     /// Apply automatic video rotation compensation when capture_orientation is locked
     ///
-    /// When capture_orientation is set (video locked to specific orientation),
-    /// automatically adjust video_rotation to compensate for device physical rotation.
-    /// This ensures the displayed video always appears correctly oriented.
+    /// When capture_orientation is set (video locked to a specific orientation),
+    /// adjust video_rotation to cancel the total clockwise rotation already present
+    /// in the encoded video.
+    ///
+    /// `display_rotation` comes from `Display.getRotation()`/`Surface.ROTATION_*`,
+    /// which describes the current Android display-content rotation. In locked-capture
+    /// mode, the encoded frame orientation is affected by both the capture lock and the
+    /// display rotation, so the player must compensate their combined rotation instead
+    /// of treating them as two absolute orientations to subtract.
     fn apply_auto_rotation(&mut self, ctx: &egui::Context) {
         if let Some(capture_orient) = self.app_state.scrcpy_coords().capture_orientation {
-            let device_orient = self.app_state.device_orientation();
+            let display_rotation = self.app_state.display_rotation();
 
-            let target_rotation = (4 - ((capture_orient + device_orient) % 4)) % 4;
+            let target_rotation = locked_capture_video_rotation(capture_orient, display_rotation);
 
             self.player.set_rotation(target_rotation);
             self.indicator.update_video_rotation(target_rotation);
@@ -533,9 +546,9 @@ impl SAideApp {
                 .update_video_resolution(self.player.video_dimensions());
 
             info!(
-                "Auto-rotation: device={} ({}°), capture={} ({}°), applying video_rotation={}",
-                device_orient,
-                device_orient * 90,
+                "Auto-rotation: display={} ({}°), capture={} ({}°), applying video_rotation={}",
+                display_rotation,
+                display_rotation * 90,
                 capture_orient,
                 capture_orient * 90,
                 target_rotation
@@ -961,7 +974,7 @@ impl SAideApp {
 
         self.profile_manager.update(
             &self.app_state.device_serial,
-            self.app_state.device_orientation,
+            self.app_state.display_rotation,
         );
 
         let mut active_profile_name = None;
@@ -972,6 +985,8 @@ impl SAideApp {
                 self.scrcpy_coords(),
                 self.mapping_coords(),
             );
+        } else {
+            keyboard_mapper.clear_mappings();
         }
         let avail_profile_names = self.profile_manager.get_avail_profile_names();
         debug!(
@@ -1389,6 +1404,21 @@ impl SAideApp {
     pub fn toolbar_width() -> f32 { Toolbar::width() }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::locked_capture_video_rotation;
+
+    #[test]
+    fn locked_capture_rotation_matches_runtime_repro() {
+        assert_eq!(locked_capture_video_rotation(0, 1), 3);
+        assert_eq!(locked_capture_video_rotation(0, 3), 1);
+        assert_eq!(locked_capture_video_rotation(1, 0), 3);
+        assert_eq!(locked_capture_video_rotation(1, 1), 2);
+        assert_eq!(locked_capture_video_rotation(2, 1), 1);
+        assert_eq!(locked_capture_video_rotation(3, 1), 0);
+    }
+}
+
 impl Drop for SAideApp {
     fn drop(&mut self) {
         debug!("SAideApp dropping, cleaning up connection");
@@ -1520,7 +1550,7 @@ impl eframe::App for SAideApp {
 
                     self.profile_manager.update(
                         &self.app_state.device_serial,
-                        self.app_state.device_orientation,
+                        self.app_state.display_rotation,
                     );
 
                     if let Some(keyboard_mapper) = &self.app_state.keyboard_mapper

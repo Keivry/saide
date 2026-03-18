@@ -68,7 +68,7 @@ codec = "h264"
 - `max_size`: maximum long edge in pixels
 - `codec`: default video codec string, currently `h264`
 - `encoder`: optional explicit Android encoder name
-- `capture_orientation`: optional lock value `0..=3`; if omitted, the stream follows device rotation
+- `capture_orientation`: optional lock value `0..=3` in clockwise quarter-turns (`0/90/180/270`); if omitted, the stream follows device rotation
 
 ### `[scrcpy.audio]`
 

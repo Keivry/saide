@@ -5,544 +5,199 @@ use {
     eframe::egui::{Pos2, Rect},
 };
 
-#[test]
-fn test_mapping_0_to_scrcpy_no_capture_lock() {
-    // Portrait device, no capture lock
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
+fn rotate_norm_cw(x: f32, y: f32, rotation: u32) -> (f32, f32) {
+    match rotation % 4 {
+        0 => (x, y),
+        1 => (1.0 - y, x),
+        2 => (1.0 - x, 1.0 - y),
+        3 => (y, 1.0 - x),
+        _ => unreachable!(),
+    }
+}
 
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // Portrait device: direct scale
-    assert_eq!(scrcpy_pos.x, 216);
-    assert_eq!(scrcpy_pos.y, 960);
+fn video_size_for_orientation(orientation: u32) -> (u16, u16) {
+    if orientation.is_multiple_of(2) {
+        (1080, 2400)
+    } else {
+        (2400, 1080)
+    }
 }
 
 #[test]
-fn test_mapping_1_to_scrcpy_no_capture_lock() {
-    // Landscape device, no capture lock
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
+fn test_mapping_to_scrcpy_rotation_matrix() {
+    let source = MappingPos::new(0.2, 0.4);
 
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
+    for display_rotation in 0..4 {
+        for capture_orientation in [None, Some(0), Some(1), Some(2), Some(3)] {
+            let effective_orientation = capture_orientation.unwrap_or(display_rotation);
+            let (video_width, video_height) = video_size_for_orientation(effective_orientation);
 
-    // Landscape device: direct scale
-    assert_eq!(scrcpy_pos.x, 480);
-    assert_eq!(scrcpy_pos.y, 432);
+            let mapping_sys = MappingCoordSys::new(display_rotation);
+            let scrcpy_sys = ScrcpyCoordSys::new(video_width, video_height, capture_orientation);
+            let actual = mapping_sys.to_scrcpy(&source, &scrcpy_sys);
+
+            let rotation = capture_orientation
+                .map(|capture| (capture + display_rotation) % 4)
+                .unwrap_or(0);
+            let (expected_x, expected_y) = rotate_norm_cw(source.x, source.y, rotation);
+
+            assert_eq!(
+                actual.x,
+                (expected_x * video_width as f32) as u32,
+                "display_rotation={display_rotation}, capture_orientation={capture_orientation:?}"
+            );
+            assert_eq!(
+                actual.y,
+                (expected_y * video_height as f32) as u32,
+                "display_rotation={display_rotation}, capture_orientation={capture_orientation:?}"
+            );
+        }
+    }
 }
 
 #[test]
-fn test_mapping_2_to_scrcpy_no_capture_lock() {
-    // Portrait upside-down device, no capture lock
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
+fn test_scrcpy_to_mapping_rotation_matrix() {
+    for display_rotation in 0..4 {
+        for capture_orientation in [None, Some(0), Some(1), Some(2), Some(3)] {
+            let effective_orientation = capture_orientation.unwrap_or(display_rotation);
+            let (video_width, video_height) = video_size_for_orientation(effective_orientation);
 
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
+            let mapping_sys = MappingCoordSys::new(display_rotation);
+            let scrcpy_sys = ScrcpyCoordSys::new(video_width, video_height, capture_orientation);
+            let source = ScrcpyPos::new(
+                (0.2 * video_width as f32) as u32,
+                (0.4 * video_height as f32) as u32,
+            );
+            let actual = mapping_sys.from_scrcpy(&source, &scrcpy_sys);
 
-    // Portrait upside-down device: direct scale
-    assert_eq!(scrcpy_pos.x, 216);
-    assert_eq!(scrcpy_pos.y, 960);
+            let rotation = capture_orientation
+                .map(|capture| (capture + display_rotation) % 4)
+                .unwrap_or(0);
+            let (expected_x, expected_y) = rotate_norm_cw(0.2, 0.4, (4 - rotation) % 4);
+
+            assert!(
+                (actual.x - expected_x).abs() < 0.001,
+                "display_rotation={display_rotation}, capture_orientation={capture_orientation:?}, actual_x={}, expected_x={expected_x}",
+                actual.x
+            );
+            assert!(
+                (actual.y - expected_y).abs() < 0.001,
+                "display_rotation={display_rotation}, capture_orientation={capture_orientation:?}, actual_y={}, expected_y={expected_y}",
+                actual.y
+            );
+        }
+    }
 }
 
 #[test]
-fn test_mapping_3_to_scrcpy_no_capture_lock() {
-    // Landscape upside-down device, no capture lock
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // Landscape upside-down device: direct scale
-    assert_eq!(scrcpy_pos.x, 480);
-    assert_eq!(scrcpy_pos.y, 432);
-}
-
-#[test]
-fn test_mapping_0_to_scrcpy_capture_lock_0() {
-    // Portrait device (orient=0), capture locked to portrait (orient=0)
-    let mapping_sys = MappingCoordSys::new(0);
+fn test_visual_mapping_roundtrip_locked_capture_display_rotation_repro() {
+    let visual_sys = VisualCoordSys::new(3);
+    let video_rect = Rect::from_min_size(Pos2::new(0.0, 0.0), (2400.0, 1080.0).into());
     let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // No rotation: (0.2, 0.4) -> (0.2, 0.4)
-    assert_eq!(scrcpy_pos.x, 216); // 0.2 * 1080
-    assert_eq!(scrcpy_pos.y, 960); // 0.4 * 2400
-}
-
-#[test]
-fn test_mapping_1_to_scrcpy_capture_lock_0() {
-    // Landscape device (orient=1), capture locked to portrait (orient=0)
     let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
 
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
+    let original_pos = VisualPos::new(0.0, 1080.0);
 
-    // 90° CW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-    assert_eq!(scrcpy_pos.x, 648); // 0.6 * 1080
-    assert_eq!(scrcpy_pos.y, 480); // 0.2 * 2400
+    let mapping_pos = visual_sys
+        .to_mapping(&original_pos, &video_rect, &scrcpy_sys, &mapping_sys)
+        .unwrap();
+    let result_pos = visual_sys.from_mapping(&mapping_pos, &video_rect, &scrcpy_sys, &mapping_sys);
+
+    assert!((original_pos.x - result_pos.x).abs() < 1.0);
+    assert!((original_pos.y - result_pos.y).abs() < 1.0);
 }
 
 #[test]
-fn test_mapping_2_to_scrcpy_capture_lock_0() {
-    // Portrait upside-down device (orient=2), capture locked to portrait (orient=0)
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
+fn test_visual_mapping_roundtrip_locked_capture_odd_orientation_cases() {
+    for (capture_orientation, display_rotation, video_rotation, video_size) in [
+        (1, 1, 2, (2400.0, 1080.0)),
+        (3, 1, 0, (2400.0, 1080.0)),
+        (1, 3, 0, (2400.0, 1080.0)),
+        (3, 3, 2, (2400.0, 1080.0)),
+    ] {
+        let visual_sys = VisualCoordSys::new(video_rotation);
+        let video_rect = Rect::from_min_size(Pos2::new(0.0, 0.0), video_size.into());
+        let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(capture_orientation));
+        let mapping_sys = MappingCoordSys::new(display_rotation);
 
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
+        for original_pos in [
+            VisualPos::new(0.0, 0.0),
+            VisualPos::new(video_rect.width(), 0.0),
+            VisualPos::new(0.0, video_rect.height()),
+            VisualPos::new(video_rect.width(), video_rect.height()),
+            VisualPos::new(video_rect.width() * 0.37, video_rect.height() * 0.61),
+        ] {
+            let mapping_pos = visual_sys
+                .to_mapping(&original_pos, &video_rect, &scrcpy_sys, &mapping_sys)
+                .unwrap();
+            let result_pos =
+                visual_sys.from_mapping(&mapping_pos, &video_rect, &scrcpy_sys, &mapping_sys);
 
-    // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-    assert_eq!(scrcpy_pos.x, 864); // 0.8 * 1080
-    assert_eq!(scrcpy_pos.y, 1440); // 0.6 * 2400
+            assert!(
+                (original_pos.x - result_pos.x).abs() < 1.0,
+                "capture={capture_orientation}, display={display_rotation}, video={video_rotation}, original_x={}, result_x={}",
+                original_pos.x,
+                result_pos.x
+            );
+            assert!(
+                (original_pos.y - result_pos.y).abs() < 1.0,
+                "capture={capture_orientation}, display={display_rotation}, video={video_rotation}, original_y={}, result_y={}",
+                original_pos.y,
+                result_pos.y
+            );
+        }
+    }
 }
 
 #[test]
-fn test_mapping_3_to_scrcpy_capture_lock_0() {
-    // Landscape upside-down device (orient=3), capture locked to portrait (orient=0)
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-    assert_eq!(scrcpy_pos.x, 432); // 0.4 * 1080
-    assert_eq!(scrcpy_pos.y, 1920); // 0.8 * 2400
-}
-
-#[test]
-fn test_mapping_0_to_scrcpy_capture_lock_1() {
-    // Portrait device (orient=0), capture locked to landscape (orient=1)
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 90° CW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-    assert_eq!(scrcpy_pos.x, 1440); // 0.6 * 2400
-    assert_eq!(scrcpy_pos.y, 216); // 0.2 * 1080
-}
-
-#[test]
-fn test_mapping_1_to_scrcpy_capture_lock_1() {
-    // Landscape device (orient=1), capture locked to landscape (orient=1)
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-    assert_eq!(scrcpy_pos.x, 1920); // 0.8 * 2400
-    assert_eq!(scrcpy_pos.y, 648); // 0.6 * 1080
-}
-
-#[test]
-fn test_mapping_2_to_scrcpy_capture_lock_1() {
-    // Portrait upside-down device (orient=2), capture locked to landscape (orient=1)
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-    assert_eq!(scrcpy_pos.x, 960); // 0.4 * 2400
-    assert_eq!(scrcpy_pos.y, 864); // 0.8 * 1080
-}
-
-#[test]
-fn test_mapping_3_to_scrcpy_capture_lock_1() {
-    // Landscape upside-down device (orient=3), capture locked to landscape (orient=1)
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-    assert_eq!(scrcpy_pos.x, 480); // 0.2 * 2400
-    assert_eq!(scrcpy_pos.y, 432); // 0.4 * 1080
-}
-
-#[test]
-fn test_mapping_0_to_scrcpy_capture_lock_2() {
-    // Portrait device (orient=0), capture locked to 180° (orient=2)
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-    assert_eq!(scrcpy_pos.x, 864); // 0.7 * 1080
-    assert_eq!(scrcpy_pos.y, 1440); // 0.3 * 2400
-}
-
-#[test]
-fn test_mapping_1_to_scrcpy_capture_lock_2() {
-    // Landscape device (orient=1), capture locked to 180° (orient=2)
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-    assert_eq!(scrcpy_pos.x, 432); // 0.4 * 1080
-    assert_eq!(scrcpy_pos.y, 1920); // 0.8 * 2400
-}
-
-#[test]
-fn test_mapping_2_to_scrcpy_capture_lock_2() {
-    // Portrait upside-down device (orient=2), capture locked to 180° (orient=2)
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-    assert_eq!(scrcpy_pos.x, 216); // 0.2 * 1080
-    assert_eq!(scrcpy_pos.y, 960); // 0.4 * 2400
-}
-
-#[test]
-fn test_mapping_3_to_scrcpy_capture_lock_2() {
-    // Landscape upside-down device (orient=3), capture locked to 180° (orient=2)
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 90° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-    assert_eq!(scrcpy_pos.x, 648); // 0.6 * 1080
-    assert_eq!(scrcpy_pos.y, 480); // 0.2 * 2400
-}
-
-#[test]
-fn test_mapping_0_to_scrcpy_capture_lock_3() {
-    // Portrait device (orient=0), capture locked to landscape 270° (orient=3)
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 270° CW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-    assert_eq!(scrcpy_pos.x, 960); // 0.4 * 2400
-    assert_eq!(scrcpy_pos.y, 864); // 0.8 * 1080
-}
-
-#[test]
-fn test_mapping_1_to_scrcpy_capture_lock_3() {
-    // Landscape device (orient=1), capture locked to landscape 270° (orient=3)
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-    assert_eq!(scrcpy_pos.x, 480); // 0.2 * 2400
-    assert_eq!(scrcpy_pos.y, 432); // 0.4 * 1080
-}
-
-#[test]
-fn test_mapping_2_to_scrcpy_capture_lock_3() {
-    // Portrait upside-down device (orient=2), capture locked to landscape 270° (orient=3)
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 90° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-    assert_eq!(scrcpy_pos.x, 1440); // 0.6 * 2400
-    assert_eq!(scrcpy_pos.y, 216); // 0.2 * 1080
-}
-
-#[test]
-fn test_mapping_3_to_scrcpy_capture_lock_3() {
-    // Landscape upside-down device (orient=3), capture locked to landscape 270° (orient=3)
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
-
-    let scrcpy_pos = mapping_sys.to_scrcpy(&MappingPos::new(0.2, 0.4), &scrcpy_sys);
-
-    // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-    assert_eq!(scrcpy_pos.x, 1920); // 0.8 * 2400
-    assert_eq!(scrcpy_pos.y, 648); // 0.6 * 1080
-}
-
-#[test]
-fn test_scrcpy_no_capture_lock_to_mapping_0() {
-    // Portrait device, no capture lock
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // Portrait device: direct scale
-    assert!((mapping_pos.x - 0.2).abs() < 0.001);
-    assert!((mapping_pos.y - 0.4).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_no_capture_lock_to_mapping_1() {
-    // Landscape device, no capture lock
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // Landscape device: direct scale
-    assert!((mapping_pos.x - 0.2).abs() < 0.001);
-    assert!((mapping_pos.y - 0.4).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_no_capture_lock_to_mapping_2() {
-    // Portrait upside-down device, no capture lock
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, None);
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // Portrait upside-down device: direct scale
-    assert!((mapping_pos.x - 0.2).abs() < 0.001);
-    assert!((mapping_pos.y - 0.4).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_no_capture_lock_to_mapping_3() {
-    // Landscape upside-down device, no capture lock
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // Landscape upside-down device: direct scale
-    assert!((mapping_pos.x - 0.2).abs() < 0.001);
-    assert!((mapping_pos.y - 0.4).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_0_to_mapping_0() {
-    // Portrait device (orient=0), capture locked to portrait (orient=0)
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // No rotation
-    assert!((mapping_pos.x - 0.2).abs() < 0.001);
-    assert!((mapping_pos.y - 0.4).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_0_to_mapping_1() {
-    // Landscape device (orient=1), capture locked to portrait (orient=0)
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-    assert!((mapping_pos.x - 0.4).abs() < 0.001);
-    assert!((mapping_pos.y - 0.8).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_0_to_mapping_2() {
-    // Portrait upside-down device (orient=2), capture locked to portrait (orient=0)
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-    assert!((mapping_pos.x - 0.8).abs() < 0.001);
-    assert!((mapping_pos.y - 0.6).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_0_to_mapping_3() {
-    // Landscape upside-down device (orient=3), capture locked to portrait (orient=0)
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(0));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-    assert!((mapping_pos.x - 0.6).abs() < 0.001);
-    assert!((mapping_pos.y - 0.2).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_1_to_mapping_0() {
-    // Portrait device (orient=0), capture locked to landscape (orient=1)
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-    assert!((mapping_pos.x - 0.4).abs() < 0.001);
-    assert!((mapping_pos.y - 0.8).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_1_to_mapping_1() {
-    // Landscape device (orient=1), capture locked to landscape (orient=1)
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-    assert!((mapping_pos.x - 0.8).abs() < 0.001);
-    assert!((mapping_pos.y - 0.6).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_1_to_mapping_2() {
-    // Portrait upside-down device (orient=2), capture locked to landscape (orient=1)
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-    assert!((mapping_pos.x - 0.6).abs() < 0.001);
-    assert!((mapping_pos.y - 0.2).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_1_to_mapping_3() {
-    // Landscape upside-down device (orient=3), capture locked to landscape (orient=1)
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(1));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-    assert!((mapping_pos.x - 0.2).abs() < 0.001);
-    assert!((mapping_pos.y - 0.4).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_2_to_mapping_0() {
-    // Portrait device (orient=0), capture locked to 180° (orient=2)
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-    assert!((mapping_pos.x - 0.8).abs() < 0.001);
-    assert!((mapping_pos.y - 0.6).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_2_to_mapping_1() {
-    // Landscape device (orient=1), capture locked to 180° (orient=2)
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-    assert!((mapping_pos.x - 0.6).abs() < 0.001);
-    assert!((mapping_pos.y - 0.2).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_2_to_mapping_2() {
-    // Portrait upside-down device (orient=2), capture locked to 180° (orient=2)
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-    assert!((mapping_pos.x - 0.2).abs() < 0.001);
-    assert!((mapping_pos.y - 0.4).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_2_to_mapping_3() {
-    // Landscape upside-down device (orient=3), capture locked to 180° (orient=2)
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(1080, 2400, Some(2));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(216, 960), &scrcpy_sys);
-
-    // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-    assert!((mapping_pos.x - 0.4).abs() < 0.001);
-    assert!((mapping_pos.y - 0.8).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_3_to_mapping_0() {
-    // Portrait device (orient=0), capture locked to landscape 270° (orient=3)
-    let mapping_sys = MappingCoordSys::new(0);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
-    assert!((mapping_pos.x - 0.6).abs() < 0.001);
-    assert!((mapping_pos.y - 0.2).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_3_to_mapping_1() {
-    // Landscape device (orient=1), capture locked to landscape 270° (orient=3)
-    let mapping_sys = MappingCoordSys::new(1);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // 0° rotation: (0.2, 0.4) -> (0.2, 0.4)
-    assert!((mapping_pos.x - 0.2).abs() < 0.001);
-    assert!((mapping_pos.y - 0.4).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_3_to_mapping_2() {
-    // Portrait upside-down device (orient=2), capture locked to landscape 270° (orient=3)
-    let mapping_sys = MappingCoordSys::new(2);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
-    assert!((mapping_pos.x - 0.4).abs() < 0.001);
-    assert!((mapping_pos.y - 0.8).abs() < 0.001);
-}
-
-#[test]
-fn test_scrcpy_capture_lock_3_to_mapping_3() {
-    // Landscape upside-down device (orient=3), capture locked to landscape 270° (orient=3)
-    let mapping_sys = MappingCoordSys::new(3);
-    let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, Some(3));
-
-    // (0.2, 0.4) in scrcpy coords
-    let mapping_pos = mapping_sys.from_scrcpy(&ScrcpyPos::new(480, 432), &scrcpy_sys);
-
-    // 180° rotation: (0.2, 0.4) -> (1-0.2, 1-0.4) = (0.8, 0.6)
-    assert!((mapping_pos.x - 0.8).abs() < 0.001);
-    assert!((mapping_pos.y - 0.6).abs() < 0.001);
+fn test_visual_mapping_roundtrip_all_locked_capture_combinations() {
+    for display_rotation in 0..4 {
+        for capture_orientation in 0..4 {
+            let video_rotation = (4 - ((capture_orientation + display_rotation) % 4)) % 4;
+            let effective_orientation = capture_orientation;
+            let (video_width, video_height) = video_size_for_orientation(effective_orientation);
+
+            let visual_size = if video_rotation % 2 == 0 {
+                (video_width as f32, video_height as f32)
+            } else {
+                (video_height as f32, video_width as f32)
+            };
+
+            let visual_sys = VisualCoordSys::new(video_rotation);
+            let video_rect = Rect::from_min_size(Pos2::new(0.0, 0.0), visual_size.into());
+            let scrcpy_sys =
+                ScrcpyCoordSys::new(video_width, video_height, Some(capture_orientation));
+            let mapping_sys = MappingCoordSys::new(display_rotation);
+
+            for original_pos in [
+                VisualPos::new(0.0, 0.0),
+                VisualPos::new(video_rect.width(), 0.0),
+                VisualPos::new(0.0, video_rect.height()),
+                VisualPos::new(video_rect.width(), video_rect.height()),
+                VisualPos::new(video_rect.width() * 0.25, video_rect.height() * 0.75),
+                VisualPos::new(video_rect.width() * 0.625, video_rect.height() * 0.375),
+            ] {
+                let mapping_pos = visual_sys
+                    .to_mapping(&original_pos, &video_rect, &scrcpy_sys, &mapping_sys)
+                    .unwrap();
+                let result_pos =
+                    visual_sys.from_mapping(&mapping_pos, &video_rect, &scrcpy_sys, &mapping_sys);
+
+                assert!(
+                    (original_pos.x - result_pos.x).abs() < 1.0,
+                    "capture={capture_orientation}, display={display_rotation}, video={video_rotation}, original_x={}, result_x={}",
+                    original_pos.x,
+                    result_pos.x
+                );
+                assert!(
+                    (original_pos.y - result_pos.y).abs() < 1.0,
+                    "capture={capture_orientation}, display={display_rotation}, video={video_rotation}, original_y={}, result_y={}",
+                    original_pos.y,
+                    result_pos.y
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -568,7 +223,6 @@ fn test_visual_rotation_1_to_scrcpy_capture_lock_1() {
     let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
 
     // (0.2, 0.4) in visual coords
-    // 90° CCW rotation: (0.2, 0.4) -> (0.4, 1-0.2) = (0.4, 0.8)
     let scrcpy_pos = visual_sys
         .to_scrcpy(&VisualPos::new(236.0, 990.0), &video_rect, &scrcpy_sys)
         .unwrap();
@@ -599,7 +253,6 @@ fn test_visual_rotation_3_to_scrcpy_capture_lock_3() {
     let scrcpy_sys = ScrcpyCoordSys::new(2400, 1080, None);
 
     // (0.2, 0.4) in visual coords
-    // 270° CCW rotation: (0.2, 0.4) -> (1-0.4, 0.2) = (0.6, 0.2)
     let scrcpy_pos = visual_sys
         .to_scrcpy(&VisualPos::new(216.0, 960.0), &video_rect, &scrcpy_sys)
         .unwrap();

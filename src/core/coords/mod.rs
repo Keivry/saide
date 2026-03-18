@@ -3,8 +3,8 @@
 //! Coordinate system transformations for SAide
 //!
 //! This module implements 3 coordinate systems:
-//! 1. MappingCoordSys: Normalized (0.0-1.0) coordinate system bound to device orientation, stored
-//!    in config files and key mapping profiles
+//! 1. MappingCoordSys: Normalized (0.0-1.0) coordinate system bound to display rotation, stored in
+//!    config files and key mapping profiles
 //! 2. VisualCoordSys: Screen/UI coordinate system relative to video display rect
 //! 3. ScrcpyCoordSys: Video pixel coordinate system for scrcpy control protocol
 //!

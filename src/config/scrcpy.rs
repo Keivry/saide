@@ -28,8 +28,8 @@ pub struct VideoConfig {
     pub codec: String,
     #[serde(default = "default_encoder")]
     pub encoder: Option<String>,
-    /// Lock screen orientation during capture (0-3: portrait/landscape/portrait180/landscape180)
-    /// None = auto-rotate with device, Some(0) = lock to portrait
+    /// Lock screen orientation during capture (0-3 in clockwise quarter-turns)
+    /// None = auto-rotate with device, Some(0) = lock to portrait, Some(1) = 90° clockwise
     #[serde(default)]
     pub capture_orientation: Option<u32>,
 }
