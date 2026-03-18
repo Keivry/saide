@@ -37,6 +37,8 @@ pub struct NvdecDecoder {
 
     /// Counter for consecutive empty frame returns (indicates decode failure)
     consecutive_empty_frames: u32,
+
+    flushed: bool,
 }
 
 impl NvdecDecoder {
@@ -114,6 +116,7 @@ impl NvdecDecoder {
             output_format: Pixel::NV12, // NVDEC outputs NV12
             last_decoded_dimensions: None,
             consecutive_empty_frames: 0,
+            flushed: false,
         })
     }
 
@@ -260,6 +263,10 @@ impl VideoDecoder for NvdecDecoder {
     }
 
     fn flush(&mut self) -> Result<Vec<DecodedFrame>> {
+        if self.flushed {
+            return Ok(vec![]);
+        }
+        self.flushed = true;
         debug!("Flushing decoder");
         self.decoder.send_eof()?;
         self.receive_frames()
