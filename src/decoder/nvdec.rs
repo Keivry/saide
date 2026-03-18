@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! NVIDIA NVDEC hardware-accelerated H.264 decoder
+//! NVIDIA NVDEC hardware-accelerated H.264 decoder (h264 + CUDA hwaccel)
 
 use {
     super::{
+        error::{Result, VideoError},
         DecodedFrame,
         VideoDecoder,
-        error::{Result, VideoError},
     },
     ffmpeg::{
         codec,
@@ -71,12 +71,11 @@ impl NvdecDecoder {
 
         info!("CUDA device context created");
 
-        // Find h264_cuvid decoder
-        let codec = ffmpeg::decoder::find_by_name("h264_cuvid").ok_or_else(|| {
-            VideoError::InitializationError("H.264 CUVID decoder not found".to_string())
+        let codec = ffmpeg::decoder::find_by_name("h264").ok_or_else(|| {
+            VideoError::InitializationError("H.264 decoder not found".to_string())
         })?;
 
-        info!("Found H.264 CUVID decoder: {}", codec.name());
+        info!("Found H.264 decoder with CUDA hwaccel: {}", codec.name());
 
         // Create decoder context
         let mut context = codec::context::Context::new_with_codec(codec);
@@ -90,10 +89,6 @@ impl NvdecDecoder {
             // Set format callback to select CUDA
             (*ctx_ptr).get_format = Some(get_cuda_format);
 
-            // DON'T set width/height here - let CUVID auto-detect from stream
-            // Setting them causes "AVHWFramesContext is already initialized" error
-            (*ctx_ptr).sw_pix_fmt = ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NV12;
-
             (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
             (*ctx_ptr).flags2 |= ffmpeg::sys::AV_CODEC_FLAG2_FAST;
             (*ctx_ptr).strict_std_compliance = ffmpeg::sys::FF_COMPLIANCE_EXPERIMENTAL;
@@ -105,7 +100,7 @@ impl NvdecDecoder {
             VideoError::InitializationError(format!("Failed to create NVDEC decoder: {e:?}"))
         })?;
 
-        debug!("NVDEC H.264 decoder initialized (will auto-detect {width}x{height} from stream)");
+        debug!("H.264+CUDA hwaccel decoder initialized ({width}x{height})");
 
         Ok(Self {
             decoder,
@@ -162,6 +157,11 @@ impl NvdecDecoder {
                     let width = sw_frame.width();
                     let height = sw_frame.height();
                     let format = sw_frame.format();
+
+                    if format != Pixel::NV12 {
+                        warn!("Unexpected sw_frame format after hwframe transfer: {format:?}, expected NV12; skipping frame");
+                        continue;
+                    }
 
                     trace!(
                         "Decoded frame (NVDEC): {}x{} {:?} PTS={:?}",
@@ -318,6 +318,7 @@ unsafe extern "C" fn get_cuda_format(
             }
             p = p.offset(1);
         }
+        warn!("AV_PIX_FMT_CUDA not available; FFmpeg may lack --enable-nvdec or GPU does not support h264 NVDEC");
         ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NONE
     }
 }
