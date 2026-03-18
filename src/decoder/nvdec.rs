@@ -4,9 +4,9 @@
 
 use {
     super::{
-        error::{Result, VideoError},
         DecodedFrame,
         VideoDecoder,
+        error::{Result, VideoError},
     },
     ffmpeg::{
         codec,
@@ -159,7 +159,9 @@ impl NvdecDecoder {
                     let format = sw_frame.format();
 
                     if format != Pixel::NV12 {
-                        warn!("Unexpected sw_frame format after hwframe transfer: {format:?}, expected NV12; skipping frame");
+                        warn!(
+                            "Unexpected sw_frame format after hwframe transfer: {format:?}, expected NV12; skipping frame"
+                        );
                         continue;
                     }
 
@@ -318,7 +320,9 @@ unsafe extern "C" fn get_cuda_format(
             }
             p = p.offset(1);
         }
-        warn!("AV_PIX_FMT_CUDA not available; FFmpeg may lack --enable-nvdec or GPU does not support h264 NVDEC");
+        warn!(
+            "AV_PIX_FMT_CUDA not available; FFmpeg may lack --enable-nvdec or GPU does not support h264 NVDEC"
+        );
         ffmpeg::sys::AVPixelFormat::AV_PIX_FMT_NONE
     }
 }
