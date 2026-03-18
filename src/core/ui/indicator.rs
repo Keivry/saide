@@ -28,7 +28,7 @@ pub struct Indicator {
     device_orientation: u32,
 
     // Scrcpy-server capture orientation (0-3), counter-clockwise
-    capture_orientation: u32,
+    capture_orientation: Option<u32>,
 
     // Video render rotation state (0-3), clockwise
     video_rotation: u32,
@@ -56,7 +56,7 @@ impl Indicator {
         Self {
             active_profile_name: None,
             device_orientation: 0,
-            capture_orientation: 0,
+            capture_orientation: None,
             video_rotation: 0,
             video_original_width: 0,
             video_original_height: 0,
@@ -105,6 +105,11 @@ impl Indicator {
 
     pub fn update_video_rotation(&mut self, rotation: u32) -> &mut Self {
         self.video_rotation = rotation;
+        self
+    }
+
+    pub fn update_capture_orientation(&mut self, orientation: Option<u32>) -> &mut Self {
+        self.capture_orientation = orientation.map(|o| o % 4);
         self
     }
 
@@ -246,7 +251,11 @@ impl Indicator {
                                 ui.end_row();
 
                                 ui.label(t!("indicator-panel-capture-orientation"));
-                                ui.label(format!("{}°", self.capture_orientation * 90));
+                                ui.label(format!(
+                                    "{}°",
+                                    self.capture_orientation
+                                        .map_or("NONE".to_string(), |o| (o * 90).to_string())
+                                ));
                                 ui.end_row();
 
                                 ui.label(t!("indicator-panel-video-rotation"));

@@ -295,6 +295,8 @@ impl SAideApp {
                         self.app_state
                             .scrcpy_coords_mut()
                             .update_capture_orientation(corientation);
+
+                        self.indicator.update_capture_orientation(corientation);
                     }
                     InitEvent::KeyboardMapper(keyboard_mapper) => {
                         self.app_state.keyboard_mapper = Some(keyboard_mapper);
