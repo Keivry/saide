@@ -72,6 +72,10 @@ src/
 │   └── audio/              Opus decode and audio playback
 │
 ├── avsync/                 Audio/video timing coordination
+├── capture/                Screenshot and screen recording
+│   ├── mod.rs              `CaptureEvent` enum; declares recorder and screenshot submodules
+│   ├── recorder.rs         MP4 recording via FFmpeg H264+AAC encoder, YUV420P CPU rotation
+│   └── screenshot.rs       PNG screenshot via FFmpeg swscale + image-rs rotation
 ├── profiler/               Latency breakdown and rolling stats
 ├── i18n/                   Locale loading and source management
 ├── shortcut/               Shortcut-related helpers

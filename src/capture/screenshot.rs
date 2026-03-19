@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! PNG screenshot capture.
+//!
+//! Converts a [`DecodedFrame`] to RGB24 via FFmpeg's `swscale`, applies the
+//! requested clockwise rotation through `image::imageops`, and saves the
+//! result as a PNG file.  The encoding step runs in a background thread so
+//! the UI is never blocked.
+
 use {
     crate::{capture::CaptureEvent, decoder::DecodedFrame},
     chrono::Local,

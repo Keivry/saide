@@ -29,6 +29,8 @@ window_height = 720
 smart_window_resize = true
 bind_address = "127.0.0.1"
 scrcpy_server = "<resolved path to scrcpy-server-v3.3.3>"
+# screenshot_path = "/home/user/Pictures/saide"
+# recording_path = "/home/user/Videos/saide"
 ```
 
 - `keyboard_enabled`: enable keyboard mapping logic
@@ -40,6 +42,8 @@ scrcpy_server = "<resolved path to scrcpy-server-v3.3.3>"
 - `smart_window_resize`: scale oversized content down using built-in resolution tiers
 - `bind_address`: host bind address for the reverse-tunneled scrcpy connection, such as `127.0.0.1` or `[::1]`
 - `scrcpy_server`: local path to the scrcpy server binary; if not set, SAide searches the app data directory, current working directory, and the legacy `3rd-party/` directory in that order
+- `screenshot_path`: directory where screenshots are saved; uses the system Pictures directory (`~/Pictures/saide`) when available, falling back to `$HOME/Pictures/saide` if the platform Pictures directory cannot be resolved
+- `recording_path`: directory where screen recordings are saved; uses the system Videos directory (`~/Videos/saide`) when available, falling back to `$HOME/Videos/saide` if the platform Videos directory cannot be resolved
 
 ### scrcpy server lookup order
 

@@ -14,6 +14,7 @@ SAide is a desktop client for mirroring and controlling Android devices through 
 - per-device and per-rotation mapping profiles
 - hardware decoding: NVDEC, VAAPI, D3D11VA with software fallback
 - built-in latency profiling and status indicators
+- one-click screenshot and screen recording saved locally as PNG / MP4
 
 ## Quick start
 

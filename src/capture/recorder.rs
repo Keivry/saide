@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! MP4 screen recording via FFmpeg.
+//!
+//! Video is encoded as H.264 (YUV420P, CRF 23, ultrafast preset) and audio —
+//! when available — as AAC 128 kbps stereo at 44 100 Hz.  The recording runs
+//! in a dedicated OS thread: the caller pushes [`DecodedFrame`] and
+//! [`DecodedAudio`] values through bounded channels and stops the session by
+//! dropping (or calling [`RecorderHandle::stop`] on) the handle.
+
 use {
     crate::{
         capture::CaptureEvent,
@@ -25,13 +33,24 @@ use {
 const VIDEO_CHANNEL_CAP: usize = 30;
 const AUDIO_CHANNEL_CAP: usize = 60;
 
+/// Configuration for a new recording session.
 pub struct RecorderConfig {
+    /// Width of the incoming video frames in pixels.
     pub width: u32,
+    /// Height of the incoming video frames in pixels.
     pub height: u32,
+    /// Directory where the output MP4 file will be written.
     pub save_dir: PathBuf,
+    /// Number of 90° clockwise rotations to apply (0–3), matching the UI display orientation.
     pub rotation: u32,
 }
 
+/// Handle to a running recording session.
+///
+/// Drop this value (or call [`RecorderHandle::stop`]) to signal the recording
+/// thread to flush and close the output file.  The final path is delivered
+/// through the `event_tx` channel as [`CaptureEvent::RecordingSaved`] on
+/// success, or [`CaptureEvent::RecordingError`] on failure.
 pub struct RecorderHandle {
     stop_tx: Sender<()>,
     video_tx: Sender<Arc<DecodedFrame>>,
@@ -68,8 +87,11 @@ impl RecorderHandle {
         }
     }
 
+    /// Returns a sender for pushing video frames into the recording pipeline.
     pub fn video_sender(&self) -> Sender<Arc<DecodedFrame>> { self.video_tx.clone() }
 
+    /// Returns a sender for pushing decoded audio into the recording pipeline,
+    /// or `None` if the session was started without audio (`has_audio = false`).
     pub fn audio_sender(&self) -> Option<Sender<DecodedAudio>> { self.audio_tx.clone() }
 
     /// Signals the recording thread to stop and blocks until it exits.
@@ -561,6 +583,7 @@ fn rotate_yuv420p(src: &VideoFrame, w: u32, h: u32, rotation: u32) -> Result<Vid
     let dst_stride_1 = dst.stride(1);
     let dst_stride_2 = dst.stride(2);
 
+    // Y plane — full luma resolution (w × h).
     rotate_plane(
         src.data(0),
         src.stride(0),
@@ -571,6 +594,8 @@ fn rotate_yuv420p(src: &VideoFrame, w: u32, h: u32, rotation: u32) -> Result<Vid
         rot,
     );
 
+    // Cb (U) and Cr (V) planes — half luma resolution in both dimensions
+    // due to YUV420P 4:2:0 chroma subsampling.
     let cw = w / 2;
     let ch = h / 2;
     rotate_plane(
@@ -695,4 +720,63 @@ fn fill_video_frame(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rotate_plane;
+
+    fn call(src: &[u8], src_stride: usize, w: u32, h: u32, rotation: u32) -> Vec<u8> {
+        let (dst_w, dst_h) = if rotation % 2 == 1 {
+            (h as usize, w as usize)
+        } else {
+            (w as usize, h as usize)
+        };
+        let mut dst = vec![0u8; dst_w * dst_h];
+        rotate_plane(src, src_stride, &mut dst, dst_w, w, h, rotation);
+        dst
+    }
+
+    #[test]
+    fn rotate_plane_rot0_copies_plane() {
+        let src = vec![1u8, 2, 3, 4, 5, 6];
+        let dst = call(&src, 3, 3, 2, 0);
+        assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn rotate_plane_rot1_90cw() {
+        // 2×3 grid (w=2, h=3):
+        //  1 2
+        //  3 4
+        //  5 6
+        // After 90° CW → 3×2 grid:
+        //  5 3 1
+        //  6 4 2
+        let src = vec![1u8, 2, 3, 4, 5, 6];
+        let dst = call(&src, 2, 2, 3, 1);
+        assert_eq!(dst, vec![5, 3, 1, 6, 4, 2]);
+    }
+
+    #[test]
+    fn rotate_plane_rot2_180() {
+        // 2×3 grid → 180° reverses element order
+        let src = vec![1u8, 2, 3, 4, 5, 6];
+        let dst = call(&src, 2, 2, 3, 2);
+        assert_eq!(dst, vec![6, 5, 4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn rotate_plane_rot3_270cw() {
+        // 2×3 grid (w=2, h=3):
+        //  1 2
+        //  3 4
+        //  5 6
+        // After 270° CW (= 90° CCW) → 3×2 grid:
+        //  2 4 6
+        //  1 3 5
+        let src = vec![1u8, 2, 3, 4, 5, 6];
+        let dst = call(&src, 2, 2, 3, 3);
+        assert_eq!(dst, vec![2, 4, 6, 1, 3, 5]);
+    }
 }
