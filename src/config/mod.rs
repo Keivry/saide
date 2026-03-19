@@ -161,13 +161,19 @@ pub struct GeneralConfig {
     #[serde(default = "default_scrcpy_server_path")]
     pub scrcpy_server: String,
 
-    /// Directory where screenshots are saved
-    /// Defaults to ~/Pictures/saide/ (or ~/saide/screenshots/ if Pictures unavailable)
+    /// Directory where screenshots are saved.
+    /// Resolved from the platform's configured pictures directory (e.g.
+    /// `XDG_PICTURES_DIR` on Linux, `My Pictures` on Windows) with a `saide`
+    /// subdirectory appended; falls back to `$HOME/Pictures/saide` if the
+    /// platform pictures directory cannot be determined.
     #[serde(default = "default_screenshot_path")]
     pub screenshot_path: String,
 
-    /// Directory where screen recordings are saved
-    /// Defaults to ~/Videos/saide/ (or ~/saide/recordings/ if Videos unavailable)
+    /// Directory where screen recordings are saved.
+    /// Resolved from the platform's configured videos directory (e.g.
+    /// `XDG_VIDEOS_DIR` on Linux, `My Videos` on Windows) with a `saide`
+    /// subdirectory appended; falls back to `$HOME/Videos/saide` if the
+    /// platform videos directory cannot be determined.
     #[serde(default = "default_recording_path")]
     pub recording_path: String,
 }
