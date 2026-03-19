@@ -1108,6 +1108,7 @@ impl SAideApp {
         let audio_tx = handle.audio_sender();
         self.player.register_recorder(video_tx, audio_tx);
         self.recorder = Some(handle);
+        info!("Recording started");
         self.notifier.notify(&t!("notification-recording-started"));
     }
 
@@ -1119,6 +1120,7 @@ impl SAideApp {
             match event {
                 CaptureEvent::ScreenshotSaved(path) => {
                     let path_str = path.display().to_string();
+                    info!("Screenshot saved: {path_str}");
                     let msg = tf!("notification-screenshot-saved", "path" => path_str.as_str());
                     self.notifier.notify(&msg);
                 }
@@ -1126,6 +1128,7 @@ impl SAideApp {
                     self.player.unregister_recorder();
                     self.recorder = None;
                     let path_str = path.display().to_string();
+                    info!("Recording saved: {path_str}");
                     let msg = tf!("notification-recording-stopped", "path" => path_str.as_str());
                     self.notifier.notify(&msg);
                 }
