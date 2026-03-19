@@ -12,7 +12,6 @@ fn main() {
     // Test translation with arguments
     println!("\nWith arguments:");
     println!("{}", tf!("indicator-fps", "fps" => "60"));
-    println!("{}", tf!("indicator-latency", "ms" => "42"));
 
     // Check current locale
     let locale = L10N.read().current_locale().to_string();
@@ -27,7 +26,6 @@ fn main() {
     println!("App title: {}", t!("app-title"));
     println!("Editor: {}", t!("toolbar-editor"));
     println!("{}", tf!("indicator-fps", "fps" => "60"));
-    println!("{}", tf!("indicator-latency", "ms" => "42"));
 
     // Switch back to English
     println!("\n=== Switching to English ===\n");
@@ -36,7 +34,6 @@ fn main() {
     println!("App title: {}", t!("app-title"));
     println!("Editor: {}", t!("toolbar-editor"));
     println!("{}", tf!("indicator-fps", "fps" => "60"));
-    println!("{}", tf!("indicator-latency", "ms" => "42"));
 
     println!("\n=== i18n test completed ===");
 }

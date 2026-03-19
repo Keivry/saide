@@ -2,23 +2,19 @@
 app-title = SAide
 
 ## UI - 工具栏
-toolbar-rotate = 旋转视频
-toolbar-configure = 配置映射
+toolbar-toggle-keyboard-mapping = 开关键盘映射
+toolbar-mapping-visualization = 开关映射可视化
 toolbar-editor = 映射编辑器
-toolbar-create-profile = 创建映射配置
-toolbar-delete-profile = 删除映射配置
-toolbar-keyboard-mapping = 切换键盘映射
-toolbar-mapping-visualization = 显示映射可视化
+toolbar-rotate = 旋转视频
+toolbar-screenshot = 截图
+toolbar-recording = 开始/停止录屏
 toolbar-screen-off = 关闭屏幕
-toolbar-screen-off-hint = （按物理电源键唤醒）
 toolbar-pin-toolbar = 固定工具栏
 toolbar-float-toolbar = 悬浮工具栏
-toolbar-screenshot = 截图
-toolbar-recording = 切换录屏
-toolbar-recording-started = 录屏已开始
-toolbar-recording-stopped = 录屏已保存：{$path}
-toolbar-screenshot-saved = 截图已保存：{$path}
-toolbar-capture-error = 截图/录屏错误：{$error}
+notification-recording-started = 录屏已开始
+notification-recording-stopped = 录屏已保存：{$path}
+notification-screenshot-saved = 截图已保存：{$path}
+notification-capture-error = 截图/录屏错误：{$error}
 
 ## UI - 音频警告
 audio-warning-title = 音频不可用
@@ -36,12 +32,6 @@ player-error-details = 详情：{$error}
 
 ## UI - 指示器
 indicator-fps = FPS: {$fps}
-indicator-latency = 延迟: {$ms}ms
-indicator-frames = 帧数: {$total}
-indicator-dropped = 丢帧: {$dropped}
-indicator-profile = 配置: {$profile}
-indicator-orientation = 方向: {$orientation}°
-indicator-resolution = 分辨率: {$width}x{$height}
 
 ## UI - 指示器浮动面板
 indicator-panel-resolution = 分辨率：
@@ -78,13 +68,19 @@ editor-dialog-delete-profile-title = 删除配置
 editor-dialog-delete-profile-message = 确定要删除配置 "{$name}" 吗？
 editor-dialog-rename-title = 重命名配置
 editor-dialog-rename-placeholder = 新名称
-editor-dialog-new-title = 创建新配置
-editor-dialog-new-placeholder = 配置名称
-editor-dialog-saveas-title = 另存为配置
-editor-dialog-saveas-placeholder = 新配置名称
-editor-dialog-switch-title = 选择要启用的配置
+editor-dialog-new-profile-title = 创建新配置
+editor-dialog-new-profile-placeholder = 配置名称
+editor-dialog-save-profile-as-title = 另存为配置
+editor-dialog-save-profile-as-placeholder = 新配置名称
+editor-dialog-switch-profile-title = 选择要启用的配置
 editor-dialog-error-profile-exists-title = 配置已存在
 editor-dialog-error-profile-exists-message = 配置 "{$profile_name}" 已存在。
+
+## UI - 通用对话框按钮
+dialog-button-confirm = 确认
+dialog-button-cancel = 取消
+
+## UI - 帮助
 help-title = 帮助
 help-message =
     可用快捷键：
@@ -116,14 +112,11 @@ notification-no-profile-to-switch = 没有可切换的配置
 notification-add-mapping-failed = 添加映射失败
 notification-delete-mapping-failed = 删除映射失败
 notification-save-config-failed = 保存配置失败
-profile-error-not-found = 配置不存在
-profile-error-name-conflict = 配置名称已存在
-profile-error-invalid-format = 配置名称不能为空
+notification-profile-error-not-found = 配置不存在
+notification-profile-error-name-conflict = 配置名称已存在
+notification-profile-error-invalid-format = 配置名称不能为空
 
-## UI - 通用对话框按钮
-dialog-button-confirm = 确认
-dialog-button-cancel = 取消
-
+## UI - 编解码器兼容性检测
 probe-codec-dialog-title = 检测编解码器兼容性
 probe-codec-dialog-message = 未找到设备 { $serial } 的编解码器配置文件。立即运行检测？（约 30-60 秒）
 probe-codec-progress-title = 正在检测编解码器兼容性

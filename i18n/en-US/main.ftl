@@ -2,23 +2,19 @@
 app-title = SAide
 
 ## UI - Toolbar
-toolbar-rotate = Rotate Video
-toolbar-configure = Configure Mapping
+toolbar-toggle-keyboard-mapping = Toggle Keyboard Mapping
+toolbar-mapping-visualization = Toggle Mapping Visualization
 toolbar-editor = Mapping Editor
-toolbar-create-profile = Create Mapping Profile
-toolbar-delete-profile = Delete Mapping Profile
-toolbar-keyboard-mapping = Toggle Keyboard Mapping
-toolbar-mapping-visualization = Show Mapping Visualization
-toolbar-screen-off = Screen Off
-toolbar-screen-off-hint = (Press physical power button to wake)
-toolbar-pin-toolbar = Pin Toolbar
-toolbar-float-toolbar = Float Toolbar
+toolbar-rotate = Rotate Video
 toolbar-screenshot = Take Screenshot
 toolbar-recording = Toggle Recording
-toolbar-recording-started = Recording started
-toolbar-recording-stopped = Recording saved: {$path}
-toolbar-screenshot-saved = Screenshot saved: {$path}
-toolbar-capture-error = Capture error: {$error}
+toolbar-screen-off = Screen Off
+toolbar-pin-toolbar = Pin Toolbar
+toolbar-float-toolbar = Float Toolbar
+notification-recording-started = Recording started
+notification-recording-stopped = Recording saved: {$path}
+notification-screenshot-saved = Screenshot saved: {$path}
+notification-capture-error = Capture error: {$error}
 
 ## UI - Audio Warning
 audio-warning-title = Audio Unavailable
@@ -36,12 +32,6 @@ player-error-details = Details: {$error}
 
 ## UI - Indicator
 indicator-fps = FPS: {$fps}
-indicator-latency = Latency: {$ms}ms
-indicator-frames = Frames: {$total}
-indicator-dropped = Dropped: {$dropped}
-indicator-profile = Profile: {$profile}
-indicator-orientation = Orientation: {$orientation}°
-indicator-resolution = Resolution: {$width}x{$height}
 
 ## UI - Indicator Panel
 indicator-panel-resolution = Resolution:
@@ -78,13 +68,19 @@ editor-dialog-delete-profile-title = Delete Profile
 editor-dialog-delete-profile-message = Delete profile "{$name}"?
 editor-dialog-rename-title = Rename Profile
 editor-dialog-rename-placeholder = New Name
-editor-dialog-new-title = Create New Profile
-editor-dialog-new-placeholder = Profile name
-editor-dialog-saveas-title = Save Profile As
-editor-dialog-saveas-placeholder = New Profile Name
-editor-dialog-switch-title = Select Profile to Activate
+editor-dialog-new-profile-title = Create New Profile
+editor-dialog-new-profile-placeholder = Profile name
+editor-dialog-save-profile-as-title = Save Profile As
+editor-dialog-save-profile-as-placeholder = New Profile Name
+editor-dialog-switch-profile-title = Select Profile to Activate
 editor-dialog-error-profile-exists-title = Profile Already Exists
 editor-dialog-error-profile-exists-message = Profile "{$profile_name}" already exists.
+
+## UI - Common Dialog Buttons
+dialog-button-confirm = Confirm
+dialog-button-cancel = Cancel
+
+## UI - Help
 help-title = Help
 help-message =
     Available shortcuts:
@@ -116,14 +112,11 @@ notification-no-profile-to-switch = No other profile available to switch
 notification-add-mapping-failed = Failed to add mapping
 notification-delete-mapping-failed = Failed to delete mapping
 notification-save-config-failed = Failed to save config
-profile-error-not-found = Profile not found
-profile-error-name-conflict = Profile name already exists
-profile-error-invalid-format = Profile name cannot be empty
+notification-profile-error-not-found = Profile not found
+notification-profile-error-name-conflict = Profile name already exists
+notification-profile-error-invalid-format = Profile name cannot be empty
 
-## UI - Common Dialog Buttons
-dialog-button-confirm = Confirm
-dialog-button-cancel = Cancel
-
+# UI - Codec Compatibility Detection
 probe-codec-dialog-title = Detect Codec Compatibility
 probe-codec-dialog-message = No codec profile found for device { $serial }. Run detection now? (~30-60s)
 probe-codec-progress-title = Detecting Codec Compatibility

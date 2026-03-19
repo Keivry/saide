@@ -14,9 +14,9 @@ impl SAideApp {
     fn profile_error_reason(&self, err: &ProfileError) -> String {
         match err {
             ProfileError::NoActiveProfile => t!("notification-no-active-profile"),
-            ProfileError::ProfileNotFound => t!("profile-error-not-found"),
-            ProfileError::ProfileConflict => t!("profile-error-name-conflict"),
-            ProfileError::ProfileFormatError => t!("profile-error-invalid-format"),
+            ProfileError::ProfileNotFound => t!("notification-profile-error-not-found"),
+            ProfileError::ProfileConflict => t!("notification-profile-error-name-conflict"),
+            ProfileError::ProfileFormatError => t!("notification-profile-error-invalid-format"),
             ProfileError::NoProfileToSwitch => t!("notification-no-profile-to-switch"),
         }
     }

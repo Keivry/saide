@@ -1108,7 +1108,7 @@ impl SAideApp {
         let audio_tx = handle.audio_sender();
         self.player.register_recorder(video_tx, audio_tx);
         self.recorder = Some(handle);
-        self.notifier.notify(&t!("toolbar-recording-started"));
+        self.notifier.notify(&t!("notification-recording-started"));
     }
 
     fn poll_capture_events(&mut self) {
@@ -1119,26 +1119,26 @@ impl SAideApp {
             match event {
                 CaptureEvent::ScreenshotSaved(path) => {
                     let path_str = path.display().to_string();
-                    let msg = tf!("toolbar-screenshot-saved", "path" => path_str.as_str());
+                    let msg = tf!("notification-screenshot-saved", "path" => path_str.as_str());
                     self.notifier.notify(&msg);
                 }
                 CaptureEvent::RecordingSaved(path) => {
                     self.player.unregister_recorder();
                     self.recorder = None;
                     let path_str = path.display().to_string();
-                    let msg = tf!("toolbar-recording-stopped", "path" => path_str.as_str());
+                    let msg = tf!("notification-recording-stopped", "path" => path_str.as_str());
                     self.notifier.notify(&msg);
                 }
                 CaptureEvent::ScreenshotError(e) => {
                     error!("Screenshot error: {e}");
-                    let msg = tf!("toolbar-capture-error", "error" => e.as_str());
+                    let msg = tf!("notification-capture-error", "error" => e.as_str());
                     self.notifier.notify(&msg);
                 }
                 CaptureEvent::RecordingError(e) => {
                     error!("Recording error: {e}");
                     self.player.unregister_recorder();
                     self.recorder = None;
-                    let msg = tf!("toolbar-capture-error", "error" => e.as_str());
+                    let msg = tf!("notification-capture-error", "error" => e.as_str());
                     self.notifier.notify(&msg);
                 }
             }

@@ -24,8 +24,10 @@ impl SAideApp {
 
             let idx = self.profile_manager.get_active_profile_idx().unwrap_or(0);
 
-            let mut dialog =
-                ModalDialog::new("switch_profile_dialog", &t!("editor-dialog-switch-title"));
+            let mut dialog = ModalDialog::new(
+                "switch_profile_dialog",
+                &t!("editor-dialog-switch-profile-title"),
+            );
             dialog.add_list_selection("profile", profiles.iter().map(|s| s.as_str()), idx);
 
             self.dialog.replace(dialog);
@@ -53,8 +55,9 @@ impl SAideApp {
 
     pub fn show_create_profile_dialog(&mut self) {
         if self.dialog.is_none() {
-            let mut dialog = ModalDialog::new("new_profile_dialog", &t!("editor-dialog-new-title"));
-            let placeholder = t!("editor-dialog-new-placeholder");
+            let mut dialog =
+                ModalDialog::new("new_profile_dialog", &t!("editor-dialog-new-profile-title"));
+            let placeholder = t!("editor-dialog-new-profile-placeholder");
             dialog.add_text_input("name", Some(placeholder.as_str()), None, true);
 
             self.dialog.replace(dialog);
@@ -87,11 +90,13 @@ impl SAideApp {
                 return;
             };
 
-            let mut dialog =
-                ModalDialog::new("save_as_profile_dialog", &t!("editor-dialog-saveas-title"));
+            let mut dialog = ModalDialog::new(
+                "save_as_profile_dialog",
+                &t!("editor-dialog-save-profile-as-title"),
+            );
             dialog.add_text_input(
                 "name",
-                Some(&t!("editor-dialog-saveas-placeholder")),
+                Some(&t!("editor-dialog-save-profile-as-placeholder")),
                 Some(&current_name),
                 true,
             );

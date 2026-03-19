@@ -41,14 +41,14 @@ enum ButtonType {
 
 struct ToolbarButton {
     btn_type: ButtonType,
-    lable: &'static str,
+    label: &'static str,
     tooltip_key: &'static str,
     event: ToolbarEvent,
 }
 
 const TOOLBAR_SEPARATOR: ToolbarButton = ToolbarButton {
     btn_type: ButtonType::Separator,
-    lable: "",
+    label: "",
     tooltip_key: "",
     event: ToolbarEvent::None,
 };
@@ -60,8 +60,8 @@ lazy_static! {
                 is_selected: ToolbarViewState::is_keyboard_mapping_enabled,
                 is_enabled: ToolbarViewState::has_active_mappings,
             },
-            lable: "⌨",
-            tooltip_key: "toolbar-keyboard-mapping",
+            label: "⌨",
+            tooltip_key: "toolbar-toggle-keyboard-mapping",
             event: ToolbarEvent::ToggleKeyboardMapping,
         },
         ToolbarButton {
@@ -69,26 +69,26 @@ lazy_static! {
                 is_selected: ToolbarViewState::is_mapping_visualization_enabled,
                 is_enabled: ToolbarViewState::has_active_mappings,
             },
-            lable: "👁",
+            label: "👁",
             tooltip_key: "toolbar-mapping-visualization",
             event: ToolbarEvent::ToggleMappingVisualization,
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,
-            lable: "⚙",
+            label: "⚙",
             tooltip_key: "toolbar-editor",
             event: ToolbarEvent::ToggleMappingEditor,
         },
         TOOLBAR_SEPARATOR,
         ToolbarButton {
             btn_type: ButtonType::Normal,
-            lable: "⟳",
+            label: "⟳",
             tooltip_key: "toolbar-rotate",
             event: ToolbarEvent::RotateVideo,
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,
-            lable: "📷",
+            label: "📷",
             tooltip_key: "toolbar-screenshot",
             event: ToolbarEvent::TakeScreenshot,
         },
@@ -97,14 +97,14 @@ lazy_static! {
                 is_selected: ToolbarViewState::is_recording,
                 is_enabled: ToolbarViewState::always_enabled,
             },
-            lable: "⏺",
+            label: "⏺",
             tooltip_key: "toolbar-recording",
             event: ToolbarEvent::ToggleRecording,
         },
         TOOLBAR_SEPARATOR,
         ToolbarButton {
             btn_type: ButtonType::Normal,
-            lable: "💤",
+            label: "💤",
             tooltip_key: "toolbar-screen-off",
             event: ToolbarEvent::ToggleScreenPower,
         },
@@ -201,7 +201,7 @@ impl Toolbar {
     }
 
     fn draw_button(&self, btn: &ToolbarButton, ui: &mut egui::Ui, state: ToolbarViewState) -> bool {
-        let mut button = Button::new(RichText::new(btn.lable).size(TOOLBAR_FONT_SIZE));
+        let mut button = Button::new(RichText::new(btn.label).size(TOOLBAR_FONT_SIZE));
 
         let (enabled, selected) = match btn.btn_type {
             ButtonType::Normal => (true, false),
