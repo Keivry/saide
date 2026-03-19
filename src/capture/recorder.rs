@@ -14,8 +14,9 @@ use {
         decoder::{DecodedAudio, DecodedFrame},
     },
     chrono::Local,
-    crossbeam_channel::{Receiver, Sender, bounded, select},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, select},
     ffmpeg_next::{
+        self as ffmpeg,
         ChannelLayout,
         Dictionary,
         Rational,
@@ -32,6 +33,14 @@ use {
 
 const VIDEO_CHANNEL_CAP: usize = 30;
 const AUDIO_CHANNEL_CAP: usize = 60;
+const AUDIO_SAMPLE_RATE: u32 = 44_100;
+
+#[derive(Clone, Copy)]
+struct AudioOutputConfig {
+    sample_rate: u32,
+    sample_format: ffmpeg_next::format::Sample,
+    channel_layout: ChannelLayout,
+}
 
 /// Configuration for a new recording session.
 pub struct RecorderConfig {
@@ -116,6 +125,8 @@ fn run_recorder(
     audio_rx: Option<Receiver<DecodedAudio>>,
     stop_rx: Receiver<()>,
 ) -> Result<PathBuf, String> {
+    ffmpeg::init().map_err(|e| format!("Failed to initialize FFmpeg for recording: {e}"))?;
+
     let filename = format!(
         "saide_recording_{}.mp4",
         Local::now().format("%Y%m%d_%H%M%S")
@@ -136,20 +147,14 @@ fn run_recorder(
     let mut video_encoder = open_video_encoder(&mut octx, enc_w, enc_h, needs_global_header)?;
     let video_stream_idx = octx.nb_streams() as usize - 1;
 
-    let mut audio_enc_and_idx: Option<(encoder::audio::Encoder, usize)> = if audio_rx.is_some() {
-        match open_audio_encoder(&mut octx, needs_global_header) {
-            Ok(enc) => {
-                let idx = octx.nb_streams() as usize - 1;
-                Some((enc, idx))
-            }
-            Err(e) => {
-                tracing::warn!("AAC encoder init failed, recording without audio: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let mut audio_enc_and_idx: Option<(encoder::audio::Encoder, usize, AudioOutputConfig)> =
+        if audio_rx.is_some() {
+            let (enc, output_config) = open_audio_encoder(&mut octx, needs_global_header)?;
+            let idx = octx.nb_streams() as usize - 1;
+            Some((enc, idx, output_config))
+        } else {
+            None
+        };
 
     octx.write_header()
         .map_err(|e| format!("Failed to write MP4 header: {}", e))?;
@@ -162,19 +167,31 @@ fn run_recorder(
     let mut swr_ctx: Option<SwrContext> = None;
     let audio_frame_size = audio_enc_and_idx
         .as_ref()
-        .map(|(enc, _)| enc.frame_size() as usize)
+        .map(|(enc, ..)| enc.frame_size() as usize)
         .unwrap_or(1024);
     let mut audio_buf_l: Vec<f32> = Vec::new();
     let mut audio_buf_r: Vec<f32> = Vec::new();
 
     let rotation = config.rotation;
+    let mut video_active = true;
     let mut audio_active = audio_rx.is_some();
+    let mut stop_requested = false;
 
     loop {
-        if audio_active {
-            if let Some(ref arx) = audio_rx {
+        if !video_active && !audio_active {
+            break;
+        }
+
+        match (video_active, audio_active) {
+            (true, true) => {
+                let arx = audio_rx
+                    .as_ref()
+                    .expect("audio receiver should exist while audio is active");
                 select! {
-                    recv(stop_rx) -> _ => break,
+                    recv(stop_rx) -> _ => {
+                        stop_requested = true;
+                        break;
+                    },
                     recv(video_rx) -> msg => {
                         match msg {
                             Ok(frame) => {
@@ -186,20 +203,32 @@ fn run_recorder(
                                     tracing::warn!("Video encode error: {}", e);
                                 }
                             }
-                            Err(_) => break,
+                            Err(_) => {
+                                video_active = false;
+                            }
                         }
                     },
                     recv(arx) -> msg => {
                         match msg {
                             Ok(audio) => {
-                                if let Some((ref mut aenc, aidx)) = audio_enc_and_idx {
+                                if let Some((ref mut aenc, aidx, output_config)) = audio_enc_and_idx {
                                     if let Err(e) = resample_and_buffer(
-                                        &audio, &mut swr_ctx, &mut audio_buf_l, &mut audio_buf_r,
+                                        &audio,
+                                        &mut swr_ctx,
+                                        &mut audio_buf_l,
+                                        &mut audio_buf_r,
+                                        output_config,
                                     ) {
                                         tracing::warn!("Audio resample error: {}", e);
                                     } else if let Err(e) = encode_audio_buffer(
-                                        aenc, &mut octx, &mut audio_buf_l, &mut audio_buf_r,
-                                        audio_frame_size, aidx, &mut audio_pts,
+                                        aenc,
+                                        &mut octx,
+                                        &mut audio_buf_l,
+                                        &mut audio_buf_r,
+                                        audio_frame_size,
+                                        aidx,
+                                        &mut audio_pts,
+                                        output_config,
                                     ) {
                                         tracing::warn!("Audio encode error: {}", e);
                                     }
@@ -212,23 +241,138 @@ fn run_recorder(
                     },
                 }
             }
-        } else {
-            select! {
-                recv(stop_rx) -> _ => break,
-                recv(video_rx) -> msg => {
-                    match msg {
-                        Ok(frame) => {
-                            if let Err(e) = encode_video_frame(
-                                &frame, &mut video_encoder, &mut octx,
-                                &mut sws_ctx, &mut sws_src_key, video_stream_idx, video_enc_tb,
-                                &mut video_base_pts, rotation,
-                            ) {
-                                tracing::warn!("Video encode error: {}", e);
+            (true, false) => {
+                select! {
+                    recv(stop_rx) -> _ => {
+                        stop_requested = true;
+                        break;
+                    },
+                    recv(video_rx) -> msg => {
+                        match msg {
+                            Ok(frame) => {
+                                if let Err(e) = encode_video_frame(
+                                    &frame, &mut video_encoder, &mut octx,
+                                    &mut sws_ctx, &mut sws_src_key, video_stream_idx, video_enc_tb,
+                                    &mut video_base_pts, rotation,
+                                ) {
+                                    tracing::warn!("Video encode error: {}", e);
+                                }
+                            }
+                            Err(_) => {
+                                video_active = false;
                             }
                         }
-                        Err(_) => break,
+                    },
+                }
+            }
+            (false, true) => {
+                let arx = audio_rx
+                    .as_ref()
+                    .expect("audio receiver should exist while audio is active");
+                select! {
+                    recv(stop_rx) -> _ => {
+                        stop_requested = true;
+                        break;
+                    },
+                    recv(arx) -> msg => {
+                        match msg {
+                            Ok(audio) => {
+                                if let Some((ref mut aenc, aidx, output_config)) = audio_enc_and_idx {
+                                    if let Err(e) = resample_and_buffer(
+                                        &audio,
+                                        &mut swr_ctx,
+                                        &mut audio_buf_l,
+                                        &mut audio_buf_r,
+                                        output_config,
+                                    ) {
+                                        tracing::warn!("Audio resample error: {}", e);
+                                    } else if let Err(e) = encode_audio_buffer(
+                                        aenc,
+                                        &mut octx,
+                                        &mut audio_buf_l,
+                                        &mut audio_buf_r,
+                                        audio_frame_size,
+                                        aidx,
+                                        &mut audio_pts,
+                                        output_config,
+                                    ) {
+                                        tracing::warn!("Audio encode error: {}", e);
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                audio_active = false;
+                            }
+                        }
+                    },
+                }
+            }
+            (false, false) => break,
+        }
+    }
+
+    if stop_requested {
+        loop {
+            let mut made_progress = false;
+
+            match video_rx.try_recv() {
+                Ok(frame) => {
+                    made_progress = true;
+                    if let Err(e) = encode_video_frame(
+                        &frame,
+                        &mut video_encoder,
+                        &mut octx,
+                        &mut sws_ctx,
+                        &mut sws_src_key,
+                        video_stream_idx,
+                        video_enc_tb,
+                        &mut video_base_pts,
+                        rotation,
+                    ) {
+                        tracing::warn!("Video encode error while draining stop queue: {e}");
                     }
-                },
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+            }
+
+            if audio_active && let Some(ref arx) = audio_rx {
+                match arx.try_recv() {
+                    Ok(audio) => {
+                        made_progress = true;
+                        if let Some((ref mut aenc, aidx, output_config)) = audio_enc_and_idx {
+                            if let Err(e) = resample_and_buffer(
+                                &audio,
+                                &mut swr_ctx,
+                                &mut audio_buf_l,
+                                &mut audio_buf_r,
+                                output_config,
+                            ) {
+                                tracing::warn!(
+                                    "Audio resample error while draining stop queue: {e}"
+                                );
+                            } else if let Err(e) = encode_audio_buffer(
+                                aenc,
+                                &mut octx,
+                                &mut audio_buf_l,
+                                &mut audio_buf_r,
+                                audio_frame_size,
+                                aidx,
+                                &mut audio_pts,
+                                output_config,
+                            ) {
+                                tracing::warn!("Audio encode error while draining stop queue: {e}");
+                            }
+                        }
+                    }
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => {
+                        audio_active = false;
+                    }
+                }
+            }
+
+            if !made_progress {
+                break;
             }
         }
     }
@@ -239,9 +383,30 @@ fn run_recorder(
         video_stream_idx,
         video_enc_tb,
     )?;
-    if let Some((ref mut aenc, aidx)) = audio_enc_and_idx {
+    if let Some((ref mut aenc, aidx, output_config)) = audio_enc_and_idx {
+        flush_resampler_buffer(
+            &mut swr_ctx,
+            aenc,
+            &mut octx,
+            &mut audio_buf_l,
+            &mut audio_buf_r,
+            audio_frame_size,
+            aidx,
+            &mut audio_pts,
+            output_config,
+        )?;
+        flush_audio_buffer(
+            aenc,
+            &mut octx,
+            &mut audio_buf_l,
+            &mut audio_buf_r,
+            audio_frame_size,
+            aidx,
+            &mut audio_pts,
+            output_config,
+        )?;
         let audio_enc_tb = aenc.time_base();
-        let _ = drain_encoder(aenc, &mut octx, aidx, audio_enc_tb);
+        drain_encoder(aenc, &mut octx, aidx, audio_enc_tb)?;
     }
 
     octx.write_trailer()
@@ -301,45 +466,71 @@ fn open_video_encoder(
 fn open_audio_encoder(
     octx: &mut format::context::Output,
     global_header: bool,
-) -> Result<encoder::audio::Encoder, String> {
+) -> Result<(encoder::audio::Encoder, AudioOutputConfig), String> {
     let codec = encoder::find(ffmpeg_next::codec::Id::AAC)
         .ok_or_else(|| "AAC encoder not found".to_string())?;
+    let audio_codec = codec
+        .audio()
+        .map_err(|e| format!("Failed to inspect AAC encoder capabilities: {e}"))?;
+
+    let sample_rate = audio_codec
+        .rates()
+        .and_then(|mut rates| {
+            rates
+                .find(|rate| *rate as u32 == AUDIO_SAMPLE_RATE)
+                .or_else(|| rates.next())
+        })
+        .map(|rate| rate as u32)
+        .unwrap_or(AUDIO_SAMPLE_RATE);
+    let sample_format = match audio_codec.formats() {
+        Some(mut formats) => formats
+            .find(|format| {
+                *format
+                    == ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Planar)
+            })
+            .ok_or_else(|| "AAC encoder does not support planar f32 samples".to_string())?,
+        None => ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Planar),
+    };
+    let channel_layout = audio_codec
+        .channel_layouts()
+        .map(|layouts| layouts.best(ChannelLayout::STEREO.channels()))
+        .unwrap_or(ChannelLayout::STEREO);
+    if channel_layout != ChannelLayout::STEREO {
+        return Err("AAC encoder does not support stereo output".to_string());
+    }
+    let output_config = AudioOutputConfig {
+        sample_rate,
+        sample_format,
+        channel_layout,
+    };
 
     let mut audio = ffmpeg_next::codec::context::Context::new_with_codec(codec)
         .encoder()
         .audio()
         .map_err(|e| format!("Failed to create audio encoder context: {}", e))?;
 
-    audio.set_rate(44100);
-    audio.set_format(ffmpeg_next::format::Sample::F32(
-        ffmpeg_next::format::sample::Type::Planar,
-    ));
-    audio.set_channel_layout(ChannelLayout::STEREO);
-    audio.set_time_base(Rational::new(1, 44100));
+    audio.set_rate(sample_rate as i32);
+    audio.set_format(sample_format);
+    audio.set_channel_layout(channel_layout);
+    audio.set_time_base(Rational::new(1, sample_rate as i32));
     audio.set_bit_rate(128_000);
 
     if global_header {
-        unsafe {
-            (*audio.as_mut_ptr()).flags |= ffmpeg_next::ffi::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
-        }
+        audio.set_flags(ffmpeg_next::codec::flag::Flags::GLOBAL_HEADER);
     }
+
+    let mut stream = octx
+        .add_stream(codec)
+        .map_err(|e| format!("Failed to add audio stream: {}", e))?;
+    stream.set_time_base(Rational::new(1, sample_rate as i32));
 
     let enc = audio
         .open_as(codec)
         .map_err(|e| format!("Failed to open AAC encoder: {}", e))?;
 
-    let mut stream = octx
-        .add_stream(codec)
-        .map_err(|e| format!("Failed to add audio stream: {}", e))?;
-    stream.set_time_base(Rational::new(1, 44100));
-    unsafe {
-        ffmpeg_next::ffi::avcodec_parameters_from_context(
-            (*stream.as_mut_ptr()).codecpar,
-            enc.as_ptr(),
-        );
-    }
+    stream.set_parameters(&enc);
 
-    Ok(enc)
+    Ok((enc, output_config))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -411,6 +602,7 @@ fn resample_and_buffer(
     swr_ctx: &mut Option<SwrContext>,
     buf_l: &mut Vec<f32>,
     buf_r: &mut Vec<f32>,
+    output_config: AudioOutputConfig,
 ) -> Result<(), String> {
     let src_rate = audio.sample_rate as i32;
     let src_ch = audio.channels as i32;
@@ -426,9 +618,9 @@ fn resample_and_buffer(
                 ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Packed),
                 src_layout,
                 src_rate as u32,
-                ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Planar),
-                ChannelLayout::STEREO,
-                44100,
+                output_config.sample_format,
+                output_config.channel_layout,
+                output_config.sample_rate,
             )
             .map_err(|e| format!("Failed to create swresample context: {}", e))?,
         );
@@ -451,11 +643,11 @@ fn resample_and_buffer(
 
     let max_out = samples_per_ch * 2 + 1024;
     let mut dst_frame = AudioFrame::new(
-        ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Planar),
+        output_config.sample_format,
         max_out,
-        ChannelLayout::STEREO,
+        output_config.channel_layout,
     );
-    dst_frame.set_rate(44100);
+    dst_frame.set_rate(output_config.sample_rate);
 
     swr_ctx
         .as_mut()
@@ -465,16 +657,73 @@ fn resample_and_buffer(
 
     let out_samples = dst_frame.samples();
     if out_samples > 0 {
-        let byte_len = out_samples * 4;
-
-        let plane0 = dst_frame.data(0);
-        let plane1 = dst_frame.data(1);
-        let safe_len = byte_len.min(plane0.len()).min(plane1.len());
-
-        let out_l: &[f32] = bytemuck::cast_slice(&plane0[..safe_len]);
-        let out_r: &[f32] = bytemuck::cast_slice(&plane1[..safe_len]);
+        let out_l = dst_frame.plane::<f32>(0);
+        let out_r = dst_frame.plane::<f32>(1);
         buf_l.extend_from_slice(out_l);
         buf_r.extend_from_slice(out_r);
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flush_resampler_buffer(
+    swr_ctx: &mut Option<SwrContext>,
+    encoder: &mut encoder::audio::Encoder,
+    octx: &mut format::context::Output,
+    buf_l: &mut Vec<f32>,
+    buf_r: &mut Vec<f32>,
+    frame_size: usize,
+    stream_idx: usize,
+    pts: &mut i64,
+    output_config: AudioOutputConfig,
+) -> Result<(), String> {
+    let Some(swr) = swr_ctx.as_mut() else {
+        return Ok(());
+    };
+
+    loop {
+        let pending_samples = swr
+            .delay()
+            .map(|delay| delay.output.max(0) as usize)
+            .unwrap_or(0);
+        if pending_samples == 0 {
+            break;
+        }
+
+        let mut delayed_frame = AudioFrame::new(
+            output_config.sample_format,
+            pending_samples,
+            output_config.channel_layout,
+        );
+        delayed_frame.set_rate(output_config.sample_rate);
+
+        let remaining = swr
+            .flush(&mut delayed_frame)
+            .map_err(|e| format!("swresample flush failed: {e}"))?;
+        let out_samples = delayed_frame.samples();
+        if out_samples == 0 {
+            break;
+        }
+
+        let out_l = delayed_frame.plane::<f32>(0);
+        let out_r = delayed_frame.plane::<f32>(1);
+        buf_l.extend_from_slice(out_l);
+        buf_r.extend_from_slice(out_r);
+        encode_audio_buffer(
+            encoder,
+            octx,
+            buf_l,
+            buf_r,
+            frame_size,
+            stream_idx,
+            pts,
+            output_config,
+        )?;
+
+        if remaining.is_none() {
+            break;
+        }
     }
 
     Ok(())
@@ -484,6 +733,7 @@ fn resample_and_buffer(
 ///
 /// Each iteration consumes exactly `frame_size` samples (1024 for AAC), constructs a planar
 /// `AudioFrame`, and sends it to the encoder.
+#[allow(clippy::too_many_arguments)]
 fn encode_audio_buffer(
     encoder: &mut encoder::audio::Encoder,
     octx: &mut format::context::Output,
@@ -492,31 +742,22 @@ fn encode_audio_buffer(
     frame_size: usize,
     stream_idx: usize,
     pts: &mut i64,
+    output_config: AudioOutputConfig,
 ) -> Result<(), String> {
     while buf_l.len() >= frame_size && buf_r.len() >= frame_size {
         let chunk_l: Vec<f32> = buf_l.drain(..frame_size).collect();
         let chunk_r: Vec<f32> = buf_r.drain(..frame_size).collect();
 
         let mut enc_frame = AudioFrame::new(
-            ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Planar),
+            output_config.sample_format,
             frame_size,
-            ChannelLayout::STEREO,
+            output_config.channel_layout,
         );
-        enc_frame.set_rate(44100);
+        enc_frame.set_rate(output_config.sample_rate);
         enc_frame.set_pts(Some(*pts));
 
-        {
-            let plane0 = enc_frame.data_mut(0);
-            let src0: &[u8] = bytemuck::cast_slice(&chunk_l);
-            let copy_len = src0.len().min(plane0.len());
-            plane0[..copy_len].copy_from_slice(&src0[..copy_len]);
-        }
-        {
-            let plane1 = enc_frame.data_mut(1);
-            let src1: &[u8] = bytemuck::cast_slice(&chunk_r);
-            let copy_len = src1.len().min(plane1.len());
-            plane1[..copy_len].copy_from_slice(&src1[..copy_len]);
-        }
+        enc_frame.plane_mut::<f32>(0).copy_from_slice(&chunk_l);
+        enc_frame.plane_mut::<f32>(1).copy_from_slice(&chunk_r);
 
         *pts += frame_size as i64;
 
@@ -524,9 +765,64 @@ fn encode_audio_buffer(
             .send_frame(&enc_frame)
             .map_err(|e| format!("audio send_frame failed: {}", e))?;
 
-        drain_ready_packets(encoder, octx, stream_idx, Rational::new(1, 44100))?;
+        drain_ready_packets(
+            encoder,
+            octx,
+            stream_idx,
+            Rational::new(1, output_config.sample_rate as i32),
+        )?;
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flush_audio_buffer(
+    encoder: &mut encoder::audio::Encoder,
+    octx: &mut format::context::Output,
+    buf_l: &mut Vec<f32>,
+    buf_r: &mut Vec<f32>,
+    frame_size: usize,
+    stream_idx: usize,
+    pts: &mut i64,
+    output_config: AudioOutputConfig,
+) -> Result<(), String> {
+    if buf_l.is_empty() || buf_r.is_empty() {
+        return Ok(());
+    }
+
+    let frame_samples = frame_size.max(buf_l.len()).max(buf_r.len());
+    let mut padded_l = vec![0.0f32; frame_samples];
+    let mut padded_r = vec![0.0f32; frame_samples];
+
+    padded_l[..buf_l.len()].copy_from_slice(buf_l);
+    padded_r[..buf_r.len()].copy_from_slice(buf_r);
+
+    buf_l.clear();
+    buf_r.clear();
+
+    let mut enc_frame = AudioFrame::new(
+        output_config.sample_format,
+        frame_samples,
+        output_config.channel_layout,
+    );
+    enc_frame.set_rate(output_config.sample_rate);
+    enc_frame.set_pts(Some(*pts));
+
+    enc_frame.plane_mut::<f32>(0).copy_from_slice(&padded_l);
+    enc_frame.plane_mut::<f32>(1).copy_from_slice(&padded_r);
+
+    *pts += frame_samples as i64;
+
+    encoder
+        .send_frame(&enc_frame)
+        .map_err(|e| format!("audio flush send_frame failed: {}", e))?;
+
+    drain_ready_packets(
+        encoder,
+        octx,
+        stream_idx,
+        Rational::new(1, output_config.sample_rate as i32),
+    )
 }
 
 fn drain_ready_packets(
@@ -569,7 +865,8 @@ fn drain_encoder(
     while encoder.receive_packet(&mut pkt).is_ok() {
         pkt.set_stream(stream_idx);
         pkt.rescale_ts(enc_time_base, stream_tb);
-        let _ = pkt.write_interleaved(octx);
+        pkt.write_interleaved(octx)
+            .map_err(|e| format!("write_interleaved failed while draining encoder: {e}"))?;
     }
     Ok(())
 }
@@ -724,7 +1021,25 @@ fn fill_video_frame(
 
 #[cfg(test)]
 mod tests {
-    use super::rotate_plane;
+    use {
+        super::{RecorderConfig, RecorderHandle, rotate_plane},
+        crate::{
+            capture::CaptureEvent,
+            decoder::{DecodedAudio, DecodedFrame},
+        },
+        crossbeam_channel::bounded,
+        ffmpeg_next::{
+            self as ffmpeg,
+            codec,
+            format::{self as avformat, Pixel},
+            media,
+        },
+        std::{
+            fs,
+            sync::Arc,
+            time::{SystemTime, UNIX_EPOCH},
+        },
+    };
 
     fn call(src: &[u8], src_stride: usize, w: u32, h: u32, rotation: u32) -> Vec<u8> {
         let (dst_w, dst_h) = if rotation % 2 == 1 {
@@ -778,5 +1093,102 @@ mod tests {
         let src = vec![1u8, 2, 3, 4, 5, 6];
         let dst = call(&src, 2, 2, 3, 3);
         assert_eq!(dst, vec![2, 4, 6, 1, 3, 5]);
+    }
+
+    #[test]
+    fn recorder_writes_audio_stream_to_mp4() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "saide-recorder-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&temp_dir).expect("failed to create temp dir");
+
+        let (event_tx, event_rx) = bounded(1);
+        let handle = RecorderHandle::start(
+            RecorderConfig {
+                width: 2,
+                height: 2,
+                save_dir: temp_dir.clone(),
+                rotation: 0,
+            },
+            event_tx,
+            true,
+        );
+
+        let video_tx = handle.video_sender();
+        let audio_tx = handle
+            .audio_sender()
+            .expect("recorder should expose audio sender when audio is enabled");
+
+        for i in 0..3 {
+            video_tx
+                .send(Arc::new(DecodedFrame {
+                    data: vec![0, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255],
+                    width: 2,
+                    height: 2,
+                    pts: i * 16_666,
+                    format: Pixel::RGBA,
+                }))
+                .expect("failed to queue video frame for recorder");
+        }
+
+        let samples_per_channel = 4_800usize;
+        let mut samples = Vec::with_capacity(samples_per_channel * 2);
+        for n in 0..samples_per_channel {
+            let sample = ((n as f32 / 32.0) * std::f32::consts::TAU).sin() * 0.2;
+            samples.push(sample);
+            samples.push(sample);
+        }
+        audio_tx
+            .send(DecodedAudio {
+                samples,
+                sample_rate: 48_000,
+                channels: 2,
+                pts: 0,
+            })
+            .expect("failed to queue audio frame for recorder");
+
+        drop(video_tx);
+        drop(audio_tx);
+        handle.stop();
+
+        let saved_path = match event_rx
+            .recv()
+            .expect("recorder should send completion event")
+        {
+            CaptureEvent::RecordingSaved(path) => path,
+            CaptureEvent::RecordingError(err) => panic!("recording failed unexpectedly: {err}"),
+            other => panic!("unexpected capture event: {other:?}"),
+        };
+
+        ffmpeg::init().expect("ffmpeg init should succeed for inspection");
+        let ictx = avformat::input(&saved_path).expect("should be able to read generated mp4");
+        let mut has_video = false;
+        let mut has_audio = false;
+
+        for stream in ictx.streams() {
+            let codec_ctx = codec::context::Context::from_parameters(stream.parameters())
+                .expect("should read stream parameters");
+            match codec_ctx.medium() {
+                media::Type::Video => has_video = true,
+                media::Type::Audio => has_audio = true,
+                _ => {}
+            }
+        }
+
+        assert!(
+            has_video,
+            "generated recording should contain a video stream"
+        );
+        assert!(
+            has_audio,
+            "generated recording should contain an audio stream"
+        );
+
+        fs::remove_file(&saved_path).expect("failed to remove generated mp4");
+        fs::remove_dir_all(&temp_dir).expect("failed to remove temp dir");
     }
 }
