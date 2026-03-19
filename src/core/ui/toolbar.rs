@@ -15,6 +15,7 @@ const TOOLBAR_WIDTH: f32 = 42.0;
 const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
 const TOOLBAR_FONT_SIZE: f32 = 16.0;
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
+const TOOLBAR_SEPARATOR_SPACING: f32 = 10.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolbarEvent {
@@ -30,6 +31,7 @@ pub enum ToolbarEvent {
 }
 
 enum ButtonType {
+    Separator,
     Normal,
     SelectableConditional {
         is_selected: fn(&ToolbarViewState) -> bool,
@@ -44,8 +46,15 @@ struct ToolbarButton {
     event: ToolbarEvent,
 }
 
+const TOOLBAR_SEPARATOR: ToolbarButton = ToolbarButton {
+    btn_type: ButtonType::Separator,
+    lable: "",
+    tooltip_key: "",
+    event: ToolbarEvent::None,
+};
+
 lazy_static! {
-    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 7] = [
+    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 9] = [
         ToolbarButton {
             btn_type: ButtonType::SelectableConditional {
                 is_selected: ToolbarViewState::is_keyboard_mapping_enabled,
@@ -66,21 +75,16 @@ lazy_static! {
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,
-            lable: "⟳",
-            tooltip_key: "toolbar-rotate",
-            event: ToolbarEvent::RotateVideo,
-        },
-        ToolbarButton {
-            btn_type: ButtonType::Normal,
             lable: "⚙",
             tooltip_key: "toolbar-editor",
             event: ToolbarEvent::ToggleMappingEditor,
         },
+        TOOLBAR_SEPARATOR,
         ToolbarButton {
             btn_type: ButtonType::Normal,
-            lable: "💤",
-            tooltip_key: "toolbar-screen-off",
-            event: ToolbarEvent::ToggleScreenPower,
+            lable: "⟳",
+            tooltip_key: "toolbar-rotate",
+            event: ToolbarEvent::RotateVideo,
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,
@@ -96,6 +100,13 @@ lazy_static! {
             lable: "⏺",
             tooltip_key: "toolbar-recording",
             event: ToolbarEvent::ToggleRecording,
+        },
+        TOOLBAR_SEPARATOR,
+        ToolbarButton {
+            btn_type: ButtonType::Normal,
+            lable: "💤",
+            tooltip_key: "toolbar-screen-off",
+            event: ToolbarEvent::ToggleScreenPower,
         },
     ];
 }
@@ -164,6 +175,11 @@ impl Toolbar {
                 let top_padding = ((main_rect.height() - desired_height) / 2.0).max(0.0);
                 ui.add_space(top_padding);
                 for btn in TOOLBAR_BUTTONS_BASE.iter() {
+                    if matches!(btn.btn_type, ButtonType::Separator) {
+                        self.draw_separator(ui);
+                        continue;
+                    }
+
                     if self.draw_button(btn, ui, state) {
                         result = btn.event;
                     }
@@ -193,6 +209,7 @@ impl Toolbar {
                 is_selected,
                 is_enabled,
             } => (is_enabled(&state), is_selected(&state)),
+            ButtonType::Separator => (false, false), // Should not happen here
         };
 
         if selected {
@@ -207,6 +224,11 @@ impl Toolbar {
             .on_disabled_hover_text(t!(btn.tooltip_key));
 
         response.clicked()
+    }
+
+    fn draw_separator(&self, ui: &mut egui::Ui) {
+        let separator = egui::Separator::default().spacing(TOOLBAR_SEPARATOR_SPACING);
+        ui.add(separator);
     }
 
     fn draw_toggle_float_button(&self, ui: &mut egui::Ui, mode: ToolbarMode) -> bool {
