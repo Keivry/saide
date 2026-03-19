@@ -25,6 +25,8 @@ pub enum ToolbarEvent {
     ToggleMappingEditor,
     ToggleScreenPower,
     ToggleFloat,
+    TakeScreenshot,
+    ToggleRecording,
 }
 
 enum ButtonType {
@@ -43,7 +45,7 @@ struct ToolbarButton {
 }
 
 lazy_static! {
-    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 5] = [
+    static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 7] = [
         ToolbarButton {
             btn_type: ButtonType::SelectableConditional {
                 is_selected: ToolbarViewState::is_keyboard_mapping_enabled,
@@ -80,6 +82,21 @@ lazy_static! {
             tooltip_key: "toolbar-screen-off",
             event: ToolbarEvent::ToggleScreenPower,
         },
+        ToolbarButton {
+            btn_type: ButtonType::Normal,
+            lable: "📷",
+            tooltip_key: "toolbar-screenshot",
+            event: ToolbarEvent::TakeScreenshot,
+        },
+        ToolbarButton {
+            btn_type: ButtonType::SelectableConditional {
+                is_selected: ToolbarViewState::is_recording,
+                is_enabled: ToolbarViewState::always_enabled,
+            },
+            lable: "⏺",
+            tooltip_key: "toolbar-recording",
+            event: ToolbarEvent::ToggleRecording,
+        },
     ];
 }
 
@@ -89,6 +106,7 @@ pub struct ToolbarViewState {
     pub mapping_visualization_enabled: bool,
     pub has_active_mappings: bool,
     pub mode: ToolbarMode,
+    pub is_recording: bool,
 }
 
 impl ToolbarViewState {
@@ -97,6 +115,10 @@ impl ToolbarViewState {
     fn is_mapping_visualization_enabled(&self) -> bool { self.mapping_visualization_enabled }
 
     fn has_active_mappings(&self) -> bool { self.has_active_mappings }
+
+    fn is_recording(&self) -> bool { self.is_recording }
+
+    fn always_enabled(_: &Self) -> bool { true }
 }
 
 pub struct Toolbar;

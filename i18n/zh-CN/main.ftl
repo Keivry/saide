@@ -13,6 +13,12 @@ toolbar-screen-off = 关闭屏幕
 toolbar-screen-off-hint = （按物理电源键唤醒）
 toolbar-pin-toolbar = 固定工具栏
 toolbar-float-toolbar = 悬浮工具栏
+toolbar-screenshot = 截图
+toolbar-recording = 切换录屏
+toolbar-recording-started = 录屏已开始
+toolbar-recording-stopped = 录屏已保存：{$path}
+toolbar-screenshot-saved = 截图已保存：{$path}
+toolbar-capture-error = 截图/录屏错误：{$error}
 
 ## UI - 音频警告
 audio-warning-title = 音频不可用

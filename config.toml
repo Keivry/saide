@@ -9,6 +9,10 @@ indicator_position = "bottom-left"
 # true: uses preset resolution tiers to fit window within screen (recommended for GNOME/Wayland)
 # false: uses video native resolution (may be constrained by window manager)
 smart_window_resize = true
+# Directory where screenshots are saved (default: ~/Pictures/saide/)
+# screenshot_path = "/home/user/Pictures/saide"
+# Directory where screen recordings are saved (default: ~/Videos/saide/)
+# recording_path = "/home/user/Videos/saide"
 
 [scrcpy.video]
 bit_rate = "24M"

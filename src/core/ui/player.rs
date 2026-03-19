@@ -12,6 +12,7 @@ use {
             AudioDecoder,
             AudioPlayer,
             AutoDecoder,
+            DecodedAudio,
             DecodedFrame,
             DecoderPreference,
             Nv12RenderResources,
@@ -191,6 +192,12 @@ pub struct StreamPlayer {
     /// Cloned TcpStream handles used to shutdown blocking I/O in stop().
     video_ctrl: Option<TcpStream>,
     audio_ctrl: Option<TcpStream>,
+
+    /// Recorder video frame sender (shared with stream worker via Arc<Mutex<>>)
+    recorder_video_tx: Arc<Mutex<Option<Sender<Arc<DecodedFrame>>>>>,
+
+    /// Recorder audio frame sender (shared with stream worker via Arc<Mutex<>>)
+    recorder_audio_tx: Arc<Mutex<Option<Sender<DecodedAudio>>>>,
 }
 
 impl StreamPlayer {
@@ -247,6 +254,8 @@ impl StreamPlayer {
             session_token: None,
             video_ctrl: None,
             audio_ctrl: None,
+            recorder_video_tx: Arc::new(Mutex::new(None)),
+            recorder_audio_tx: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -287,6 +296,8 @@ impl StreamPlayer {
         let audio_buffer_frames = self.audio_buffer_frames;
         let audio_ring_capacity = self.audio_ring_capacity;
         let hwdecode = self.hwdecode;
+        let recorder_video_tx = self.recorder_video_tx.clone();
+        let recorder_audio_tx = self.recorder_audio_tx.clone();
         let current_encoder_fingerprint = EncoderProfileDatabase::load()
             .ok()
             .and_then(|db| db.get(serial).cloned())
@@ -325,6 +336,8 @@ impl StreamPlayer {
                     hwdecode,
                     preferred_decoder,
                     repaint_ctx,
+                    recorder_video_tx,
+                    recorder_audio_tx,
                 },
             ) {
                 let is_cancelled = e.is_cancelled();
@@ -579,6 +592,27 @@ impl StreamPlayer {
     /// Set video rotation (0-3, clockwise 90°)
     pub fn set_rotation(&mut self, rotation: u32) { self.video_rotation = rotation % 4; }
 
+    /// Get the most recently decoded video frame, if any.
+    pub fn current_frame(&self) -> Option<Arc<DecodedFrame>> { self.current_frame.clone() }
+
+    /// Register recorder senders so the pipeline forwards frames while recording.
+    ///
+    /// Both senders are optional — pass `None` to disable video or audio forwarding independently.
+    pub fn register_recorder(
+        &self,
+        video_tx: Sender<Arc<DecodedFrame>>,
+        audio_tx: Option<Sender<DecodedAudio>>,
+    ) {
+        *self.recorder_video_tx.lock() = Some(video_tx);
+        *self.recorder_audio_tx.lock() = audio_tx;
+    }
+
+    /// Unregister the recorder senders, stopping frame forwarding.
+    pub fn unregister_recorder(&self) {
+        *self.recorder_video_tx.lock() = None;
+        *self.recorder_audio_tx.lock() = None;
+    }
+
     fn draw_failed_overlay(&self, ui: &mut egui::Ui, err_msg: &str) {
         use super::theme::AppColors;
 
@@ -649,6 +683,8 @@ struct StreamWorkerConfig {
     hwdecode: bool,
     preferred_decoder: Option<DecoderPreference>,
     repaint_ctx: egui::Context,
+    recorder_video_tx: Arc<Mutex<Option<Sender<Arc<DecodedFrame>>>>>,
+    recorder_audio_tx: Arc<Mutex<Option<Sender<DecodedAudio>>>>,
 }
 
 /// Stream worker thread
@@ -680,6 +716,8 @@ fn stream_worker(
         hwdecode,
         preferred_decoder,
         repaint_ctx,
+        recorder_video_tx,
+        recorder_audio_tx,
     } = config;
 
     let decoder_mgr = DecoderManager::init(
@@ -702,6 +740,7 @@ fn stream_worker(
             decoder_mgr.av_sync,
             stats.clone(),
             token.clone(),
+            recorder_audio_tx,
         )
     });
 
@@ -722,6 +761,7 @@ fn stream_worker(
         decoder_mgr.hwdecode,
         decoder_mgr.preferred_decoder,
         &token,
+        &recorder_video_tx,
     );
 
     // Video loop ended — cancel the token to signal the audio thread to exit.
@@ -794,6 +834,7 @@ impl AudioThread {
         mut av_sync: AVSync,
         stats: Arc<Mutex<StreamStats>>,
         token: CancellationToken,
+        recorder_audio_tx: Arc<Mutex<Option<Sender<DecodedAudio>>>>,
     ) -> JoinHandle<()> {
         thread::spawn(move || {
             match Self::run_audio_loop(
@@ -803,6 +844,7 @@ impl AudioThread {
                 &mut av_sync,
                 &stats,
                 &token,
+                &recorder_audio_tx,
             ) {
                 Ok(_) => {}
                 Err(e) => debug!("Audio thread terminated: {e}"),
@@ -817,6 +859,7 @@ impl AudioThread {
         av_sync: &mut AVSync,
         stats: &Arc<Mutex<StreamStats>>,
         token: &CancellationToken,
+        recorder_audio_tx: &Arc<Mutex<Option<Sender<DecodedAudio>>>>,
     ) -> Result<()> {
         let mut consecutive_read_errors = 0u32;
 
@@ -900,6 +943,9 @@ impl AudioThread {
 
             if let Ok(Some(decoded)) = audio_decoder.decode(&payload, pts) {
                 let _ = audio_player.play(&decoded);
+                if let Some(tx) = recorder_audio_tx.lock().as_ref() {
+                    let _ = tx.try_send(decoded);
+                }
             }
         }
     }
@@ -924,6 +970,7 @@ impl VideoLoop {
         hwdecode: bool,
         preferred_decoder: Option<DecoderPreference>,
         token: &CancellationToken,
+        recorder_video_tx: &Arc<Mutex<Option<Sender<Arc<DecodedFrame>>>>>,
     ) -> Result<()> {
         let mut consecutive_read_errors = 0u32;
         let mut pending_resolution: Option<(u32, u32)> = None;
@@ -1116,7 +1163,13 @@ impl VideoLoop {
                     latency_summary.store(Arc::new(summary));
                 }
 
-                match frame_tx.try_send(Arc::new(frame)) {
+                let frame = Arc::new(frame);
+
+                if let Some(tx) = recorder_video_tx.lock().as_ref() {
+                    let _ = tx.try_send(Arc::clone(&frame));
+                }
+
+                match frame_tx.try_send(frame) {
                     Ok(()) => repaint_ctx.request_repaint(),
                     Err(crossbeam_channel::TrySendError::Full(_)) => {
                         let mut s = stats.lock();

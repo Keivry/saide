@@ -3373,6 +3373,7 @@ dependencies = [
  "egui-command-binding",
  "ffmpeg-next",
  "fluent-bundle",
+ "image",
  "intl-memoizer",
  "lazy_static",
  "libc",

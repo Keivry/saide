@@ -15,6 +15,7 @@ use {
         constant::{self},
         error::{Result, SAideError},
     },
+    directories::UserDirs,
     serde::{Deserialize, Serialize},
     std::{
         fmt::{self, Display},
@@ -159,6 +160,16 @@ pub struct GeneralConfig {
     /// otherwise falls back to the filename in the current directory
     #[serde(default = "default_scrcpy_server_path")]
     pub scrcpy_server: String,
+
+    /// Directory where screenshots are saved
+    /// Defaults to ~/Pictures/saide/ (or ~/saide/screenshots/ if Pictures unavailable)
+    #[serde(default = "default_screenshot_path")]
+    pub screenshot_path: String,
+
+    /// Directory where screen recordings are saved
+    /// Defaults to ~/Videos/saide/ (or ~/saide/recordings/ if Videos unavailable)
+    #[serde(default = "default_recording_path")]
+    pub recording_path: String,
 }
 
 impl Default for GeneralConfig {
@@ -175,6 +186,8 @@ impl Default for GeneralConfig {
             smart_window_resize: default_true(),
             bind_address: default_bind_address(),
             scrcpy_server: default_scrcpy_server_path(),
+            screenshot_path: default_screenshot_path(),
+            recording_path: default_recording_path(),
         }
     }
 }
@@ -188,6 +201,28 @@ fn default_scrcpy_server_path() -> String {
     constant::resolve_scrcpy_server_path()
         .to_string_lossy()
         .to_string()
+}
+
+fn default_screenshot_path() -> String {
+    UserDirs::new()
+        .and_then(|d| d.picture_dir().map(|p| p.join("saide")))
+        .unwrap_or_else(|| dirs_fallback_home().join("Pictures").join("saide"))
+        .to_string_lossy()
+        .to_string()
+}
+
+fn default_recording_path() -> String {
+    UserDirs::new()
+        .and_then(|d| d.video_dir().map(|p| p.join("saide")))
+        .unwrap_or_else(|| dirs_fallback_home().join("Videos").join("saide"))
+        .to_string_lossy()
+        .to_string()
+}
+
+fn dirs_fallback_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Main configuration structure
@@ -305,6 +340,26 @@ impl SAideConfig {
                 "scrcpy.audio.ring_capacity ({}) must be 1024-65536",
                 self.scrcpy.audio.ring_capacity
             )));
+        }
+
+        let screenshot_dir = PathBuf::from(&self.general.screenshot_path);
+        if !screenshot_dir.exists() {
+            fs::create_dir_all(&screenshot_dir).map_err(|e| {
+                SAideError::ConfigError(format!(
+                    "Failed to create screenshot directory {:?}: {}",
+                    screenshot_dir, e
+                ))
+            })?;
+        }
+
+        let recording_dir = PathBuf::from(&self.general.recording_path);
+        if !recording_dir.exists() {
+            fs::create_dir_all(&recording_dir).map_err(|e| {
+                SAideError::ConfigError(format!(
+                    "Failed to create recording directory {:?}: {}",
+                    recording_dir, e
+                ))
+            })?;
         }
 
         Ok(())

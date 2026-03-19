@@ -27,6 +27,11 @@ use {
         toolbar::{Toolbar, ToolbarEvent, ToolbarViewState},
     },
     crate::{
+        capture::{
+            CaptureEvent,
+            recorder::{RecorderConfig, RecorderHandle},
+            screenshot::take_screenshot,
+        },
         config::{
             SAideConfig,
             mapping::{Key, MappingAction, MouseButton, ScrcpyAction, WheelDirection},
@@ -47,7 +52,7 @@ use {
         t,
         tf,
     },
-    crossbeam_channel::{Receiver, bounded},
+    crossbeam_channel::{Receiver, Sender, bounded},
     std::{sync::Arc, thread, time::Instant},
     tokio_util::sync::CancellationToken,
     tracing::{debug, error, info, trace, warn},
@@ -88,6 +93,10 @@ pub struct SAideApp {
 
     pub(super) notifier: Notifier,
     pub(super) profile_manager: ProfileManager,
+
+    pub(super) recorder: Option<RecorderHandle>,
+    pub(super) capture_event_tx: Sender<CaptureEvent>,
+    pub(super) capture_event_rx: Receiver<CaptureEvent>,
 }
 
 const FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH: f32 = 4.0;
@@ -111,6 +120,8 @@ impl SAideApp {
         let hwdecode = config.gpu.hwdecode;
 
         let cancel_token = CancellationToken::new();
+
+        let (capture_event_tx, capture_event_rx) = bounded::<CaptureEvent>(16);
 
         Self {
             shutdown_rx,
@@ -143,6 +154,10 @@ impl SAideApp {
 
             notifier: Notifier::new(),
             profile_manager: ProfileManager::new(&config.mappings.profiles),
+
+            recorder: None,
+            capture_event_tx,
+            capture_event_rx,
         }
     }
 
@@ -201,6 +216,7 @@ impl SAideApp {
             mapping_visualization_enabled: self.ui_state.mapping_visualization_enabled(),
             has_active_mappings: self.has_active_mappings(),
             mode: self.toolbar_mode(),
+            is_recording: self.recorder.is_some(),
         }
     }
 
@@ -1038,7 +1054,94 @@ impl SAideApp {
             ToolbarEvent::ToggleFloat => {
                 self.set_toolbar_mode(ctx, self.toolbar_mode().toggled());
             }
+            ToolbarEvent::TakeScreenshot => {
+                self.take_screenshot();
+            }
+            ToolbarEvent::ToggleRecording => {
+                self.toggle_recording();
+            }
             ToolbarEvent::None => {}
+        }
+    }
+
+    fn take_screenshot(&mut self) {
+        let frame = self.player.current_frame();
+        let Some(frame) = frame else {
+            warn!("TakeScreenshot: no current frame available");
+            return;
+        };
+
+        let save_dir = std::path::PathBuf::from(&self.config().general.screenshot_path);
+
+        let rotation = self.player.rotation();
+        take_screenshot(frame, save_dir, self.capture_event_tx.clone(), rotation);
+    }
+
+    fn toggle_recording(&mut self) {
+        if let Some(handle) = self.recorder.take() {
+            self.player.unregister_recorder();
+            handle.stop();
+            return;
+        }
+
+        let (width, height) = self.player.video_resolution();
+        if width == 0 || height == 0 {
+            warn!("ToggleRecording: video dimensions not available yet");
+            return;
+        }
+
+        let config = self.config();
+        let save_dir = std::path::PathBuf::from(&config.general.recording_path);
+
+        let has_audio = self.ui_state.audio_warning.is_none();
+
+        let recorder_config = RecorderConfig {
+            width,
+            height,
+            save_dir,
+            rotation: self.player.rotation(),
+        };
+
+        let handle =
+            RecorderHandle::start(recorder_config, self.capture_event_tx.clone(), has_audio);
+        let video_tx = handle.video_sender();
+        let audio_tx = handle.audio_sender();
+        self.player.register_recorder(video_tx, audio_tx);
+        self.recorder = Some(handle);
+        self.notifier.notify(&t!("toolbar-recording-started"));
+    }
+
+    fn poll_capture_events(&mut self) {
+        let events: Vec<CaptureEvent> =
+            std::iter::from_fn(|| self.capture_event_rx.try_recv().ok()).collect();
+
+        for event in events {
+            match event {
+                CaptureEvent::ScreenshotSaved(path) => {
+                    let path_str = path.display().to_string();
+                    let msg = tf!("toolbar-screenshot-saved", "path" => path_str.as_str());
+                    self.notifier.notify(&msg);
+                }
+                CaptureEvent::RecordingSaved(path) => {
+                    self.player.unregister_recorder();
+                    self.recorder = None;
+                    let path_str = path.display().to_string();
+                    let msg = tf!("toolbar-recording-stopped", "path" => path_str.as_str());
+                    self.notifier.notify(&msg);
+                }
+                CaptureEvent::ScreenshotError(e) => {
+                    error!("Screenshot error: {e}");
+                    let msg = tf!("toolbar-capture-error", "error" => e.as_str());
+                    self.notifier.notify(&msg);
+                }
+                CaptureEvent::RecordingError(e) => {
+                    error!("Recording error: {e}");
+                    self.player.unregister_recorder();
+                    self.recorder = None;
+                    let msg = tf!("toolbar-capture-error", "error" => e.as_str());
+                    self.notifier.notify(&msg);
+                }
+            }
         }
     }
 
@@ -1404,24 +1507,13 @@ impl SAideApp {
     pub fn toolbar_width() -> f32 { Toolbar::width() }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::locked_capture_video_rotation;
-
-    #[test]
-    fn locked_capture_rotation_matches_runtime_repro() {
-        assert_eq!(locked_capture_video_rotation(0, 1), 3);
-        assert_eq!(locked_capture_video_rotation(0, 3), 1);
-        assert_eq!(locked_capture_video_rotation(1, 0), 3);
-        assert_eq!(locked_capture_video_rotation(1, 1), 2);
-        assert_eq!(locked_capture_video_rotation(2, 1), 1);
-        assert_eq!(locked_capture_video_rotation(3, 1), 0);
-    }
-}
-
 impl Drop for SAideApp {
     fn drop(&mut self) {
         debug!("SAideApp dropping, cleaning up connection");
+
+        if let Some(handle) = self.recorder.take() {
+            handle.stop();
+        }
 
         // Explicitly shutdown connection to ensure server process is killed
         if let Some(mut conn) = self.app_state.connection.take()
@@ -1438,7 +1530,11 @@ impl eframe::App for SAideApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         debug!("SAideApp exiting, cancelling background tasks");
 
-        // Cancel background tasks
+        if let Some(handle) = self.recorder.take() {
+            self.player.unregister_recorder();
+            handle.stop();
+        }
+
         self.app_state.cancel_token.cancel();
     }
 
@@ -1446,6 +1542,7 @@ impl eframe::App for SAideApp {
         let mut received_new_frame = false;
 
         self.update_floating_toolbar_visibility(ctx);
+        self.poll_capture_events();
 
         if !self.shutdown_requested {
             // Check for shutdown signal
@@ -1729,5 +1826,20 @@ fn localize_audio_warning(reason: AudioDisabledReason) -> String {
         AudioDisabledReason::UnsupportedAndroidVersion { api_level } => {
             tf!("audio-warning-unsupported-android", "api_level" => api_level)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::locked_capture_video_rotation;
+
+    #[test]
+    fn locked_capture_rotation_matches_runtime_repro() {
+        assert_eq!(locked_capture_video_rotation(0, 1), 3);
+        assert_eq!(locked_capture_video_rotation(0, 3), 1);
+        assert_eq!(locked_capture_video_rotation(1, 0), 3);
+        assert_eq!(locked_capture_video_rotation(1, 1), 2);
+        assert_eq!(locked_capture_video_rotation(2, 1), 1);
+        assert_eq!(locked_capture_video_rotation(3, 1), 0);
     }
 }

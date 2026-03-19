@@ -13,6 +13,12 @@ toolbar-screen-off = Screen Off
 toolbar-screen-off-hint = (Press physical power button to wake)
 toolbar-pin-toolbar = Pin Toolbar
 toolbar-float-toolbar = Float Toolbar
+toolbar-screenshot = Take Screenshot
+toolbar-recording = Toggle Recording
+toolbar-recording-started = Recording started
+toolbar-recording-stopped = Recording saved: {$path}
+toolbar-screenshot-saved = Screenshot saved: {$path}
+toolbar-capture-error = Capture error: {$error}
 
 ## UI - Audio Warning
 audio-warning-title = Audio Unavailable
