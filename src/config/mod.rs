@@ -434,6 +434,30 @@ impl ConfigManager {
         })
     }
 
+    /// Create a ConfigManager, falling back to built-in defaults if config loading fails.
+    ///
+    /// Returns `(ConfigManager, Option<error_string>)`. On failure the returned manager
+    /// uses the same resolved path as a successful `new()` would, so subsequent `save()`
+    /// calls can still write a valid config file and the user can recover from a corrupt
+    /// config within the same session.
+    pub fn new_or_default() -> (Self, Option<String>) {
+        match Self::new() {
+            Ok(cm) => (cm, None),
+            Err(e) => {
+                warn!("Failed to load config, using defaults: {}", e);
+                let path =
+                    constant::config_dir().unwrap_or_else(|| constant::fallback_config_path());
+                (
+                    Self {
+                        path,
+                        config: Arc::new(SAideConfig::default()),
+                    },
+                    Some(e.to_string()),
+                )
+            }
+        }
+    }
+
     pub fn config(&self) -> Arc<SAideConfig> { Arc::clone(&self.config) }
 
     /// Save configuration

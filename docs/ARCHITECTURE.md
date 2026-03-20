@@ -6,18 +6,18 @@ This document describes the current code structure of SAide as it exists in this
 
 SAide is a desktop scrcpy companion built around three pieces:
 
-1. `src/main.rs` starts the application, loads configuration, verifies `adb`, initializes logging, and launches the egui/eframe desktop window with the WGPU renderer.
+1. `src/main.rs` starts the application, loads configuration (falling back to defaults on error), verifies `adb`, initializes logging, and launches the egui/eframe desktop window with the WGPU renderer.
 2. `src/core/` owns application lifecycle, UI state, device selection, stream startup, and the player/editor experience.
 3. `src/scrcpy/`, `src/controller/`, `src/decoder/`, and `src/avsync/` implement device communication, input injection, media decoding, and playback timing.
 
 At runtime the app:
 
-1. Loads config through `ConfigManager::new()`.
-2. Verifies `adb` is available.
-3. Launches the desktop UI.
-4. Connects to the selected Android device.
-5. Establishes scrcpy video / audio / control sockets.
-6. Decodes media, renders video in egui, and forwards keyboard or mouse actions over the control channel.
+1. Loads config through `ConfigManager::new()`. If loading fails, a default config is used for the session and the user is notified via toast on the first UI frame.
+2. Verifies `adb` is available. On failure, the error is captured as a `startup_error`.
+3. Attempts to obtain the connected device serial. On failure, the error is captured as a `startup_error` (if none already set).
+4. Launches the desktop UI unconditionally, passing any `startup_error` to `SAideApp`.
+5. If `startup_error` is set, `SAideApp` enters `InitState::Failed` immediately and shows a blocking error dialog on the first frame; the user confirms and the app exits cleanly.
+6. Otherwise, connects to the selected Android device, establishes scrcpy video / audio / control sockets, decodes media, renders video in egui, and forwards keyboard or mouse actions over the control channel.
 
 ## Module layout
 

@@ -127,3 +127,7 @@ probe-codec-step-testing-option = 正在测试编解码器选项（{ $index }/{ 
 probe-codec-step-validating = 正在验证组合配置…
 probe-codec-done-success = 检测完成
 probe-codec-done-failed = 检测失败：{ $error }
+
+## 启动错误
+startup-fatal-error-title = SAide — 启动错误
+notification-config-load-failed = 配置文件加载失败，已使用默认配置：{ $error }

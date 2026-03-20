@@ -65,6 +65,9 @@ pub(crate) enum InitState {
     Probing,
     InProgress,
     Ready,
+    /// A fatal error occurred before or during initialization.
+    /// Each frame, `update()` calls `show_fatal_init_error_dialog()` until the
+    /// dialog is acknowledged, after which the app exits via `shutdown_requested`.
     Failed(String),
 }
 
@@ -97,6 +100,8 @@ pub struct SAideApp {
     pub(super) recorder: Option<RecorderHandle>,
     pub(super) capture_event_tx: Sender<CaptureEvent>,
     pub(super) capture_event_rx: Receiver<CaptureEvent>,
+
+    pub(super) startup_warnings: Vec<String>,
 }
 
 const FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH: f32 = 4.0;
@@ -111,6 +116,8 @@ impl SAideApp {
         serial: &str,
         config_manager: crate::config::ConfigManager,
         shutdown_rx: Receiver<()>,
+        startup_error: Option<String>,
+        startup_warnings: Vec<String>,
     ) -> Self {
         let config = config_manager.config();
         let indicator_position = config.general.indicator_position;
@@ -122,6 +129,11 @@ impl SAideApp {
         let cancel_token = CancellationToken::new();
 
         let (capture_event_tx, capture_event_rx) = bounded::<CaptureEvent>(16);
+
+        let init_state = match startup_error {
+            Some(msg) => InitState::Failed(msg),
+            None => InitState::NotStarted,
+        };
 
         Self {
             shutdown_rx,
@@ -145,7 +157,7 @@ impl SAideApp {
             config_state: ConfigState::new(config_manager),
             ui_state: UIState::new(),
 
-            init_state: InitState::NotStarted,
+            init_state,
             init_instant: None,
             init_rx: None,
 
@@ -158,6 +170,8 @@ impl SAideApp {
             recorder: None,
             capture_event_tx,
             capture_event_rx,
+
+            startup_warnings,
         }
     }
 
@@ -1451,6 +1465,9 @@ impl SAideApp {
             (PendingCommand::ProbeCodec, DialogState::Cancelled) => {
                 self.init();
             }
+            (PendingCommand::FatalError, DialogState::Confirmed) => {
+                self.shutdown_requested = true;
+            }
             (_, DialogState::Cancelled) => {}
             (cmd, result) => {
                 warn!(
@@ -1562,6 +1579,13 @@ impl eframe::App for SAideApp {
 
         // Draw base UI (toolbar) - always visible
         self.draw_toolbar(ctx);
+
+        if !self.startup_warnings.is_empty() {
+            let warnings: Vec<String> = self.startup_warnings.drain(..).collect();
+            for w in warnings {
+                self.notify(&tf!("notification-config-load-failed", "error" => w.as_str()));
+            }
+        }
 
         // Handle initialization state transitions
         match self.init_state {
@@ -1685,8 +1709,9 @@ impl eframe::App for SAideApp {
 
                 self.process_device_monitor_events(ctx);
             }
-            InitState::Failed(ref _reason) => {
-                // Player will show error state automatically
+            InitState::Failed(ref reason) => {
+                let reason = reason.clone();
+                self.show_fatal_init_error_dialog(&reason);
             }
         }
 

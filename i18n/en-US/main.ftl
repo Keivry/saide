@@ -127,3 +127,7 @@ probe-codec-step-testing-option = Testing codec option ({ $index }/{ $total }): 
 probe-codec-step-validating = Validating combined configuration...
 probe-codec-done-success = Detection complete
 probe-codec-done-failed = Detection failed: { $error }
+
+## Startup errors
+startup-fatal-error-title = SAide — Startup Error
+notification-config-load-failed = Configuration failed to load, using defaults: { $error }

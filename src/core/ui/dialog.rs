@@ -2,7 +2,13 @@
 
 use {
     super::SAideApp,
-    crate::{core::coords::MappingPos, modal::ModalDialog, scrcpy::codec_probe::ProbeStep, t, tf},
+    crate::{
+        core::{coords::MappingPos, ui::PendingCommand},
+        modal::ModalDialog,
+        scrcpy::codec_probe::ProbeStep,
+        t,
+        tf,
+    },
 };
 
 impl SAideApp {
@@ -152,6 +158,17 @@ impl SAideApp {
                 "x" => x.as_str(),
                 "y" => y.as_str()
             ));
+            self.dialog.replace(dialog);
+        }
+    }
+
+    pub(super) fn show_fatal_init_error_dialog(&mut self, reason: &str) {
+        if self.dialog.is_none() {
+            let mut dialog =
+                ModalDialog::new("fatal_init_error_dialog", &t!("startup-fatal-error-title"))
+                    .with_cancel::<String>(None);
+            dialog.add_message(reason);
+            self.pending_command = Some(PendingCommand::FatalError);
             self.dialog.replace(dialog);
         }
     }

@@ -47,6 +47,7 @@ pub enum PendingCommand {
     AddMapping(MappingPos),
     DeleteMapping(Key),
     ProbeCodec,
+    FatalError,
 }
 
 #[derive(Debug)]
