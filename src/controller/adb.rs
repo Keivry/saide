@@ -38,19 +38,10 @@ impl AdbShell {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .map_err(|e| {
-                SAideError::AdbError(format!(
-                    "ADB not found in PATH. Please install Android SDK Platform Tools. Error: {}",
-                    e
-                ))
-            })?
+            .map_err(|e| SAideError::AdbNotFound(e.to_string()))?
             .success()
             .then_some(())
-            .ok_or_else(|| {
-                SAideError::AdbError(
-                    "ADB command failed. Please check Android SDK installation.".to_string(),
-                )
-            })
+            .ok_or_else(|| SAideError::AdbCommandFailed("non-zero exit status".to_string()))
     }
 
     /// Get Android device screen size using separate adb command
@@ -151,10 +142,7 @@ impl AdbShell {
                 .success()
                 .then(|| output.trim().to_string())
                 .ok_or_else(|| {
-                    SAideError::AdbError(format!(
-                        "Failed to get device serial, adb exited with status: {}",
-                        status
-                    ))
+                    SAideError::AdbDeviceNotFound(format!("adb exited with status: {}", status))
                 })
         })
     }

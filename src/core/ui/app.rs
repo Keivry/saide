@@ -1587,7 +1587,7 @@ impl eframe::App for SAideApp {
         if !self.startup_warnings.is_empty() {
             let warnings: Vec<String> = self.startup_warnings.drain(..).collect();
             for w in warnings {
-                self.notify(&tf!("notification-config-load-failed", "error" => w.as_str()));
+                self.notify(&w);
             }
         }
 

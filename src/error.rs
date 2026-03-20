@@ -11,7 +11,7 @@
 //! - Other: Unexpected errors
 
 use {
-    super::decoder::{VideoError, audio::AudioError},
+    super::decoder::{audio::AudioError, VideoError},
     std::{env::VarError, fmt, io},
     thiserror::Error,
 };
@@ -94,6 +94,18 @@ pub enum SAideError {
     /// ADB command execution error
     #[error("ADB command failed: {0}")]
     AdbError(String),
+
+    /// ADB binary not found in PATH (startup check)
+    #[error("ADB not found in PATH: {0}")]
+    AdbNotFound(String),
+
+    /// ADB binary found but command returned non-zero exit status (startup check)
+    #[error("ADB command failed (non-zero exit): {0}")]
+    AdbCommandFailed(String),
+
+    /// Failed to obtain device serial number at startup
+    #[error("Failed to get device serial: {0}")]
+    AdbDeviceNotFound(String),
 
     /// I/O error (preserves original ErrorKind for precise detection)
     #[error("I/O error: {0}")]

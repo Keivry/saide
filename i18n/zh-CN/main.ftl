@@ -115,6 +115,8 @@ notification-save-config-failed = 保存配置失败
 notification-profile-error-not-found = 配置不存在
 notification-profile-error-name-conflict = 配置名称已存在
 notification-profile-error-invalid-format = 配置名称不能为空
+notification-config-load-failed = 配置文件加载失败，已使用默认配置：{ $detail }
+notification-save-skipped-degraded = 配置文件处于只读状态（启动时加载失败）
 
 ## UI - 编解码器兼容性检测
 probe-codec-dialog-title = 检测编解码器兼容性
@@ -130,5 +132,9 @@ probe-codec-done-failed = 检测失败：{ $error }
 
 ## 启动错误
 startup-fatal-error-title = SAide — 启动错误
-notification-config-load-failed = 配置文件加载失败，已使用默认配置：{ $error }
-notification-save-skipped-degraded = 配置文件处于只读状态（启动时加载失败）
+startup-error-adb-not-found = 未在 PATH 中找到 ADB，请安装 Android SDK Platform Tools。
+    详情：{ $detail }
+startup-error-adb-command-failed = ADB 命令执行失败，请检查 Android SDK 安装。
+    详情：{ $detail }
+startup-error-device-not-found = 无法检测已连接的设备。
+    详情：{ $detail }

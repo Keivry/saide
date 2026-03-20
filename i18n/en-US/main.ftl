@@ -115,6 +115,8 @@ notification-save-config-failed = Failed to save config
 notification-profile-error-not-found = Profile not found
 notification-profile-error-name-conflict = Profile name already exists
 notification-profile-error-invalid-format = Profile name cannot be empty
+notification-config-load-failed = Configuration failed to load, using defaults: { $detail }
+notification-save-skipped-degraded = Configuration is read-only (failed to load at startup)
 
 # UI - Codec Compatibility Detection
 probe-codec-dialog-title = Detect Codec Compatibility
@@ -130,5 +132,9 @@ probe-codec-done-failed = Detection failed: { $error }
 
 ## Startup errors
 startup-fatal-error-title = SAide — Startup Error
-notification-config-load-failed = Configuration failed to load, using defaults: { $error }
-notification-save-skipped-degraded = Configuration is read-only (failed to load at startup)
+startup-error-adb-not-found = ADB not found in PATH. Please install Android SDK Platform Tools.
+    Details: { $detail }
+startup-error-adb-command-failed = ADB command failed. Please check your Android SDK installation.
+    Details: { $detail }
+startup-error-device-not-found = Failed to detect connected device.
+    Details: { $detail }

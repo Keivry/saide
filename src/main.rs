@@ -9,9 +9,10 @@ use {
         controller::AdbShell,
         core::ui::{SAideApp, ThemeMode},
         error::{Result, SAideError},
+        tf,
     },
     tracing::{info, warn},
-    tracing_subscriber::{EnvFilter, fmt, prelude::*},
+    tracing_subscriber::{fmt, prelude::*, EnvFilter},
 };
 
 const WGPU_LOG_LEVEL: &str = "error";
@@ -49,7 +50,7 @@ fn main() -> Result<()> {
     let mut startup_warnings: Vec<String> = Vec::new();
 
     if let Some(w) = config_load_warning {
-        startup_warnings.push(w);
+        startup_warnings.push(tf!("notification-config-load-failed", "detail" => w.as_str()));
     }
 
     let mut serial = String::new();
@@ -57,7 +58,15 @@ fn main() -> Result<()> {
 
     if let Err(e) = AdbShell::verify_adb_available() {
         warn!("ADB not available: {}", e);
-        startup_error = Some(e.to_string());
+        startup_error = Some(match &e {
+            SAideError::AdbNotFound(detail) => {
+                tf!("startup-error-adb-not-found", "detail" => detail.as_str())
+            }
+            SAideError::AdbCommandFailed(detail) => {
+                tf!("startup-error-adb-command-failed", "detail" => detail.as_str())
+            }
+            _ => e.to_string(),
+        });
     } else {
         info!("Video backend: {}", config.gpu.backend.to_string());
         info!(
@@ -81,7 +90,12 @@ fn main() -> Result<()> {
             Err(e) => {
                 warn!("Failed to get device serial: {}", e);
                 if startup_error.is_none() {
-                    startup_error = Some(e.to_string());
+                    startup_error = Some(match &e {
+                        SAideError::AdbDeviceNotFound(detail) => {
+                            tf!("startup-error-device-not-found", "detail" => detail.as_str())
+                        }
+                        _ => e.to_string(),
+                    });
                 }
             }
         };
