@@ -395,6 +395,7 @@ impl SAideConfig {
 pub struct ConfigManager {
     path: PathBuf,
     config: Arc<SAideConfig>,
+    degraded: bool,
 }
 
 impl ConfigManager {
@@ -431,26 +432,26 @@ impl ConfigManager {
         Ok(Self {
             path,
             config: Arc::new(config),
+            degraded: false,
         })
     }
 
     /// Create a ConfigManager, falling back to built-in defaults if config loading fails.
     ///
     /// Returns `(ConfigManager, Option<error_string>)`. On failure the returned manager
-    /// uses the same resolved path as a successful `new()` would, so subsequent `save()`
-    /// calls can still write a valid config file and the user can recover from a corrupt
-    /// config within the same session.
+    /// is marked as degraded (`is_degraded() == true`): callers must check `is_degraded()`
+    /// before calling `save()` to avoid overwriting a corrupt config with default values.
     pub fn new_or_default() -> (Self, Option<String>) {
         match Self::new() {
             Ok(cm) => (cm, None),
             Err(e) => {
                 warn!("Failed to load config, using defaults: {}", e);
-                let path =
-                    constant::config_dir().unwrap_or_else(|| constant::fallback_config_path());
+                let path = constant::config_dir().unwrap_or_else(constant::fallback_config_path);
                 (
                     Self {
                         path,
                         config: Arc::new(SAideConfig::default()),
+                        degraded: true,
                     },
                     Some(e.to_string()),
                 )
@@ -459,6 +460,8 @@ impl ConfigManager {
     }
 
     pub fn config(&self) -> Arc<SAideConfig> { Arc::clone(&self.config) }
+
+    pub fn is_degraded(&self) -> bool { self.degraded }
 
     /// Save configuration
     pub fn save(&self) -> Result<()> { self.config.save(&self.path) }

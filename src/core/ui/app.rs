@@ -1028,6 +1028,10 @@ impl SAideApp {
     }
 
     pub(super) fn save_config(&mut self) {
+        if self.config_state.config_manager.is_degraded() {
+            self.notify(&t!("notification-save-skipped-degraded"));
+            return;
+        }
         if let Err(e) = self.config_state.config_manager.save() {
             error!("Failed to save config: {}", e);
             self.notify(&t!("notification-save-config-failed"));

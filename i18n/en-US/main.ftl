@@ -131,3 +131,4 @@ probe-codec-done-failed = Detection failed: { $error }
 ## Startup errors
 startup-fatal-error-title = SAide — Startup Error
 notification-config-load-failed = Configuration failed to load, using defaults: { $error }
+notification-save-skipped-degraded = Configuration is read-only (failed to load at startup)

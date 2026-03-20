@@ -131,3 +131,4 @@ probe-codec-done-failed = 检测失败：{ $error }
 ## 启动错误
 startup-fatal-error-title = SAide — 启动错误
 notification-config-load-failed = 配置文件加载失败，已使用默认配置：{ $error }
+notification-save-skipped-degraded = 配置文件处于只读状态（启动时加载失败）
