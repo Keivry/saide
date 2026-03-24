@@ -11,7 +11,7 @@
 //! - Other: Unexpected errors
 
 use {
-    super::decoder::{audio::AudioError, VideoError},
+    super::decoder::{VideoError, audio::AudioError},
     std::{env::VarError, fmt, io},
     thiserror::Error,
 };

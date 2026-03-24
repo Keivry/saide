@@ -11,12 +11,13 @@ use {
         controller::{control_sender::ControlSender, keyboard::KeyboardMapper, mouse::MouseMapper},
         decoder::AutoDecoder,
         error::{Result, SAideError},
+        runtime::TOKIO_RT,
         scrcpy::{
             connection::{AudioDisabledReason, ScrcpyConnection},
             server::ServerParams,
         },
     },
-    std::{net::TcpStream, sync::Arc, thread},
+    std::{net::TcpStream, sync::Arc},
     tokio_util::sync::CancellationToken,
     tracing::{debug, error, info},
 };
@@ -37,21 +38,20 @@ pub struct ConnectionResult {
 pub struct ConnectionService;
 
 impl ConnectionService {
-    /// Start scrcpy connection in background thread
+    /// Start scrcpy connection in background task
     pub fn start<F>(serial: &str, config: Arc<SAideConfig>, on_ready: F, token: CancellationToken)
     where
         F: FnOnce(Result<ConnectionResult>) + Send + 'static,
     {
         let serial = serial.to_owned();
-        thread::spawn(move || {
+        TOKIO_RT.spawn(async move {
             info!("Establishing scrcpy connection...");
-            let result = Self::establish_connection(&serial, config, token);
+            let result = Self::establish_connection(&serial, config, token).await;
             on_ready(result);
         });
     }
 
-    /// Establish scrcpy connection (blocking)
-    fn establish_connection(
+    async fn establish_connection(
         serial: &str,
         config: Arc<SAideConfig>,
         token: CancellationToken,
@@ -71,25 +71,14 @@ impl ConnectionService {
             }
         });
 
-        // Establish ScrcpyConnection (blocking)
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| {
-                error!("Failed to create Tokio runtime: {}", e);
-                SAideError::Other(format!("Failed to create Tokio runtime: {}", e))
-            })?;
-
-        let mut connection = runtime.block_on(async {
-            tokio::select! {
-                _ = token.cancelled() => {
-                    Err(SAideError::Cancelled)
-                },
-                conn = Self::scrcpy_connection(serial, config.clone(), capture_orientation) => {
-                    conn
-                }
+        let mut connection = tokio::select! {
+            _ = token.cancelled() => {
+                return Err(SAideError::Cancelled);
             }
-        })?;
+            conn = Self::scrcpy_connection(serial, config.clone(), capture_orientation) => {
+                conn?
+            }
+        };
 
         info!("ScrcpyConnection established successfully");
 
@@ -141,8 +130,6 @@ impl ConnectionService {
         config: Arc<SAideConfig>,
         capture_orientation: Option<u32>,
     ) -> Result<ScrcpyConnection> {
-        let server_path = &config.general.scrcpy_server;
-
         // Create server params from config
         let mut params = ServerParams::for_device(serial)?;
 
@@ -188,11 +175,18 @@ impl ConnectionService {
         // - More stable, works on all devices
         params.capture_orientation = capture_orientation;
 
-        ScrcpyConnection::connect(serial, server_path, &config.general.bind_address, params)
-            .map_err(|e| {
+        let serial = serial.to_owned();
+        let server_path = config.general.scrcpy_server.clone();
+        let bind_address = config.general.bind_address.clone();
+
+        tokio::task::spawn_blocking(move || {
+            ScrcpyConnection::connect(&serial, &server_path, &bind_address, params).map_err(|e| {
                 error!("Failed to establish scrcpy connection: {}", e);
                 e
             })
+        })
+        .await
+        .map_err(|e| SAideError::Other(format!("spawn_blocking join error: {}", e)))?
     }
 }
 
@@ -203,24 +197,20 @@ impl InputManager {
     /// Create keyboard mapper
     pub fn create_keyboard_mapper<F>(control_sender: ControlSender, on_ready: F)
     where
-        F: FnOnce(KeyboardMapper) + Send + 'static,
+        F: FnOnce(KeyboardMapper),
     {
-        thread::spawn(move || {
-            let mapper = KeyboardMapper::new(control_sender);
-            debug!("Keyboard mapper initialized with ControlSender");
-            on_ready(mapper);
-        });
+        let mapper = KeyboardMapper::new(control_sender);
+        debug!("Keyboard mapper initialized with ControlSender");
+        on_ready(mapper);
     }
 
     /// Create mouse mapper
     pub fn create_mouse_mapper<F>(config: InputConfig, control_sender: ControlSender, on_ready: F)
     where
-        F: FnOnce(MouseMapper) + Send + 'static,
+        F: FnOnce(MouseMapper),
     {
-        thread::spawn(move || {
-            let mapper = MouseMapper::new(control_sender, config);
-            debug!("Mouse mapper initialized with ControlSender");
-            on_ready(mapper);
-        });
+        let mapper = MouseMapper::new(control_sender, config);
+        debug!("Mouse mapper initialized with ControlSender");
+        on_ready(mapper);
     }
 }

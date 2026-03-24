@@ -12,7 +12,7 @@ use {
         tf,
     },
     tracing::{info, warn},
-    tracing_subscriber::{fmt, prelude::*, EnvFilter},
+    tracing_subscriber::{EnvFilter, fmt, prelude::*},
 };
 
 const WGPU_LOG_LEVEL: &str = "error";

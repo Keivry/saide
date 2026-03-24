@@ -12,6 +12,7 @@ pub mod gpu;
 pub mod i18n;
 pub mod modal;
 pub mod profiler;
+pub mod runtime;
 pub mod scrcpy;
 
 #[macro_use]

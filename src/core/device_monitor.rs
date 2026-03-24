@@ -3,18 +3,16 @@
 //! Device monitoring service
 //!
 //! Monitors device state (online/offline), rotation, and IME (keyboard) state.
-//! Runs in background threads and reports changes via channels.
+//! Runs as async tasks and reports changes via channels.
 
 use {
     crate::{
         controller::adb::{AdbShell, DeviceState},
         error::{Result, SAideError},
+        runtime::TOKIO_RT,
     },
     crossbeam_channel::{Receiver, Sender, bounded},
-    std::{
-        thread::{self, JoinHandle},
-        time::Duration,
-    },
+    std::time::Duration,
     tokio_util::sync::CancellationToken,
     tracing::{error, info, warn},
 };
@@ -34,188 +32,187 @@ pub enum DeviceMonitorEvent {
 pub struct DeviceMonitor;
 
 impl DeviceMonitor {
-    /// Start device monitoring in background thread
+    /// Start device monitoring in background task
     pub fn start(serial: &str, token: CancellationToken) -> Result<Receiver<DeviceMonitorEvent>> {
         let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
 
         let serial = serial.to_owned();
-        thread::spawn(move || {
-            info!("Starting device monitor thread...");
+        TOKIO_RT.spawn(async move {
+            info!("Starting device monitor tasks...");
 
             if token.is_cancelled() {
                 info!("Device monitor initialization cancelled");
                 return;
             }
 
-            let handles = vec![
-                Self::monitor_device_state(&serial, event_tx.clone(), token.clone()),
-                Self::monitor_ime_state(&serial, event_tx.clone(), token.clone()),
-                Self::monitor_rotation(&serial, event_tx.clone(), token.clone()),
-            ];
-
-            for handle in handles {
-                if let Err(e) = handle.join().unwrap_or_else(|e| {
-                    Err(SAideError::Other(format!(
-                        "Device monitor thread panicked: {:?}",
-                        e
-                    )))
-                }) {
-                    error!("Device monitor thread error: {}", e);
-                }
-            }
+            tokio::join!(
+                Self::monitor_device_state(serial.clone(), event_tx.clone(), token.clone()),
+                Self::monitor_ime_state(serial.clone(), event_tx.clone(), token.clone()),
+                Self::monitor_rotation(serial, event_tx, token),
+            );
         });
 
         Ok(event_rx)
     }
 
-    fn monitor_device_state(
-        serial: &str,
+    async fn monitor_device_state(
+        serial: String,
         event_tx: Sender<DeviceMonitorEvent>,
         token: CancellationToken,
-    ) -> JoinHandle<Result<()>> {
-        let serial = serial.to_owned();
-        thread::spawn(move || -> Result<()> {
-            info!("Starting device state monitor thread...");
+    ) {
+        info!("Starting device state monitor...");
+        let mut interval =
+            tokio::time::interval(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-            loop {
-                if token.is_cancelled() {
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
                     info!("Device state monitor cancellation requested, stopping...");
-                    break;
+                    return;
                 }
-
-                match retry_adb_command(token.clone(), || AdbShell::get_device_state(&serial)) {
-                    Ok(state) => {
-                        if state != DeviceState::Connected {
-                            info!("Device went offline: {:?}", state);
-
-                            event_tx
-                                .send(DeviceMonitorEvent::DeviceOffline)
-                                .unwrap_or_else(|e| {
-                                    error!("Failed to send DeviceOffline event: {}", e);
-                                });
-
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to get device state: {}", e);
-                        return Err(e);
-                    }
-                }
-
-                thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+                _ = interval.tick() => {}
             }
-            Ok(())
-        })
+
+            match run_adb_with_retry(token.clone(), AdbShell::get_device_state, serial.clone())
+                .await
+            {
+                Ok(state) => {
+                    if state != DeviceState::Connected {
+                        info!("Device went offline: {:?}", state);
+                        event_tx
+                            .send(DeviceMonitorEvent::DeviceOffline)
+                            .unwrap_or_else(|e| {
+                                error!("Failed to send DeviceOffline event: {}", e);
+                            });
+                        return;
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to get device state: {}", e);
+                    return;
+                }
+            }
+        }
     }
 
-    fn monitor_ime_state(
-        serial: &str,
+    async fn monitor_ime_state(
+        serial: String,
         event_tx: Sender<DeviceMonitorEvent>,
         token: CancellationToken,
-    ) -> JoinHandle<Result<()>> {
-        let serial = serial.to_owned();
-        thread::spawn(move || -> Result<()> {
-            info!("Starting IME state monitor thread...");
+    ) {
+        info!("Starting IME state monitor...");
+        let mut interval =
+            tokio::time::interval(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-            loop {
-                if token.is_cancelled() {
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
                     info!("Device IME monitor cancellation requested, stopping...");
-                    break;
+                    return;
                 }
+                _ = interval.tick() => {}
+            }
 
-                match retry_adb_command(token.clone(), || AdbShell::get_ime_state(&serial)) {
-                    Ok(is_shown) => {
+            match run_adb_with_retry(token.clone(), AdbShell::get_ime_state, serial.clone()).await {
+                Ok(is_shown) => {
+                    event_tx
+                        .send(DeviceMonitorEvent::ImStateChanged(is_shown))
+                        .unwrap_or_else(|e| {
+                            error!("Failed to send IME state event: {}", e);
+                        });
+                }
+                Err(e) => {
+                    error!("Failed to get IME state: {}", e);
+                    return;
+                }
+            }
+        }
+    }
+
+    async fn monitor_rotation(
+        serial: String,
+        event_tx: Sender<DeviceMonitorEvent>,
+        token: CancellationToken,
+    ) {
+        info!("Starting device rotation monitor...");
+        let mut interval =
+            tokio::time::interval(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        let mut last_orientation: Option<u32> = None;
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    info!("Device rotation monitor cancellation requested, stopping...");
+                    return;
+                }
+                _ = interval.tick() => {}
+            }
+
+            match run_adb_with_retry(
+                token.clone(),
+                AdbShell::get_screen_orientation,
+                serial.clone(),
+            )
+            .await
+            {
+                Ok(orientation) => {
+                    if Some(orientation) != last_orientation {
+                        info!("Device rotated to orientation: {}", orientation);
+                        last_orientation = Some(orientation);
                         event_tx
-                            .send(DeviceMonitorEvent::ImStateChanged(is_shown))
+                            .send(DeviceMonitorEvent::Rotated(orientation))
                             .unwrap_or_else(|e| {
-                                error!("Failed to send IME state event: {}", e);
+                                error!("Failed to send rotation event: {}", e);
                             });
                     }
-                    Err(e) => {
-                        error!("Failed to get IME state: {}", e);
-                        return Err(e);
-                    }
                 }
-
-                thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+                Err(e) => {
+                    error!("Failed to get device orientation: {}", e);
+                    return;
+                }
             }
-
-            Ok(())
-        })
-    }
-
-    fn monitor_rotation(
-        serial: &str,
-        event_tx: Sender<DeviceMonitorEvent>,
-        token: CancellationToken,
-    ) -> JoinHandle<Result<()>> {
-        let serial = serial.to_owned();
-        thread::spawn(move || -> Result<()> {
-            info!("Starting device rotation monitor thread...");
-
-            let mut last_orientation: Option<u32> = None;
-
-            loop {
-                if token.is_cancelled() {
-                    info!("Device rotation monitor cancellation requested, stopping...");
-                    break;
-                }
-
-                match retry_adb_command(token.clone(), || AdbShell::get_screen_orientation(&serial))
-                {
-                    Ok(orientation) => {
-                        if Some(orientation) != last_orientation {
-                            info!("Device rotated to orientation: {}", orientation);
-
-                            last_orientation = Some(orientation);
-
-                            event_tx
-                                .send(DeviceMonitorEvent::Rotated(orientation))
-                                .unwrap_or_else(|e| {
-                                    error!("Failed to send rotation event: {}", e);
-                                });
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to get device orientation: {}", e);
-                        return Err(e);
-                    }
-                }
-
-                thread::sleep(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
-            }
-
-            Ok(())
-        })
+        }
     }
 }
 
-fn retry_adb_command<F, T>(cancel_token: CancellationToken, mut command_fn: F) -> Result<T>
+async fn run_adb_with_retry<T>(
+    token: CancellationToken,
+    f: fn(&str) -> Result<T>,
+    serial: String,
+) -> Result<T>
 where
-    F: FnMut() -> Result<T>,
+    T: Send + 'static,
 {
-    if cancel_token.is_cancelled() {
+    if token.is_cancelled() {
         return Err(SAideError::Cancelled);
     }
 
     const MAX_RETRIES: u32 = 3;
     const RETRY_DELAY_MS: u64 = 100;
 
-    let mut attempts = 0;
+    let mut attempts = 0u32;
     loop {
-        match command_fn() {
-            Ok(result) => return Ok(result),
+        let s = serial.clone();
+        let result = tokio::task::spawn_blocking(move || f(&s))
+            .await
+            .map_err(|e| SAideError::Other(format!("ADB task panic: {e:?}")))?;
+
+        match result {
+            Ok(v) => return Ok(v),
             Err(e) => {
                 attempts += 1;
                 if attempts >= MAX_RETRIES {
                     return Err(e);
                 }
                 warn!(
-                    "ADB command failed (attempt {}): {}. Retrying in {} ms...",
+                    "ADB command failed (attempt {}): {}. Retrying in {}ms...",
                     attempts, e, RETRY_DELAY_MS
                 );
-                thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+                tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
             }
         }
     }

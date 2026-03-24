@@ -4,11 +4,11 @@
 //!
 //! Converts a [`DecodedFrame`] to RGB24 via FFmpeg's `swscale`, applies the
 //! requested clockwise rotation through `image::imageops`, and saves the
-//! result as a PNG file.  The encoding step runs in a background thread so
+//! result as a PNG file.  The encoding step runs in a background task so
 //! the UI is never blocked.
 
 use {
-    crate::{capture::CaptureEvent, decoder::DecodedFrame},
+    crate::{capture::CaptureEvent, decoder::DecodedFrame, runtime::TOKIO_RT},
     chrono::Local,
     crossbeam_channel::Sender,
     ffmpeg_next::{
@@ -19,22 +19,24 @@ use {
     std::{
         path::{Path, PathBuf},
         sync::Arc,
-        thread,
     },
 };
 
 /// Captures the current frame and saves it as a PNG image.
 ///
 /// `rotation` is the number of 90° clockwise rotations (0-3), matching the UI display orientation.
-/// The screenshot is encoded in a background thread so the UI is never blocked.
+/// The screenshot is encoded in a background task so the UI is never blocked.
 pub fn take_screenshot(
     frame: Arc<DecodedFrame>,
     save_dir: PathBuf,
     event_tx: Sender<CaptureEvent>,
     rotation: u32,
 ) {
-    thread::spawn(move || {
-        let result = encode_screenshot(&frame, &save_dir, rotation);
+    TOKIO_RT.spawn(async move {
+        let result =
+            tokio::task::spawn_blocking(move || encode_screenshot(&frame, &save_dir, rotation))
+                .await
+                .unwrap_or_else(|e| Err(format!("Screenshot task panic: {e:?}")));
         let event = match result {
             Ok(path) => CaptureEvent::ScreenshotSaved(path),
             Err(e) => CaptureEvent::ScreenshotError(e),
