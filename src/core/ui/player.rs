@@ -26,9 +26,10 @@ use {
         },
         error::Result,
         profiler::{LatencyProfiler, LatencyStats, latency::LatencySummary},
-        scrcpy::{
-            codec_probe::{DecoderProfileDatabase, EncoderProfileDatabase, encoder_fingerprint},
-            protocol::video::VideoPacket,
+        scrcpy::codec_probe::{
+            DecoderProfileDatabase,
+            EncoderProfileDatabase,
+            encoder_fingerprint,
         },
         t,
         tf,
@@ -37,6 +38,7 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     parking_lot::Mutex,
+    scrcpy::protocol::video::VideoPacket,
     std::{
         io::Read,
         net::TcpStream,
@@ -298,24 +300,34 @@ impl StreamPlayer {
         let hwdecode = self.hwdecode;
         let recorder_video_tx = self.recorder_video_tx.clone();
         let recorder_audio_tx = self.recorder_audio_tx.clone();
-        let current_encoder_fingerprint = EncoderProfileDatabase::load()
-            .ok()
-            .and_then(|db| db.get(serial).cloned())
-            .and_then(|profile| {
-                encoder_fingerprint(
-                    profile.video_encoder.as_deref(),
-                    profile.optimal_config.as_deref(),
-                )
-            });
-        let preferred_decoder = DecoderProfileDatabase::load()
-            .ok()
-            .and_then(|db| db.get(serial).cloned())
-            .filter(|profile| {
-                current_encoder_fingerprint
-                    .as_deref()
-                    .is_some_and(|fingerprint| profile.encoder_fingerprint == fingerprint)
-            })
-            .and_then(|profile| DecoderPreference::from_profile_name(&profile.validated_decoder));
+        let current_encoder_fingerprint = {
+            let base_dir =
+                crate::constant::data_dir().unwrap_or_else(crate::constant::fallback_data_path);
+            EncoderProfileDatabase::load(&base_dir)
+                .ok()
+                .and_then(|db| db.get(serial).cloned())
+                .and_then(|profile| {
+                    encoder_fingerprint(
+                        profile.video_encoder.as_deref(),
+                        profile.optimal_config.as_deref(),
+                    )
+                })
+        };
+        let preferred_decoder = {
+            let base_dir =
+                crate::constant::data_dir().unwrap_or_else(crate::constant::fallback_data_path);
+            DecoderProfileDatabase::load(&base_dir)
+                .ok()
+                .and_then(|db| db.get(serial).cloned())
+                .filter(|profile| {
+                    current_encoder_fingerprint
+                        .as_deref()
+                        .is_some_and(|fingerprint| profile.encoder_fingerprint == fingerprint)
+                })
+                .and_then(|profile| {
+                    DecoderPreference::from_profile_name(&profile.validated_decoder)
+                })
+        };
         let event_tx_clone = event_tx.clone();
         self.stream_thread = Some(thread::spawn(move || {
             if session_token.is_cancelled() {
@@ -1008,7 +1020,7 @@ impl VideoLoop {
                         // Signal main thread to stop the stream on repeated read failures
                         token.cancel();
 
-                        return Err(e);
+                        return Err(e.into());
                     }
 
                     warn!(

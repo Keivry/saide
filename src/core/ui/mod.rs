@@ -7,6 +7,7 @@ mod function;
 mod indicator;
 mod notifier;
 mod player;
+mod shell;
 mod theme;
 mod toolbar;
 
@@ -16,11 +17,12 @@ use {
         core::coords::MappingPos,
         shortcut::{ShortcutManager, ShortcutMap, shortcut_map},
     },
+    egui_event::Event,
     lazy_static::lazy_static,
     parking_lot::RwLock,
     std::sync::Arc,
 };
-pub use {app::SAideApp, theme::ThemeMode};
+pub use {app::SAideApp, shell::AppShell, theme::ThemeMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppCommand {
@@ -33,7 +35,17 @@ pub enum AppCommand {
     ShowDeleteDialog,
     ShowSaveAsDialog,
     CloseEditor,
+    RotateVideo,
+    ToggleMappingEditor,
+    ToggleScreenPower,
+    ToggleKeyboardMapping,
+    ToggleMappingVisualization,
+    ToggleFloat,
+    TakeScreenshot,
+    ToggleRecording,
 }
+
+impl Event for AppCommand {}
 
 /// Pending operation waiting for a dialog result. Carries data that cannot be
 /// encoded in [`AppCommand`] (which must be `Copy + Hash` for shortcut maps).

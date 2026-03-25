@@ -16,10 +16,10 @@ use {
         error::SAideError,
         scrcpy::connection::{AudioDisabledReason, ScrcpyConnection},
     },
+    adbshell::{AdbShell, DeviceState},
     crossbeam_channel::{Receiver, Sender},
     std::{
         net::TcpStream,
-        process::Command,
         sync::Arc,
         thread,
         time::{Duration, Instant},
@@ -57,20 +57,18 @@ pub fn start_initialization(
     tx: Sender<InitEvent>,
     cancellation_token: CancellationToken,
 ) {
-    const ADB_SERVER_STARTUP_WAIT_MS: u64 = 500;
-    const ADB_SERVER_CHECK_INTERVAL_MS: u64 = 50;
+    const ADB_DEVICE_WAIT_MS: u64 = 500;
+    const ADB_DEVICE_CHECK_INTERVAL_MS: u64 = 50;
 
-    // Delay to allow ADB server to be ready
     let start = Instant::now();
-    while start.elapsed() < Duration::from_millis(ADB_SERVER_STARTUP_WAIT_MS) {
-        if Command::new("adb")
-            .args(["shell", "echo", "ok"])
-            .output()
-            .is_ok()
-        {
+    while start.elapsed() < Duration::from_millis(ADB_DEVICE_WAIT_MS) {
+        if matches!(
+            AdbShell::get_device_state(serial),
+            Ok(DeviceState::Connected)
+        ) {
             break;
         }
-        thread::sleep(Duration::from_millis(ADB_SERVER_CHECK_INTERVAL_MS));
+        thread::sleep(Duration::from_millis(ADB_DEVICE_CHECK_INTERVAL_MS));
     }
 
     let serial = serial.to_owned();

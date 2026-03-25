@@ -6,7 +6,10 @@
 //! such as rotating video, configuring mappings, and toggling screen power.
 
 use {
-    crate::{core::state::ToolbarMode, t},
+    crate::{
+        core::{state::ToolbarMode, ui::AppCommand},
+        t,
+    },
     egui::{Button, RichText},
     lazy_static::lazy_static,
 };
@@ -16,19 +19,6 @@ const TOOLBAR_BTN_SIZE: [f32; 2] = [36.0, 36.0];
 const TOOLBAR_FONT_SIZE: f32 = 16.0;
 const TOOLBAR_BTN_SPACING: f32 = 2.0;
 const TOOLBAR_SEPARATOR_SPACING: f32 = 10.0;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToolbarEvent {
-    None,
-    ToggleKeyboardMapping,
-    ToggleMappingVisualization,
-    RotateVideo,
-    ToggleMappingEditor,
-    ToggleScreenPower,
-    ToggleFloat,
-    TakeScreenshot,
-    ToggleRecording,
-}
 
 enum ButtonType {
     Separator,
@@ -43,15 +33,8 @@ struct ToolbarButton {
     btn_type: ButtonType,
     label: &'static str,
     tooltip_key: &'static str,
-    event: ToolbarEvent,
+    event: AppCommand,
 }
-
-const TOOLBAR_SEPARATOR: ToolbarButton = ToolbarButton {
-    btn_type: ButtonType::Separator,
-    label: "",
-    tooltip_key: "",
-    event: ToolbarEvent::None,
-};
 
 lazy_static! {
     static ref TOOLBAR_BUTTONS_BASE: [ToolbarButton; 9] = [
@@ -62,7 +45,7 @@ lazy_static! {
             },
             label: "⌨",
             tooltip_key: "toolbar-toggle-keyboard-mapping",
-            event: ToolbarEvent::ToggleKeyboardMapping,
+            event: AppCommand::ToggleKeyboardMapping,
         },
         ToolbarButton {
             btn_type: ButtonType::SelectableConditional {
@@ -71,26 +54,31 @@ lazy_static! {
             },
             label: "👁",
             tooltip_key: "toolbar-mapping-visualization",
-            event: ToolbarEvent::ToggleMappingVisualization,
+            event: AppCommand::ToggleMappingVisualization,
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,
             label: "⚙",
             tooltip_key: "toolbar-editor",
-            event: ToolbarEvent::ToggleMappingEditor,
+            event: AppCommand::ToggleMappingEditor,
         },
-        TOOLBAR_SEPARATOR,
+        ToolbarButton {
+            btn_type: ButtonType::Separator,
+            label: "",
+            tooltip_key: "",
+            event: AppCommand::ToggleFloat,
+        },
         ToolbarButton {
             btn_type: ButtonType::Normal,
             label: "⟳",
             tooltip_key: "toolbar-rotate",
-            event: ToolbarEvent::RotateVideo,
+            event: AppCommand::RotateVideo,
         },
         ToolbarButton {
             btn_type: ButtonType::Normal,
             label: "📷",
             tooltip_key: "toolbar-screenshot",
-            event: ToolbarEvent::TakeScreenshot,
+            event: AppCommand::TakeScreenshot,
         },
         ToolbarButton {
             btn_type: ButtonType::SelectableConditional {
@@ -99,14 +87,19 @@ lazy_static! {
             },
             label: "⏺",
             tooltip_key: "toolbar-recording",
-            event: ToolbarEvent::ToggleRecording,
+            event: AppCommand::ToggleRecording,
         },
-        TOOLBAR_SEPARATOR,
+        ToolbarButton {
+            btn_type: ButtonType::Separator,
+            label: "",
+            tooltip_key: "",
+            event: AppCommand::ToggleFloat,
+        },
         ToolbarButton {
             btn_type: ButtonType::Normal,
             label: "💤",
             tooltip_key: "toolbar-screen-off",
-            event: ToolbarEvent::ToggleScreenPower,
+            event: AppCommand::ToggleScreenPower,
         },
     ];
 }
@@ -143,13 +136,13 @@ impl Toolbar {
 
     pub fn width() -> f32 { TOOLBAR_WIDTH }
 
-    pub fn draw(&self, ui: &mut egui::Ui, state: ToolbarViewState) -> ToolbarEvent {
+    pub fn draw(&self, ui: &mut egui::Ui, state: ToolbarViewState) -> Option<AppCommand> {
         let count = TOOLBAR_BUTTONS_BASE.len();
         if count == 0 {
-            return ToolbarEvent::None;
+            return None;
         }
 
-        let mut result = ToolbarEvent::None;
+        let mut result = None;
         let available = ui.available_rect_before_wrap();
         let screen_bottom = ui.ctx().content_rect().max.y;
         let full_rect = egui::Rect::from_min_max(
@@ -181,7 +174,7 @@ impl Toolbar {
                     }
 
                     if self.draw_button(btn, ui, state) {
-                        result = btn.event;
+                        result = Some(btn.event);
                     }
                 }
             });
@@ -192,7 +185,7 @@ impl Toolbar {
             ui.vertical_centered(|ui| {
                 ui.add_space(TOOLBAR_BTN_SPACING);
                 if self.draw_toggle_float_button(ui, state.mode) {
-                    result = ToolbarEvent::ToggleFloat;
+                    result = Some(AppCommand::ToggleFloat);
                 }
             });
         });

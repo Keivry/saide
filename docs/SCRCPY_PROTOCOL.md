@@ -4,10 +4,10 @@ This document describes the scrcpy protocol behavior that SAide currently relies
 
 Protocol facts below are aligned with:
 
-- `src/scrcpy/connection.rs`
-- `src/scrcpy/protocol/control.rs`
-- `src/scrcpy/protocol/video.rs`
-- `src/scrcpy/protocol/audio.rs`
+- `3rd-party/scrcpy-rs/src/connection.rs`
+- `3rd-party/scrcpy-rs/src/protocol/control.rs`
+- `3rd-party/scrcpy-rs/src/protocol/video.rs`
+- `3rd-party/scrcpy-rs/src/protocol/audio.rs`
 - scrcpy server version `3.3.3`
 
 ## Connection model
@@ -62,11 +62,11 @@ Common upstream codec ids include:
 - `h265 = 0x68323635`
 - `av1  = 0x00617631`
 
-`src/scrcpy/connection.rs` reads this metadata and stores the resolution on the connection object.
+`3rd-party/scrcpy-rs/src/connection.rs` reads this metadata and stores the resolution on the connection object.
 
 ## Video packet format
 
-`src/scrcpy/protocol/video.rs` parses the current wire format used by SAide.
+`3rd-party/scrcpy-rs/src/protocol/video.rs` parses the current wire format used by SAide.
 
 Each packet is:
 
@@ -111,7 +111,7 @@ SAide's connection layer also treats two special values as explicit device-side 
 
 ## Audio packet format in SAide
 
-The audio data path in `src/scrcpy/protocol/audio.rs` parses a 12-byte packet header followed by payload:
+The audio data path in `3rd-party/scrcpy-rs/src/protocol/audio.rs` parses a 12-byte packet header followed by payload:
 
 ```text
 0..8   pts_and_flags  u64 big-endian
@@ -148,7 +148,7 @@ All integer payloads are serialized big-endian.
 
 ### Message type enum present in the repository
 
-`src/scrcpy/protocol/control.rs` keeps the upstream type numbers 0 through 17:
+`3rd-party/scrcpy-rs/src/protocol/control.rs` keeps the upstream type numbers 0 through 17:
 
 | Type | Name |
 | --- | --- |
@@ -236,7 +236,7 @@ The absence of those features is a code-level fact, not a compatibility score. T
 
 ## Practical implications for contributors
 
-- If you are working on input or gesture behavior, start with `src/scrcpy/protocol/control.rs` and `src/controller/control_sender.rs`.
-- If you are debugging resolution or handshake issues, inspect `src/scrcpy/connection.rs`.
-- If you are debugging stutter or malformed media packets, inspect `src/scrcpy/protocol/video.rs` and `src/scrcpy/protocol/audio.rs`.
+- If you are working on input or gesture behavior, start with `3rd-party/scrcpy-rs/src/protocol/control.rs` and `src/controller/control_sender.rs`.
+- If you are debugging resolution or handshake issues, inspect `3rd-party/scrcpy-rs/src/connection.rs`.
+- If you are debugging stutter or malformed media packets, inspect `3rd-party/scrcpy-rs/src/protocol/video.rs` and `3rd-party/scrcpy-rs/src/protocol/audio.rs`.
 - If you want to extend protocol coverage, add the missing message model first, then update this document to describe the new real behavior.

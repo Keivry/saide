@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use {
+    adbshell::AdbShell,
     crossbeam_channel::Receiver,
     eframe::{egui, egui_wgpu},
     egui_cjk_font::load_cjk_font,
     saide::{
         config::ConfigManager,
-        controller::AdbShell,
-        core::ui::{SAideApp, ThemeMode},
+        core::ui::{AppShell, SAideApp, ThemeMode},
         error::{Result, SAideError},
         tf,
     },
@@ -56,7 +56,8 @@ fn main() -> Result<()> {
     let mut serial = String::new();
     let (tx, rx) = crossbeam_channel::bounded(1);
 
-    if let Err(e) = AdbShell::verify_adb_available() {
+    if let Err(adb_err) = AdbShell::verify_adb_available() {
+        let e = SAideError::from(adb_err);
         warn!("ADB not available: {}", e);
         startup_error = Some(match &e {
             SAideError::AdbNotFound(detail) => {
@@ -87,7 +88,8 @@ fn main() -> Result<()> {
             Ok(s) => {
                 serial = s;
             }
-            Err(e) => {
+            Err(adb_err) => {
+                let e = SAideError::from(adb_err);
                 warn!("Failed to get device serial: {}", e);
                 if startup_error.is_none() {
                     startup_error = Some(match &e {
@@ -153,7 +155,7 @@ fn start_ui(
         Box::new(move |cc| {
             load_cjk_font(&cc.egui_ctx);
             ThemeMode::apply_to_context(&cc.egui_ctx);
-            Ok(Box::new(SAideApp::new(
+            Ok(Box::new(AppShell::new(
                 cc,
                 serial,
                 config_manager,

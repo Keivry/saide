@@ -24,7 +24,7 @@ use {
         notifier::Notifier,
         player::{PlayerState, StreamPlayer},
         theme::AppColors,
-        toolbar::{Toolbar, ToolbarEvent, ToolbarViewState},
+        toolbar::{Toolbar, ToolbarViewState},
     },
     crate::{
         capture::{
@@ -43,6 +43,7 @@ use {
             ui::editor::EditorParams,
             utils::find_nearest_mapping,
         },
+        decoder_probe,
         error::Result,
         modal::{DialogState, ModalDialog},
         scrcpy::{
@@ -53,6 +54,7 @@ use {
         tf,
     },
     crossbeam_channel::{Receiver, Sender, bounded},
+    egui_event::EventRegistry,
     std::{sync::Arc, thread, time::Instant},
     tokio_util::sync::CancellationToken,
     tracing::{debug, error, info, trace, warn},
@@ -66,9 +68,16 @@ pub(crate) enum InitState {
     InProgress,
     Ready,
     /// A fatal error occurred before or during initialization.
-    /// Each frame, `update()` calls `show_fatal_init_error_dialog()` until the
+    /// Each frame, `draw()` calls `show_fatal_init_error_dialog()` until the
     /// dialog is acknowledged, after which the app exits via `shutdown_requested`.
     Failed(String),
+}
+
+#[derive(Debug)]
+pub(super) enum UiEffect {
+    RequestRepaint,
+    Resize,
+    Close,
 }
 
 pub struct SAideApp {
@@ -102,6 +111,7 @@ pub struct SAideApp {
     pub(super) capture_event_rx: Receiver<CaptureEvent>,
 
     pub(super) startup_warnings: Vec<String>,
+    pub(super) pending_ui_effects: Vec<UiEffect>,
 }
 
 const FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH: f32 = 4.0;
@@ -172,6 +182,7 @@ impl SAideApp {
             capture_event_rx,
 
             startup_warnings,
+            pending_ui_effects: Vec::new(),
         }
     }
 
@@ -234,7 +245,7 @@ impl SAideApp {
         }
     }
 
-    fn set_toolbar_mode(&mut self, ctx: &egui::Context, mode: ToolbarMode) {
+    fn set_toolbar_mode(&mut self, mode: ToolbarMode) {
         let previous_mode = self.toolbar_mode();
         if previous_mode == mode {
             return;
@@ -244,8 +255,8 @@ impl SAideApp {
         self.ui_state.pending_toggle_float = true;
         self.ui_state
             .set_floating_toolbar_visible(mode.is_floating());
-        self.resize(ctx);
-        ctx.request_repaint();
+        self.pending_ui_effects.push(UiEffect::Resize);
+        self.pending_ui_effects.push(UiEffect::RequestRepaint);
 
         info!("Toolbar mode toggled: {}", mode.as_str());
     }
@@ -276,7 +287,7 @@ impl SAideApp {
         let server_jar = self.config().general.scrcpy_server.clone();
 
         thread::spawn(move || {
-            let result = crate::scrcpy::codec_probe::probe_device(&serial, &server_jar, Some(&tx));
+            let result = decoder_probe::probe_device(&serial, &server_jar, Some(&tx));
             if let Err(ref e) = result {
                 let _ = tx.send(ProbeStep::Done(Err(e.to_string())));
             }
@@ -385,7 +396,7 @@ impl SAideApp {
                 if config.scrcpy.options.turn_screen_off
                     && let Some(sender) = &self.app_state.control_sender
                 {
-                    if let Err(e) = sender.send_screen_off_with_brightness_save() {
+                    if let Err(e) = sender.send_screen_off() {
                         error!("Failed to turn screen off on init: {}", e);
                     } else {
                         info!("Screen turned off as per config");
@@ -434,7 +445,7 @@ impl SAideApp {
     }
 
     /// Rotate video by 90 degrees clockwise
-    fn rotate(&mut self, ctx: &egui::Context) {
+    fn rotate(&mut self) {
         let video_rotation = (self.player.rotation() + 1) % 4;
 
         // Sync rotation to player and indicator
@@ -443,14 +454,14 @@ impl SAideApp {
 
         // Resize window to match new video dimensions
         // No needed to update VisualCoordSys here, resize() will call it
-        self.resize(ctx);
+        self.pending_ui_effects.push(UiEffect::Resize);
 
         // Update indicator resolution
         let (w, h) = self.player.video_dimensions();
         self.indicator.update_video_resolution((w, h));
 
         // Request repaint to apply changes immediately
-        ctx.request_repaint();
+        self.pending_ui_effects.push(UiEffect::RequestRepaint);
 
         // Update VisualCoordSys (user rotation changed)
         self.ui_state
@@ -461,12 +472,28 @@ impl SAideApp {
     }
 
     /// Toggle mapping editor
-    fn toggle_editor(&mut self, _ctx: &egui::Context) {
+    fn toggle_editor(&mut self) {
         if self.mapping_editor.is_some() {
             self.mapping_editor = None;
         } else {
             self.mapping_editor = Some(MappingEditor::new());
         }
+    }
+
+    fn process_pending_ui_effects(&mut self, ctx: &egui::Context) -> bool {
+        let mut should_close = false;
+        let effects: Vec<UiEffect> = self.pending_ui_effects.drain(..).collect();
+        for effect in effects {
+            match effect {
+                UiEffect::RequestRepaint => ctx.request_repaint(),
+                UiEffect::Resize => self.resize(ctx),
+                UiEffect::Close => {
+                    should_close = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+        should_close
     }
 
     /// Toggle keyboard custom mapping
@@ -1040,20 +1067,78 @@ impl SAideApp {
         }
     }
 
-    fn handle_toolbar_event(&mut self, ctx: &egui::Context, event: ToolbarEvent) {
-        if event != ToolbarEvent::None && self.init_state != InitState::Ready {
-            debug!("Ignoring toolbar event while app is not ready: {:?}", event);
+    pub(super) fn on_app_command(&mut self, cmd: &AppCommand) {
+        let requires_ready = matches!(
+            cmd,
+            AppCommand::RotateVideo
+                | AppCommand::ToggleMappingEditor
+                | AppCommand::ToggleScreenPower
+                | AppCommand::ToggleKeyboardMapping
+                | AppCommand::ToggleMappingVisualization
+                | AppCommand::ToggleFloat
+                | AppCommand::TakeScreenshot
+                | AppCommand::ToggleRecording
+        );
+        if requires_ready && self.init_state != InitState::Ready {
+            debug!("Ignoring app command while app is not ready: {:?}", cmd);
             return;
         }
 
-        match event {
-            ToolbarEvent::RotateVideo => {
-                self.rotate(ctx);
+        match cmd {
+            AppCommand::ShowHelp => self.show_help_dialog(),
+            AppCommand::ShowProfileSelection => {
+                let had_dialog = self.dialog.is_some();
+                self.show_profile_selection_dialog();
+                if !had_dialog && self.dialog.is_some() {
+                    self.pending_command = Some(PendingCommand::SwitchProfile);
+                }
             }
-            ToolbarEvent::ToggleMappingEditor => {
-                self.toggle_editor(ctx);
+            AppCommand::PrevProfile => self.prev_profile(),
+            AppCommand::NextProfile => self.next_profile(),
+            AppCommand::ShowRenameDialog => {
+                if self.profile_manager.get_active_profile().is_none() {
+                    let had_dialog = self.dialog.is_some();
+                    self.show_create_profile_dialog();
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(PendingCommand::CreateProfile);
+                    }
+                } else {
+                    let had_dialog = self.dialog.is_some();
+                    self.show_rename_profile_dialog();
+                    if !had_dialog && self.dialog.is_some() {
+                        self.pending_command = Some(PendingCommand::RenameProfile);
+                    }
+                }
             }
-            ToolbarEvent::ToggleScreenPower => {
+            AppCommand::ShowCreateDialog => {
+                let had_dialog = self.dialog.is_some();
+                self.show_create_profile_dialog();
+                if !had_dialog && self.dialog.is_some() {
+                    self.pending_command = Some(PendingCommand::CreateProfile);
+                }
+            }
+            AppCommand::ShowDeleteDialog => {
+                let had_dialog = self.dialog.is_some();
+                self.show_delete_profile_dialog();
+                if !had_dialog && self.dialog.is_some() {
+                    self.pending_command = Some(PendingCommand::DeleteProfile);
+                }
+            }
+            AppCommand::ShowSaveAsDialog => {
+                let had_dialog = self.dialog.is_some();
+                self.show_save_profile_as_dialog();
+                if !had_dialog && self.dialog.is_some() {
+                    self.pending_command = Some(PendingCommand::SaveProfileAs);
+                }
+            }
+            AppCommand::CloseEditor => self.close_mapping_editor(),
+            AppCommand::RotateVideo => {
+                self.rotate();
+            }
+            AppCommand::ToggleMappingEditor => {
+                self.toggle_editor();
+            }
+            AppCommand::ToggleScreenPower => {
                 debug!("Turning off screen from toolbar");
                 if let Some(sender) = &self.app_state.control_sender {
                     if let Err(e) = sender.send_set_display_power(false) {
@@ -1063,22 +1148,21 @@ impl SAideApp {
                     }
                 }
             }
-            ToolbarEvent::ToggleKeyboardMapping => {
+            AppCommand::ToggleKeyboardMapping => {
                 self.toggle_custom_keyboard_mapping();
             }
-            ToolbarEvent::ToggleMappingVisualization => {
+            AppCommand::ToggleMappingVisualization => {
                 self.toggle_mapping_overlay();
             }
-            ToolbarEvent::ToggleFloat => {
-                self.set_toolbar_mode(ctx, self.toolbar_mode().toggled());
+            AppCommand::ToggleFloat => {
+                self.set_toolbar_mode(self.toolbar_mode().toggled());
             }
-            ToolbarEvent::TakeScreenshot => {
+            AppCommand::TakeScreenshot => {
                 self.take_screenshot();
             }
-            ToolbarEvent::ToggleRecording => {
+            AppCommand::ToggleRecording => {
                 self.toggle_recording();
             }
-            ToolbarEvent::None => {}
         }
     }
 
@@ -1192,7 +1276,7 @@ impl SAideApp {
         }
     }
 
-    fn draw_docked_toolbar(&mut self, ctx: &egui::Context) {
+    fn draw_docked_toolbar(&mut self, ctx: &egui::Context, registry: &mut EventRegistry) {
         let toolbar_enabled = self.init_state == InitState::Ready;
         let toolbar_state = self.toolbar_view_state();
 
@@ -1206,10 +1290,12 @@ impl SAideApp {
                     .inner
             })
             .inner;
-        self.handle_toolbar_event(ctx, event);
+        if let Some(event) = event {
+            registry.send(event);
+        }
     }
 
-    fn draw_floating_toolbar(&mut self, ctx: &egui::Context) {
+    fn draw_floating_toolbar(&mut self, ctx: &egui::Context, registry: &mut EventRegistry) {
         if !self.ui_state.floating_toolbar_visible() {
             return;
         }
@@ -1242,14 +1328,16 @@ impl SAideApp {
             })
             .inner
             .inner;
-        self.handle_toolbar_event(ctx, event);
+        if let Some(event) = event {
+            registry.send(event);
+        }
     }
 
-    fn draw_toolbar(&mut self, ctx: &egui::Context) {
+    fn draw_toolbar(&mut self, ctx: &egui::Context, registry: &mut EventRegistry) {
         if self.toolbar_mode().is_floating() {
-            self.draw_floating_toolbar(ctx);
+            self.draw_floating_toolbar(ctx, registry);
         } else {
-            self.draw_docked_toolbar(ctx);
+            self.draw_docked_toolbar(ctx, registry);
         }
     }
 
@@ -1324,60 +1412,6 @@ impl SAideApp {
                     }
                 }
             });
-    }
-
-    fn process_commands(&mut self, commands: Vec<AppCommand>) {
-        for cmd in commands {
-            match cmd {
-                AppCommand::ShowHelp => self.show_help_dialog(),
-                AppCommand::ShowProfileSelection => {
-                    let had_dialog = self.dialog.is_some();
-                    self.show_profile_selection_dialog();
-                    if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(PendingCommand::SwitchProfile);
-                    }
-                }
-                AppCommand::PrevProfile => self.prev_profile(),
-                AppCommand::NextProfile => self.next_profile(),
-                AppCommand::ShowRenameDialog => {
-                    if self.profile_manager.get_active_profile().is_none() {
-                        let had_dialog = self.dialog.is_some();
-                        self.show_create_profile_dialog();
-                        if !had_dialog && self.dialog.is_some() {
-                            self.pending_command = Some(PendingCommand::CreateProfile);
-                        }
-                    } else {
-                        let had_dialog = self.dialog.is_some();
-                        self.show_rename_profile_dialog();
-                        if !had_dialog && self.dialog.is_some() {
-                            self.pending_command = Some(PendingCommand::RenameProfile);
-                        }
-                    }
-                }
-                AppCommand::ShowCreateDialog => {
-                    let had_dialog = self.dialog.is_some();
-                    self.show_create_profile_dialog();
-                    if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(PendingCommand::CreateProfile);
-                    }
-                }
-                AppCommand::ShowDeleteDialog => {
-                    let had_dialog = self.dialog.is_some();
-                    self.show_delete_profile_dialog();
-                    if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(PendingCommand::DeleteProfile);
-                    }
-                }
-                AppCommand::ShowSaveAsDialog => {
-                    let had_dialog = self.dialog.is_some();
-                    self.show_save_profile_as_dialog();
-                    if !had_dialog && self.dialog.is_some() {
-                        self.pending_command = Some(PendingCommand::SaveProfileAs);
-                    }
-                }
-                AppCommand::CloseEditor => self.close_mapping_editor(),
-            }
-        }
     }
 
     fn handle_editor_request(&mut self, request: EditorRequest) {
@@ -1529,29 +1563,8 @@ impl SAideApp {
     pub(super) fn visual_coords(&self) -> &VisualCoordSys { self.ui_state.visual_coords() }
 
     pub fn toolbar_width() -> f32 { Toolbar::width() }
-}
 
-impl Drop for SAideApp {
-    fn drop(&mut self) {
-        debug!("SAideApp dropping, cleaning up connection");
-
-        if let Some(handle) = self.recorder.take() {
-            handle.stop();
-        }
-
-        // Explicitly shutdown connection to ensure server process is killed
-        if let Some(mut conn) = self.app_state.connection.take()
-            && let Err(e) = conn.shutdown()
-        {
-            debug!("Failed to shutdown connection: {}", e);
-        }
-
-        debug!("SAideApp cleanup completed");
-    }
-}
-
-impl eframe::App for SAideApp {
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    pub(super) fn on_exit_inner(&mut self, _gl: Option<&eframe::glow::Context>) {
         debug!("SAideApp exiting, cancelling background tasks");
 
         if let Some(handle) = self.recorder.take() {
@@ -1562,27 +1575,29 @@ impl eframe::App for SAideApp {
         self.app_state.cancel_token.cancel();
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    pub(super) fn draw(
+        &mut self,
+        ctx: &egui::Context,
+        _frame: &mut eframe::Frame,
+        registry: &mut EventRegistry,
+    ) {
         let mut received_new_frame = false;
 
         self.update_floating_toolbar_visibility(ctx);
         self.poll_capture_events();
 
-        if !self.shutdown_requested {
-            // Check for shutdown signal
-            if self.shutdown_rx.try_recv().is_ok() {
-                info!("Shutdown signal received, closing application");
-                self.shutdown_requested = true;
-            }
+        if !self.shutdown_requested && self.shutdown_rx.try_recv().is_ok() {
+            info!("Shutdown signal received, closing application");
+            self.shutdown_requested = true;
         }
 
         if self.shutdown_requested {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.pending_ui_effects.push(UiEffect::Close);
+            let _ = self.process_pending_ui_effects(ctx);
             return;
         }
 
-        // Draw base UI (toolbar) - always visible
-        self.draw_toolbar(ctx);
+        self.draw_toolbar(ctx, registry);
 
         if !self.startup_warnings.is_empty() {
             let warnings: Vec<String> = self.startup_warnings.drain(..).collect();
@@ -1591,13 +1606,16 @@ impl eframe::App for SAideApp {
             }
         }
 
-        // Handle initialization state transitions
         match self.init_state {
             InitState::NotStarted => {
                 let serial = self.app_state.device_serial().to_owned();
-                let needs_probe = EncoderProfileDatabase::load()
-                    .map(|db| db.get(&serial).is_none())
-                    .unwrap_or(true);
+                let needs_probe = {
+                    let base_dir = crate::constant::data_dir()
+                        .unwrap_or_else(crate::constant::fallback_data_path);
+                    EncoderProfileDatabase::load(&base_dir)
+                        .map(|db| db.get(&serial).is_none())
+                        .unwrap_or(true)
+                };
                 if needs_probe {
                     self.show_probe_codec_dialog();
                     self.pending_command = Some(PendingCommand::ProbeCodec);
@@ -1626,44 +1644,30 @@ impl eframe::App for SAideApp {
                 ctx.request_repaint();
             }
             InitState::InProgress => {
-                // Update player to receive events
                 received_new_frame = self.player.update();
-
-                // Check initialization progress
                 self.check_init_stage(ctx);
-
-                // Request repaint during initialization
                 ctx.request_repaint();
             }
             InitState::Ready => {
-                // Store dimensions before update
                 let old_dimensions = if self.ui_state.is_ui_initialized() {
                     self.player.video_dimensions()
                 } else {
-                    // First frame after init, force resize
                     (0, 0)
                 };
 
-                // Update player state
                 received_new_frame = self.player.update();
 
-                // Get new dimensions after update
                 let new_dimensions = self.player.video_dimensions();
 
-                // Check if dimensions changed (device rotation or first frame)
                 if new_dimensions != old_dimensions && new_dimensions.0 > 0 {
                     info!(
                         "Video dimensions changed: {:?} -> {:?}",
                         old_dimensions, new_dimensions
                     );
 
-                    // Resize window to match new video dimensions
                     self.resize(ctx);
-
-                    // Update indicator
                     self.indicator.update_video_resolution(new_dimensions);
 
-                    // Update ScrcpyCoordSys (video resolution changed)
                     self.app_state
                         .scrcpy_coords_mut()
                         .update_video_size(new_dimensions.0 as u16, new_dimensions.1 as u16);
@@ -1695,7 +1699,6 @@ impl eframe::App for SAideApp {
                         );
                     }
 
-                    // Mark UI as initialized
                     self.ui_state.set_ui_initialized();
                 }
 
@@ -1705,7 +1708,9 @@ impl eframe::App for SAideApp {
                     .filter(|_| self.dialog.is_none())
                     .map(|_| &*MAPPING_EDITOR_SHORTCUTS);
                 let commands = SHORTCUT_MANAGER.dispatch_raw_with_extra(ctx, editor_scope);
-                self.process_commands(commands);
+                for cmd in commands {
+                    registry.send(cmd);
+                }
 
                 if self.dialog.is_none() {
                     self.process_input_events(ctx);
@@ -1721,7 +1726,6 @@ impl eframe::App for SAideApp {
 
         let mut editor_request = None;
 
-        // Render player in center panel (no margin to maximize video area)
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
@@ -1739,7 +1743,6 @@ impl eframe::App for SAideApp {
         let dialog_result = self.draw_dialog(ctx);
         self.apply_dialog_result(dialog_result);
 
-        // Draw indicator overlay on top of video
         if self.init_state == InitState::Ready && self.config().general.indicator {
             self.indicator.update_video_stats(self.player.video_stats());
             self.draw_indicator(ctx);
@@ -1749,7 +1752,6 @@ impl eframe::App for SAideApp {
             self.draw_mapping_overlay(ctx);
         }
 
-        // Show audio warning if present (overlay at top)
         if let Some(warning) = self.ui_state.audio_warning.clone() {
             let colors = AppColors::from_context(ctx);
             let mut close_clicked = false;
@@ -1789,14 +1791,36 @@ impl eframe::App for SAideApp {
             }
         }
 
-        // Toast notifications overlay
         self.notifier.draw(ctx, ctx.content_rect());
 
-        // Frame rate limiting (only when streaming)
+        let should_close = self.process_pending_ui_effects(ctx);
+        if should_close {
+            return;
+        }
+
         if matches!(self.player.state(), PlayerState::Streaming) {
             let saw_input_event = ctx.input(|input| !input.events.is_empty());
             self.schedule_streaming_repaint(ctx, received_new_frame, saw_input_event);
         }
+    }
+}
+
+impl Drop for SAideApp {
+    fn drop(&mut self) {
+        debug!("SAideApp dropping, cleaning up connection");
+
+        if let Some(handle) = self.recorder.take() {
+            handle.stop();
+        }
+
+        // Explicitly shutdown connection to ensure server process is killed
+        if let Some(mut conn) = self.app_state.connection.take()
+            && let Err(e) = conn.shutdown()
+        {
+            debug!("Failed to shutdown connection: {}", e);
+        }
+
+        debug!("SAideApp cleanup completed");
     }
 }
 

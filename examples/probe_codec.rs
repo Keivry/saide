@@ -6,7 +6,7 @@ mod utils;
 
 use {
     anyhow::Result,
-    saide::scrcpy::codec_probe,
+    saide::decoder_probe,
     utils::{get_device_serial, get_scrcpy_server_path},
 };
 
@@ -26,7 +26,7 @@ fn main() -> Result<()> {
 
     // Probe device
     println!("\n🚀 Starting compatibility probe...\n");
-    let optimal_config = codec_probe::probe_device(&serial, &server_jar, None)?;
+    let optimal_config = decoder_probe::probe_device(&serial, &server_jar, None)?;
 
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("✅ Probe Complete!");

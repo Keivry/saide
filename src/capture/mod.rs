@@ -13,10 +13,10 @@
 pub mod recorder;
 pub mod screenshot;
 
-use std::path::PathBuf;
+use {egui_event::Event, std::path::PathBuf};
 
 /// Events emitted by capture operations once they complete.
-#[derive(Debug)]
+#[derive(Debug, Event)]
 pub enum CaptureEvent {
     /// A screenshot was written to the given path.
     ScreenshotSaved(PathBuf),

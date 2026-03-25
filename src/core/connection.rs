@@ -131,7 +131,9 @@ impl ConnectionService {
         capture_orientation: Option<u32>,
     ) -> Result<ScrcpyConnection> {
         // Create server params from config
-        let mut params = ServerParams::for_device(serial)?;
+        let base_dir =
+            crate::constant::data_dir().unwrap_or_else(crate::constant::fallback_data_path);
+        let mut params = ServerParams::for_device(serial, &base_dir)?;
 
         // Apply config settings
         let bit_rate = {

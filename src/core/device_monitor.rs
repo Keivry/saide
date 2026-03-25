@@ -7,11 +7,12 @@
 
 use {
     crate::{
-        controller::adb::{AdbShell, DeviceState},
+        controller::{AdbShell, DeviceState},
         error::{Result, SAideError},
         runtime::TOKIO_RT,
     },
     crossbeam_channel::{Receiver, Sender, bounded},
+    egui_event::Event,
     std::time::Duration,
     tokio_util::sync::CancellationToken,
     tracing::{error, info, warn},
@@ -21,7 +22,7 @@ const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
 const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 64;
 
 /// Device state change events
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Event)]
 pub enum DeviceMonitorEvent {
     Rotated(u32),
     ImStateChanged(bool),
@@ -181,7 +182,7 @@ impl DeviceMonitor {
 
 async fn run_adb_with_retry<T>(
     token: CancellationToken,
-    f: fn(&str) -> Result<T>,
+    f: fn(&str) -> adbshell::AdbResult<T>,
     serial: String,
 ) -> Result<T>
 where
@@ -206,7 +207,7 @@ where
             Err(e) => {
                 attempts += 1;
                 if attempts >= MAX_RETRIES {
-                    return Err(e);
+                    return Err(SAideError::from(e));
                 }
                 warn!(
                     "ADB command failed (attempt {}): {}. Retrying in {}ms...",

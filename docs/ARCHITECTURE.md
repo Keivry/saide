@@ -8,7 +8,7 @@ SAide is a desktop scrcpy companion built around three pieces:
 
 1. `src/main.rs` starts the application, loads configuration (falling back to defaults on error), verifies `adb`, initializes logging, and launches the egui/eframe desktop window with the WGPU renderer.
 2. `src/core/` owns application lifecycle, UI state, device selection, stream startup, and the player/editor experience.
-3. `src/scrcpy/`, `src/controller/`, `src/decoder/`, and `src/avsync/` implement device communication, input injection, media decoding, and playback timing.
+3. `3rd-party/scrcpy-rs`, `src/controller/`, `src/decoder/`, and `src/avsync/` implement reusable device communication, input injection, media decoding, and playback timing.
 
 At runtime the app:
 
@@ -22,65 +22,41 @@ At runtime the app:
 ## Module layout
 
 ```text
-src/
-├── main.rs                 Application entry point
-├── lib.rs                  Public module exports
-├── constant.rs             Version strings, default paths, packet size guards
-├── error.rs                Top-level error types
-│
-├── core/                   App lifecycle and UI orchestration
-│   ├── mod.rs              Re-exports `ui::SAideApp`
-│   ├── connection.rs       Connection service integration for the UI layer
-│   ├── coords/             Mapping/view/scrcpy coordinate systems
-│   ├── device_monitor.rs   ADB device discovery and refresh
-│   ├── init.rs             Startup orchestration
-│   ├── profile_manager.rs  Profile CRUD and active-profile selection
-│   ├── state.rs            Shared app/config/runtime state
-│   ├── utils.rs            Nearest-mapping lookup and position extraction helpers
-│   └── ui/                 Main UI, player, dialogs, toolbar, editor
-│
-├── config/                 TOML-backed configuration structures and validation
-│   ├── mod.rs              `SAideConfig`, `ConfigManager`, ranges, persistence
-│   ├── log.rs              Logging level config
-│   ├── mapping/            Mapping profiles and action definitions
-│   └── scrcpy.rs           scrcpy video/audio/options config
-│
-├── controller/             Input translation and control sending
-│   ├── adb.rs              `adb` shell helpers and device queries
-│   ├── control_sender.rs   Typed control message dispatch
-│   ├── keyboard.rs         Key mapping execution
-│   └── mouse.rs            Mouse/touch gesture logic
-│
-├── scrcpy/                 scrcpy server startup and protocol handling
-│   ├── connection.rs       Reverse tunnel, socket handshake, metadata parsing
-│   ├── server.rs           Server launch parameters and process management
-│   ├── codec_probe.rs      Device encoder/profile probing
-│   ├── hwcodec.rs          Host/device codec capability helpers
-│   └── protocol/           Control, video, and audio packet formats
-│
-├── decoder/                Video and audio decode implementations
-│   ├── auto.rs             Decoder selection and fallback
-│   ├── h264.rs             Software H.264 path
-│   ├── h264_parser.rs      Annex-B NAL parser; extracts resolution from SPS without full decode
-│   ├── nvdec.rs            NVIDIA NVDEC path
-│   ├── vaapi.rs            Linux VAAPI path
-│   ├── d3d11va.rs          Windows D3D11VA path
-│   ├── error.rs            `VideoError` type and `Result` alias for the decoder layer
-│   ├── packet.rs           Helper to wrap raw frame bytes into an `ffmpeg::Packet`
-│   ├── nv12_render.rs      NV12 rendering helpers
-│   ├── rgba_render.rs      RGBA rendering helpers
-│   └── audio/              Opus decode and audio playback
-│
-├── avsync/                 Audio/video timing coordination
-├── capture/                Screenshot and screen recording
-│   ├── mod.rs              `CaptureEvent` enum; declares recorder and screenshot submodules
-│   ├── recorder.rs         MP4 recording via FFmpeg H264+AAC encoder, YUV420P CPU rotation
-│   └── screenshot.rs       PNG screenshot via FFmpeg swscale + image-rs rotation
-├── profiler/               Latency breakdown and rolling stats
-├── i18n/                   Locale loading and source management
-├── shortcut/               Shortcut-related helpers
-├── modal/                  UI modal primitives
-└── gpu/                    GPU-type hints used by some optimizations
+.
+├── Cargo.toml              Workspace root (`saide` package + workspace members)
+├── src/
+│   ├── main.rs             Application entry point
+│   ├── lib.rs              Public module exports for the desktop app crate
+│   ├── constant.rs         Version strings, default paths, packet size guards
+│   ├── error.rs            Top-level error types
+│   ├── core/               App lifecycle and UI orchestration
+│   │   ├── mod.rs          Re-exports `ui::{AppShell, SAideApp}`
+│   │   ├── connection.rs   Connection service integration for the UI layer
+│   │   ├── coords/         Mapping/view/scrcpy coordinate systems
+│   │   ├── device_monitor.rs Startup-time and runtime device monitoring
+│   │   ├── init.rs         Startup orchestration
+│   │   ├── profile_manager.rs Profile CRUD and active-profile selection
+│   │   ├── state.rs        Shared app/config/runtime state
+│   │   ├── utils.rs        Nearest-mapping lookup and position extraction helpers
+│   │   └── ui/             AppShell, player, dialogs, toolbar, editor
+│   ├── config/             TOML-backed configuration structures and validation
+│   ├── controller/         Input translation and control sending
+│   ├── decoder/            Video and audio decode implementations
+│   ├── avsync/             Audio/video timing coordination
+│   ├── capture/            Screenshot and screen recording
+│   ├── profiler/           Latency breakdown and rolling stats
+│   ├── i18n/               Locale loading and source management
+│   ├── shortcut/           Shortcut helpers backed by egui-command-binding
+│   ├── modal/              UI modal primitives
+│   ├── gpu/                GPU-type hints used by some optimizations
+│   └── scrcpy_support.rs   Adapters around the reusable `scrcpy-rs` crate
+├── 3rd-party/
+│   ├── scrcpy-rs/          Reusable scrcpy protocol/runtime workspace crate
+│   ├── egui-event/         Typed event bus used by AppShell/Dispatcher
+│   └── egui-event-macros/  `#[derive(Event)]` / `#[derive(EventSet)]` proc macros
+└── docs/
+    ├── ARCHITECTURE.md
+    └── configuration.md
 ```
 
 ## Startup and configuration flow
@@ -126,7 +102,45 @@ This layer turns low-level protocol and decoding code into an interactive deskto
 - `connection.rs` bridges the UI and the scrcpy connection lifecycle.
 - `coords/` keeps mapping coordinates stable across resolution and rotation changes.
 
-The root export is `SAideApp`, re-exported from both `src/core/mod.rs` and `src/lib.rs`.
+The root exports are `AppShell` and `SAideApp`, re-exported from both `src/core/mod.rs` and `src/lib.rs`.
+
+### AppShell + Dispatcher frame loop
+
+Phase 5 introduced an outer `AppShell` wrapper in `src/core/ui/shell.rs`.
+`AppShell` implements `eframe::App`, while `SAideApp` now owns stateful UI logic
+through `draw()` and `on_app_command()`.
+
+The frame loop order is fixed:
+
+1. `event_registry.update()` — rotate the double buffer so the previous frame's commands become readable
+2. `dispatcher.dispatch(&mut state, &event_registry)` — apply buffered `AppCommand` events to `SAideApp`
+3. `state.draw(ctx, frame, &mut event_registry)` — build UI and enqueue new commands for the next frame
+
+This introduces an intentional one-frame delay for toolbar and shortcut commands,
+which keeps the event flow borrow-checker friendly while remaining imperceptible
+at normal frame rates.
+
+### `Event` trait constraints
+
+The `egui-event::Event` marker trait has a single bound: `Send + Sync + 'static`.
+It does **not** require `Clone` or `Copy`.
+
+Implications for this codebase:
+
+- `CaptureEvent` and `DeviceMonitorEvent` satisfy the bound and use `#[derive(Event)]`.
+- `InitEvent` contains `TcpStream` and `crossbeam_channel::Receiver<DeviceMonitorEvent>`,
+  neither of which implement `Clone`. `InitEvent` therefore **cannot** derive `Event`
+  and remains a plain Rust enum transferred exclusively over its dedicated crossbeam channel.
+- The `macros` feature of the `egui-event` path dependency re-exports `egui-event-macros`,
+  making `#[derive(Event)]` and `#[derive(EventSet)]` available without a separate
+  `egui-event-macros` dependency entry in `Cargo.toml`.
+
+### Commands and shortcuts
+
+SAide uses `egui-command` v0.2 style command metadata. `AppCommand` is the shared
+command enum for toolbar actions, editor actions, and global shortcuts. The
+workspace also vendors `egui-command-binding`, whose `ShortcutManager` can fill
+display-only shortcut hints into an `egui-command::CommandRegistry`.
 
 ### Coordinate systems
 
@@ -142,7 +156,7 @@ That separation is what allows profile mappings to survive device rotation and d
 
 ## scrcpy connection architecture
 
-`src/scrcpy/connection.rs` implements the real handshake used by SAide.
+`3rd-party/scrcpy-rs/src/connection.rs` implements the reusable handshake.
 
 ### Connection order
 
@@ -173,13 +187,13 @@ These settings exist to reduce latency while still surfacing disconnects promptl
 
 ## Protocol coverage in this repository
 
-The protocol code lives under `src/scrcpy/protocol/`.
+The protocol code lives under `3rd-party/scrcpy-rs/src/protocol/`.
 
 - `control.rs` serializes the control messages that SAide actually sends.
 - `video.rs` parses the frame metadata and payload wrapper used by the video stream.
 - `audio.rs` parses the audio packet wrapper used by the current audio path.
 
-The repository does **not** implement the full scrcpy feature surface. For the exact coverage and wire-format notes, see [SCRCPY_PROTOCOL.md](SCRCPY_PROTOCOL.md).
+The repository does **not** implement the full scrcpy feature surface. For the exact coverage and wire-format notes, see [PROTOCOL.md](../3rd-party/scrcpy-rs/PROTOCOL.md).
 
 ## Decoder pipeline
 
@@ -249,4 +263,4 @@ The CI workflow (`.github/workflows/release.yml`) triggers on `v*` tags and `wor
 ## Related documents
 
 - [configuration.md](configuration.md): config file structure, defaults, and validation ranges
-- [SCRCPY_PROTOCOL.md](SCRCPY_PROTOCOL.md): wire-format details and current protocol coverage
+- [3rd-party/scrcpy-rs/PROTOCOL.md](../3rd-party/scrcpy-rs/PROTOCOL.md): wire-format details and current protocol coverage

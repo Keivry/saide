@@ -4,7 +4,7 @@
 //!
 //! 测试控制协议和视频协议的正确性
 
-use saide::scrcpy::protocol::{
+use scrcpy::protocol::{
     control::{AndroidKeyEventAction, ControlMessage},
     video::VideoPacket,
 };

@@ -9,4 +9,4 @@ pub mod state;
 pub mod ui;
 mod utils;
 
-pub use ui::SAideApp;
+pub use ui::{AppShell, SAideApp};

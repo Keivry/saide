@@ -5,6 +5,9 @@ version = "0.1.5"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+[workspace]
+members = [".", "3rd-party/scrcpy-rs", "3rd-party/adbshell"]
+
 [lib]
 name = "saide"
 path = "src/lib.rs"
@@ -61,6 +64,9 @@ path = "examples/test_vulkan_import.rs"
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }
 egui = { version = "0.33", features = ["serde"] }
+egui-event = { path = "3rd-party/egui-event", features = ["macros"] }
+scrcpy = { path = "3rd-party/scrcpy-rs" }
+adbshell = { path = "3rd-party/adbshell" }
 
 crossbeam-channel = "0.5"
 
@@ -104,7 +110,6 @@ chrono = { version = "0.4", features = ["serde"] }
 
 directories = "6"
 thiserror = "2"
-wait-timeout = "0.2"
 ctrlc = "3.5"
 
 fluent-bundle = "0.16"

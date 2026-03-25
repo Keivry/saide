@@ -182,6 +182,30 @@ impl From<VarError> for SAideError {
     fn from(err: VarError) -> Self { SAideError::SystemError(err.to_string()) }
 }
 
+impl From<scrcpy::ScrcpyError> for SAideError {
+    fn from(err: scrcpy::ScrcpyError) -> Self {
+        match err {
+            scrcpy::ScrcpyError::IoError(err) => Self::IoError(
+                IoError::new(io::Error::new(err.kind(), err.message().to_string()))
+                    .with_message(err.message().to_string()),
+            ),
+            scrcpy::ScrcpyError::ProtocolError(msg) => Self::ProtocolError(msg),
+            scrcpy::ScrcpyError::Other(msg) => Self::Other(msg),
+        }
+    }
+}
+
+impl From<adbshell::AdbError> for SAideError {
+    fn from(err: adbshell::AdbError) -> Self {
+        match err {
+            adbshell::AdbError::NotFound(msg) => Self::AdbNotFound(msg),
+            adbshell::AdbError::CommandFailed(msg) => Self::AdbCommandFailed(msg),
+            adbshell::AdbError::Timeout => Self::AdbError("ADB command timed out".to_string()),
+            adbshell::AdbError::DeviceNotFound(msg) => Self::AdbDeviceNotFound(msg),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
