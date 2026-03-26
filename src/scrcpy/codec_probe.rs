@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        constant::CODEC_PROBE_VERSION,
         error::{IoError, Result, SAideError},
         scrcpy::{connection::ScrcpyConnection, hwcodec, server::ServerParams},
     },
@@ -157,6 +158,10 @@ pub struct EncoderProfile {
     pub optimal_config: Option<String>,
     /// RFC 3339 UTC timestamp of when this profile was last probed.
     pub tested_at: String,
+    /// Schema version of this profile entry; see
+    /// [`CODEC_PROBE_VERSION`](crate::constant::CODEC_PROBE_VERSION).
+    #[serde(default)]
+    pub version: u32,
 }
 
 impl EncoderProfile {
@@ -171,6 +176,7 @@ impl EncoderProfile {
             supported_profile: None,
             optimal_config: None,
             tested_at: now_utc_rfc3339(),
+            version: CODEC_PROBE_VERSION,
         })
     }
 
@@ -202,6 +208,10 @@ pub struct DecoderProfile {
     pub encoder_fingerprint: String,
     /// RFC 3339 UTC timestamp of when this profile was last validated.
     pub tested_at: String,
+    /// Schema version of this profile entry; see
+    /// [`CODEC_PROBE_VERSION`](crate::constant::CODEC_PROBE_VERSION).
+    #[serde(default)]
+    pub version: u32,
 }
 
 /// Persistent cache of [`DecoderProfile`] records, keyed by device serial.
@@ -284,9 +294,13 @@ impl EncoderProfileDatabase {
         Ok(())
     }
 
-    fn config_path(config_dir: &Path) -> PathBuf { profile_path(config_dir, "encoder_profile.toml") }
+    fn config_path(config_dir: &Path) -> PathBuf {
+        profile_path(config_dir, "encoder_profile.toml")
+    }
 
-    fn legacy_path(config_dir: &Path) -> PathBuf { profile_path(config_dir, "device_profiles.toml") }
+    fn legacy_path(config_dir: &Path) -> PathBuf {
+        profile_path(config_dir, "device_profiles.toml")
+    }
 
     fn load_legacy(config_dir: &Path) -> Result<Self> {
         let path = Self::legacy_path(config_dir);
@@ -318,6 +332,7 @@ impl EncoderProfileDatabase {
                             supported_profile: profile.supported_profile,
                             optimal_config: profile.optimal_config,
                             tested_at: profile.tested_at,
+                            version: 0,
                         },
                     )
                 })
@@ -325,7 +340,11 @@ impl EncoderProfileDatabase {
         })
     }
 
-    pub fn get(&self, serial: &str) -> Option<&EncoderProfile> { self.profiles.get(serial) }
+    pub fn get(&self, serial: &str) -> Option<&EncoderProfile> {
+        self.profiles
+            .get(serial)
+            .filter(|p| p.version >= CODEC_PROBE_VERSION)
+    }
 
     pub fn insert(&mut self, profile: EncoderProfile) {
         self.profiles.insert(profile.serial.clone(), profile);
@@ -356,9 +375,13 @@ impl DecoderProfileDatabase {
         Ok(())
     }
 
-    fn config_path(config_dir: &Path) -> PathBuf { profile_path(config_dir, "decoder_profile.toml") }
+    fn config_path(config_dir: &Path) -> PathBuf {
+        profile_path(config_dir, "decoder_profile.toml")
+    }
 
-    fn legacy_path(config_dir: &Path) -> PathBuf { profile_path(config_dir, "device_profiles.toml") }
+    fn legacy_path(config_dir: &Path) -> PathBuf {
+        profile_path(config_dir, "device_profiles.toml")
+    }
 
     fn load_legacy(config_dir: &Path) -> Result<Self> {
         let path = Self::legacy_path(config_dir);
@@ -390,6 +413,7 @@ impl DecoderProfileDatabase {
                                 )
                                 .unwrap_or_default(),
                                 tested_at: profile.tested_at,
+                                version: 0,
                             },
                         )
                     })
@@ -398,7 +422,11 @@ impl DecoderProfileDatabase {
         })
     }
 
-    pub fn get(&self, serial: &str) -> Option<&DecoderProfile> { self.profiles.get(serial) }
+    pub fn get(&self, serial: &str) -> Option<&DecoderProfile> {
+        self.profiles
+            .get(serial)
+            .filter(|p| p.version >= CODEC_PROBE_VERSION)
+    }
 
     pub fn insert(&mut self, profile: DecoderProfile) {
         self.profiles.insert(profile.serial.clone(), profile);
@@ -751,6 +779,7 @@ fn save_validated_decoder(
         validated_decoder: decoder.profile_name().to_string(),
         encoder_fingerprint: encoder_fingerprint(video_encoder, optimal_config).unwrap_or_default(),
         tested_at: now_utc_rfc3339(),
+        version: CODEC_PROBE_VERSION,
     });
     db.save(config_dir)
 }

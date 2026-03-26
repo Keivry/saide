@@ -124,3 +124,9 @@ pub const VIDEO_RESOLUTION_TIERS: &[u32] = &[
 /// This small value is added to the position of each keymapping to prevent
 /// multiple keymappings from having the exact same position.
 pub const CUSTOM_KEYMAPPING_POS_JITTER: f32 = 0.005;
+
+/// Bump this constant whenever the probe logic changes in a way that may
+/// produce different results (e.g. new profiles tested, decoder fixes).
+/// Cached profiles whose `version` field is below this value are treated as
+/// stale and cause a fresh probe to run.
+pub const CODEC_PROBE_VERSION: u32 = 1;
