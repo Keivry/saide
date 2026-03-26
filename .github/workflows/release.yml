@@ -18,7 +18,7 @@ env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: saide
   FFMPEG_PREFIX: /opt/ffmpeg8
-  FFMPEG_VERSION: 8.0.1
+  FFMPEG_VERSION: 8.1
 
 jobs:
   changelog:
@@ -108,7 +108,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             archive_format: zip
             binary_name: saide.exe
-            extra_runtime_lib_dirs: ''
+            extra_runtime_lib_dirs: ""
           - label: linux-glibc-x64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -244,9 +244,9 @@ jobs:
 
       - name: Install CUDA toolkit
         if: matrix.target == 'x86_64-pc-windows-msvc'
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: MZWNET/cuda-toolkit@master
         with:
-          cuda: '13.1.0'
+          cuda: "13.2.0"
           method: network
 
       - name: Install Windows build dependencies
