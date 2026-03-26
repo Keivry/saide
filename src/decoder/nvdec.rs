@@ -4,9 +4,9 @@
 
 use {
     super::{
+        error::{Result, VideoError},
         DecodedFrame,
         VideoDecoder,
-        error::{Result, VideoError},
     },
     ffmpeg::{
         codec,
@@ -122,9 +122,11 @@ impl NvdecDecoder {
         packet.set_dts(Some(pts));
 
         if let Err(e) = self.decoder.send_packet(&packet) {
-            let err_str = format!("{:?}", e);
-            if !err_str.contains("EAGAIN") {
-                warn!("send_packet failed (possibly resolution change): {e:?}");
+            let err_str = format!("{e:?}");
+            if err_str.contains("EAGAIN") || err_str.contains("Invalid data") {
+                trace!("send_packet skipped: {e:?}");
+            } else {
+                warn!("send_packet failed: {e:?}");
             }
         }
 

@@ -4,10 +4,10 @@ use {
     crate::{error::Result, scrcpy::codec_probe::EncoderProfileDatabase},
     adbshell::AdbShell,
     scrcpy_protocol::{
+        ScrcpyError,
         SCRCPY_SERVER_CLASS_NAME,
         SCRCPY_SERVER_PATH,
         SCRCPY_SERVER_VERSION,
-        ScrcpyError,
     },
     std::{path::Path, process::Child},
     tracing::{debug, info},
@@ -106,7 +106,7 @@ pub fn push_server(serial: &str, server_jar_path: &str) -> Result<()> {
 
 pub fn start_server(serial: &str, params: &ServerParams) -> Result<Child> {
     let args = build_server_args(params);
-    info!("Starting server with scid={:08x}", params.scid);
+    info!("Starting server with args: {}", args.join(" "));
     AdbShell::execute_jar(
         serial,
         SCRCPY_SERVER_PATH,

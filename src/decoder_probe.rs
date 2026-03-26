@@ -4,43 +4,22 @@ use {
     crate::{
         constant,
         decoder::{
+            extract_resolution_from_stream,
             AutoDecoder,
             DecoderPreference as AppDecoderPreference,
             VideoDecoder,
-            extract_resolution_from_stream,
         },
         error::Result,
         scrcpy::codec_probe::{
+            probe_device as scrcpy_probe_device,
             DecoderPreference,
             DecoderProbe,
             ProbeStep,
-            probe_device as scrcpy_probe_device,
         },
     },
     crossbeam_channel::Sender,
+    ffmpeg_next as ffmpeg,
 };
-
-fn has_video_nal(data: &[u8]) -> bool {
-    let mut i = 0;
-    while i < data.len() {
-        let nal_offset = if data[i..].starts_with(&[0, 0, 0, 1]) {
-            i + 4
-        } else if data[i..].starts_with(&[0, 0, 1]) {
-            i + 3
-        } else {
-            i += 1;
-            continue;
-        };
-        if nal_offset < data.len() {
-            let nal_type = data[nal_offset] & 0x1f;
-            if nal_type == 1 || nal_type == 5 {
-                return true;
-            }
-        }
-        i = nal_offset;
-    }
-    false
-}
 
 pub struct SaideDecoderProbe;
 
@@ -82,29 +61,39 @@ impl DecoderProbe for SaideDecoderProbe {
             Err(_) => return false,
         };
 
-        for (packet, pts) in packets {
-            // Skip parameter-set-only packets (SPS/PPS).  Re-feeding them to an
-            // already-initialised decoder triggers AVERROR_INVALIDDATA on NVDEC
-            // and a spurious "no frame!" log from the software H.264 decoder.
-            // The SPS is still used above for resolution extraction.
-            if !has_video_nal(packet) {
-                continue;
-            }
-            match decoder.decode(packet, *pts) {
-                Ok(Some(_)) => return true,
-                Ok(None) => continue,
-                Err(_) => return false,
-            }
-        }
+        // Suppress FFmpeg log output during probe to avoid spurious messages
+        // like "no frame!" (AV_LOG_ERROR in FFmpeg 8.1) and "non-existing PPS"
+        // from NVDEC when the bitstream is being initialized.  Restore the level
+        // after the probe so normal decoding keeps its configured verbosity.
+        let prev_log_level = unsafe { ffmpeg::sys::av_log_get_level() };
+        unsafe { ffmpeg::sys::av_log_set_level(ffmpeg::sys::AV_LOG_FATAL) };
 
-        // Hardware decoders (e.g. AMD VAAPI) maintain an internal frame buffer and
-        // may not emit any frame until the pipeline is flushed, even after receiving
-        // a full IDR + several P-frames.  Flush here to drain any buffered output
-        // before concluding that this decoder candidate is unsupported.
-        match decoder.flush() {
-            Ok(frames) => !frames.is_empty(),
-            Err(_) => false,
-        }
+        let validated = (|| {
+            for (packet, pts) in packets {
+                match decoder.decode(packet, *pts) {
+                    Ok(Some(_)) => return true,
+                    // Treat decode errors the same as "no frame yet": the only
+                    // Err from NvdecDecoder::decode is the consecutive-empty-frames
+                    // heuristic, which fires during bitstream initialization when
+                    // SPS/PPS and IDR arrive in separate packets.  Keep feeding
+                    // all packets before giving up; the flush below is the final verdict.
+                    Ok(None) | Err(_) => continue,
+                }
+            }
+
+            // Hardware decoders (e.g. AMD VAAPI) maintain an internal frame buffer and
+            // may not emit any frame until the pipeline is flushed, even after receiving
+            // a full IDR + several P-frames.  Flush here to drain any buffered output
+            // before concluding that this decoder candidate is unsupported.
+            match decoder.flush() {
+                Ok(frames) => !frames.is_empty(),
+                Err(_) => false,
+            }
+        })();
+
+        unsafe { ffmpeg::sys::av_log_set_level(prev_log_level) };
+
+        validated
     }
 }
 

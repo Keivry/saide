@@ -468,6 +468,7 @@ pub fn probe_device(
         }
     };
 
+    info!("Codec probing started for serial={}", serial);
     send(ProbeStep::DetectingDevice);
     let mut profile = EncoderProfile::new(serial)?;
     send(ProbeStep::DetectingEncoder);
@@ -575,6 +576,10 @@ pub fn probe_device(
     db.save(config_dir)?;
     send(ProbeStep::Done(Ok(profile.optimal_config.clone())));
 
+    info!(
+        "Codec probing finished for serial={}, optimal_config={:?}",
+        serial, profile.optimal_config
+    );
     Ok(profile.optimal_config)
 }
 
