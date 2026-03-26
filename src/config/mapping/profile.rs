@@ -7,7 +7,7 @@
 //! manage these profiles.
 
 use {
-    super::{action::MappingAction, keymapping::KeyMapping, Key},
+    super::{Key, action::MappingAction, keymapping::KeyMapping},
     chrono::{DateTime, Utc},
     parking_lot::RwLock,
     serde::{Deserialize, Serialize},
