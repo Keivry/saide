@@ -1609,14 +1609,14 @@ impl SAideApp {
         match self.init_state {
             InitState::NotStarted => {
                 let serial = self.app_state.device_serial().to_owned();
-                let needs_probe = {
-                    let config_dir = crate::constant::config_dir();
-                    EncoderProfileDatabase::load(&config_dir)
-                        .map(|db| db.get(&serial).is_none())
-                        .unwrap_or(true)
+                let config_dir = crate::constant::config_dir();
+                let (needs_probe, is_stale) = match EncoderProfileDatabase::load(&config_dir) {
+                    Ok(db) if db.get(&serial).is_some() => (false, false),
+                    Ok(db) => (true, db.is_stale_for(&serial)),
+                    Err(_) => (true, false),
                 };
                 if needs_probe {
-                    self.show_probe_codec_dialog();
+                    self.show_probe_codec_dialog(is_stale);
                     self.pending_command = Some(PendingCommand::ProbeCodec);
                 } else {
                     self.init();

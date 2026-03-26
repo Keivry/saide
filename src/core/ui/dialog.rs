@@ -173,12 +173,18 @@ impl SAideApp {
         }
     }
 
-    pub(super) fn show_probe_codec_dialog(&mut self) {
+    pub(super) fn show_probe_codec_dialog(&mut self, is_stale: bool) {
         if self.dialog.is_none() {
             let serial = self.app_state.device_serial().to_owned();
             let title = t!("probe-codec-dialog-title");
             let mut dialog = ModalDialog::new("probe_codec_dialog", title.as_str());
-            dialog.add_message(&tf!("probe-codec-dialog-message", "serial" => serial.as_str()));
+            let msg_key = if is_stale {
+                "probe-codec-dialog-message-stale"
+            } else {
+                "probe-codec-dialog-message"
+            };
+            dialog.add_message(&tf!(msg_key, "serial" => serial.as_str()));
+            dialog.add_message(&t!("probe-codec-dialog-hint"));
             self.dialog.replace(dialog);
         }
     }

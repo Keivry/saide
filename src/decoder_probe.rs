@@ -4,21 +4,43 @@ use {
     crate::{
         constant,
         decoder::{
-            extract_resolution_from_stream,
             AutoDecoder,
             DecoderPreference as AppDecoderPreference,
             VideoDecoder,
+            extract_resolution_from_stream,
         },
         error::Result,
         scrcpy::codec_probe::{
-            probe_device as scrcpy_probe_device,
             DecoderPreference,
             DecoderProbe,
             ProbeStep,
+            probe_device as scrcpy_probe_device,
         },
     },
     crossbeam_channel::Sender,
 };
+
+fn has_video_nal(data: &[u8]) -> bool {
+    let mut i = 0;
+    while i < data.len() {
+        let nal_offset = if data[i..].starts_with(&[0, 0, 0, 1]) {
+            i + 4
+        } else if data[i..].starts_with(&[0, 0, 1]) {
+            i + 3
+        } else {
+            i += 1;
+            continue;
+        };
+        if nal_offset < data.len() {
+            let nal_type = data[nal_offset] & 0x1f;
+            if nal_type == 1 || nal_type == 5 {
+                return true;
+            }
+        }
+        i = nal_offset;
+    }
+    false
+}
 
 pub struct SaideDecoderProbe;
 
@@ -61,6 +83,13 @@ impl DecoderProbe for SaideDecoderProbe {
         };
 
         for (packet, pts) in packets {
+            // Skip parameter-set-only packets (SPS/PPS).  Re-feeding them to an
+            // already-initialised decoder triggers AVERROR_INVALIDDATA on NVDEC
+            // and a spurious "no frame!" log from the software H.264 decoder.
+            // The SPS is still used above for resolution extraction.
+            if !has_video_nal(packet) {
+                continue;
+            }
             match decoder.decode(packet, *pts) {
                 Ok(Some(_)) => return true,
                 Ok(None) => continue,

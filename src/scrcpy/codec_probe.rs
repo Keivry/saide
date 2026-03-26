@@ -139,6 +139,10 @@ const VALIDATION_PACKET_LIMIT: usize = 12;
 /// Produced by [`probe_device`] and stored in [`EncoderProfileDatabase`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncoderProfile {
+    /// Schema version of this profile entry; see
+    /// [`CODEC_PROBE_VERSION`](crate::constant::CODEC_PROBE_VERSION).
+    #[serde(default)]
+    pub version: u32,
     /// ADB serial of the device.
     pub serial: String,
     /// Device model string (e.g. `"Pixel 7"`).
@@ -158,10 +162,6 @@ pub struct EncoderProfile {
     pub optimal_config: Option<String>,
     /// RFC 3339 UTC timestamp of when this profile was last probed.
     pub tested_at: String,
-    /// Schema version of this profile entry; see
-    /// [`CODEC_PROBE_VERSION`](crate::constant::CODEC_PROBE_VERSION).
-    #[serde(default)]
-    pub version: u32,
 }
 
 impl EncoderProfile {
@@ -200,6 +200,10 @@ pub struct EncoderProfileDatabase {
 /// in [`DecoderProfileDatabase`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecoderProfile {
+    /// Schema version of this profile entry; see
+    /// [`CODEC_PROBE_VERSION`](crate::constant::CODEC_PROBE_VERSION).
+    #[serde(default)]
+    pub version: u32,
     /// ADB serial of the device.
     pub serial: String,
     /// Name of the validated hardware decoder (e.g. `"NVDEC"`, `"VAAPI"`).
@@ -208,10 +212,6 @@ pub struct DecoderProfile {
     pub encoder_fingerprint: String,
     /// RFC 3339 UTC timestamp of when this profile was last validated.
     pub tested_at: String,
-    /// Schema version of this profile entry; see
-    /// [`CODEC_PROBE_VERSION`](crate::constant::CODEC_PROBE_VERSION).
-    #[serde(default)]
-    pub version: u32,
 }
 
 /// Persistent cache of [`DecoderProfile`] records, keyed by device serial.
@@ -344,6 +344,12 @@ impl EncoderProfileDatabase {
         self.profiles
             .get(serial)
             .filter(|p| p.version >= CODEC_PROBE_VERSION)
+    }
+
+    pub fn is_stale_for(&self, serial: &str) -> bool {
+        self.profiles
+            .get(serial)
+            .is_some_and(|p| p.version < CODEC_PROBE_VERSION)
     }
 
     pub fn insert(&mut self, profile: EncoderProfile) {

@@ -120,7 +120,9 @@ notification-save-skipped-degraded = Configuration is read-only (failed to load 
 
 # UI - Codec Compatibility Detection
 probe-codec-dialog-title = Detect Codec Compatibility
-probe-codec-dialog-message = No codec profile found for device { $serial }. Run detection now? (~30-60s)
+probe-codec-dialog-message = No codec profile found for device { $serial }. Detection will find the optimal encoder settings.
+probe-codec-dialog-message-stale = The codec profile for device { $serial } is outdated and needs to be re-detected for optimal settings.
+probe-codec-dialog-hint = ⚠ Keep the device screen on and unlocked during detection, or it may fail.
 probe-codec-progress-title = Detecting Codec Compatibility
 probe-codec-step-detecting-device = Reading device information...
 probe-codec-step-detecting-encoder = Detecting hardware encoder...
