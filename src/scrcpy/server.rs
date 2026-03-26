@@ -3,7 +3,12 @@
 use {
     crate::{error::Result, scrcpy::codec_probe::EncoderProfileDatabase},
     adbshell::AdbShell,
-    scrcpy::{SCRCPY_SERVER_CLASS_NAME, SCRCPY_SERVER_PATH, SCRCPY_SERVER_VERSION, ScrcpyError},
+    scrcpy_protocol::{
+        SCRCPY_SERVER_CLASS_NAME,
+        SCRCPY_SERVER_PATH,
+        SCRCPY_SERVER_VERSION,
+        ScrcpyError,
+    },
     std::{path::Path, process::Child},
     tracing::{debug, info},
 };
@@ -79,8 +84,8 @@ impl Default for ServerParams {
 }
 
 impl ServerParams {
-    pub fn for_device(serial: &str, base_dir: &Path) -> Result<Self> {
-        let db = EncoderProfileDatabase::load(base_dir)?;
+    pub fn for_device(serial: &str, config_dir: &Path) -> Result<Self> {
+        let db = EncoderProfileDatabase::load(config_dir)?;
         let mut params = Self::default();
 
         if let Some(profile) = db.get(serial) {

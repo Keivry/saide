@@ -7,30 +7,51 @@
 
 use {directories::ProjectDirs, std::path::PathBuf};
 
-/// Get project configuration directory path
-/// Returns None if unable to determine (e.g., Docker/sandbox environment)
-pub fn config_dir() -> Option<PathBuf> {
+/// Get project configuration directory
+/// Uses standard OS-specific config directory (e.g. %APPDATA% on Windows, ~/.config on Linux)
+/// Falls back to a temporary directory if ProjectDirs is unavailable (e.g. in restricted
+/// environments)
+pub fn config_dir() -> PathBuf {
     directories::ProjectDirs::from("io", "keivry", "saide")
-        .map(|dirs| dirs.config_dir().join("config.toml"))
+        .map(|dirs| dirs.config_dir().to_owned())
+        .unwrap_or_else(fallback_config_dir)
 }
 
-/// Get project data directory path
-/// Returns None if unable to determine (e.g., Docker/sandbox environment)
-pub fn data_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("io", "keivry", "saide").map(|dirs| dirs.data_dir().to_owned())
+/// Get the expected path to the configuration file (config.toml)
+/// This is typically located in the OS-specific config directory (e.g. %APPDATA%\Saide\config.toml
+/// on Windows, ~/.config/saide/config.toml on Linux), but falls back to a temporary directory if
+/// ProjectDirs is unavailable
+pub fn config_file() -> PathBuf { config_dir().join("config.toml") }
+
+/// Get project data directory
+/// Uses standard OS-specific data directory (e.g. %APPDATA% on Windows, ~/.local/share on Linux)
+/// Falls back to a temporary directory if ProjectDirs is unavailable (e.g. in restricted
+/// environments)
+pub fn data_dir() -> PathBuf {
+    directories::ProjectDirs::from("io", "keivry", "saide")
+        .map(|dirs| dirs.data_dir().to_owned())
+        .unwrap_or_else(fallback_data_dir)
 }
 
 /// Fallback configuration path (used when ProjectDirs unavailable)
 /// Uses /tmp for Linux/Unix, %TEMP% for Windows
-pub fn fallback_config_path() -> PathBuf { std::env::temp_dir().join("saide").join("config.toml") }
+fn fallback_config_dir() -> PathBuf { std::env::temp_dir().join("saide") }
 
 /// Fallback data directory path
-pub fn fallback_data_path() -> PathBuf { std::env::temp_dir().join("saide") }
+fn fallback_data_dir() -> PathBuf { std::env::temp_dir().join("saide") }
 
+/// Get the expected filename of the scrcpy server JAR file based on the version string
 pub fn scrcpy_server_filename() -> String {
     format!("scrcpy-server-{}", SCRCPY_SERVER_VERSION_STRING)
 }
 
+/// Resolve the path to the scrcpy server JAR file
+///
+/// Checks multiple locations in order:
+/// 1. OS-specific data directory (e.g. %APPDATA% on Windows, ~/.local/share on Linux)
+/// 2. Current working directory
+///
+/// If the file is not found in either location, returns the expected path in the current directory
 pub fn resolve_scrcpy_server_path() -> PathBuf {
     let filename = scrcpy_server_filename();
 
@@ -44,11 +65,6 @@ pub fn resolve_scrcpy_server_path() -> PathBuf {
     let current_dir_path = PathBuf::from(filename.as_str());
     if current_dir_path.is_file() {
         return current_dir_path;
-    }
-
-    let legacy_repo_path = PathBuf::from("3rd-party").join(filename.as_str());
-    if legacy_repo_path.is_file() {
-        return legacy_repo_path;
     }
 
     current_dir_path

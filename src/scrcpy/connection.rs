@@ -12,7 +12,7 @@ use {
         },
     },
     adbshell::AdbShell,
-    scrcpy::{
+    scrcpy_protocol::{
         GRACEFUL_WAIT_MS,
         MAX_PACKET_SIZE,
         protocol::{audio::AudioPacket, video::VideoPacket},

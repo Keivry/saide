@@ -7,7 +7,7 @@ use {
     },
     adbshell::AdbShell,
     crossbeam_channel::Sender,
-    scrcpy::h264::extract_resolution_from_stream,
+    scrcpy_protocol::h264::extract_resolution_from_stream,
     serde::{Deserialize, Serialize},
     std::{
         collections::HashMap,
@@ -261,10 +261,10 @@ pub fn encoder_fingerprint(
 }
 
 impl EncoderProfileDatabase {
-    pub fn load(base_dir: &Path) -> Result<Self> {
-        let path = Self::config_path(base_dir);
+    pub fn load(config_dir: &Path) -> Result<Self> {
+        let path = Self::config_path(config_dir);
         if !path.exists() {
-            return Self::load_legacy(base_dir);
+            return Self::load_legacy(config_dir);
         }
 
         let content = fs::read_to_string(&path).map_err(|e| {
@@ -275,8 +275,8 @@ impl EncoderProfileDatabase {
         Ok(toml::from_str(&content)?)
     }
 
-    pub fn save(&self, base_dir: &Path) -> Result<()> {
-        let path = Self::config_path(base_dir);
+    pub fn save(&self, config_dir: &Path) -> Result<()> {
+        let path = Self::config_path(config_dir);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -284,12 +284,12 @@ impl EncoderProfileDatabase {
         Ok(())
     }
 
-    fn config_path(base_dir: &Path) -> PathBuf { profile_path(base_dir, "encoder_profile.toml") }
+    fn config_path(config_dir: &Path) -> PathBuf { profile_path(config_dir, "encoder_profile.toml") }
 
-    fn legacy_path(base_dir: &Path) -> PathBuf { profile_path(base_dir, "device_profiles.toml") }
+    fn legacy_path(config_dir: &Path) -> PathBuf { profile_path(config_dir, "device_profiles.toml") }
 
-    fn load_legacy(base_dir: &Path) -> Result<Self> {
-        let path = Self::legacy_path(base_dir);
+    fn load_legacy(config_dir: &Path) -> Result<Self> {
+        let path = Self::legacy_path(config_dir);
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -333,10 +333,10 @@ impl EncoderProfileDatabase {
 }
 
 impl DecoderProfileDatabase {
-    pub fn load(base_dir: &Path) -> Result<Self> {
-        let path = Self::config_path(base_dir);
+    pub fn load(config_dir: &Path) -> Result<Self> {
+        let path = Self::config_path(config_dir);
         if !path.exists() {
-            return Self::load_legacy(base_dir);
+            return Self::load_legacy(config_dir);
         }
 
         let content = fs::read_to_string(&path).map_err(|e| {
@@ -347,8 +347,8 @@ impl DecoderProfileDatabase {
         Ok(toml::from_str(&content)?)
     }
 
-    pub fn save(&self, base_dir: &Path) -> Result<()> {
-        let path = Self::config_path(base_dir);
+    pub fn save(&self, config_dir: &Path) -> Result<()> {
+        let path = Self::config_path(config_dir);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -356,12 +356,12 @@ impl DecoderProfileDatabase {
         Ok(())
     }
 
-    fn config_path(base_dir: &Path) -> PathBuf { profile_path(base_dir, "decoder_profile.toml") }
+    fn config_path(config_dir: &Path) -> PathBuf { profile_path(config_dir, "decoder_profile.toml") }
 
-    fn legacy_path(base_dir: &Path) -> PathBuf { profile_path(base_dir, "device_profiles.toml") }
+    fn legacy_path(config_dir: &Path) -> PathBuf { profile_path(config_dir, "device_profiles.toml") }
 
-    fn load_legacy(base_dir: &Path) -> Result<Self> {
-        let path = Self::legacy_path(base_dir);
+    fn load_legacy(config_dir: &Path) -> Result<Self> {
+        let path = Self::legacy_path(config_dir);
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -407,14 +407,14 @@ impl DecoderProfileDatabase {
     pub fn remove(&mut self, serial: &str) { self.profiles.remove(serial); }
 }
 
-fn profile_path(base_dir: &Path, file_name: &str) -> PathBuf { base_dir.join(file_name) }
+fn profile_path(config_dir: &Path, file_name: &str) -> PathBuf { config_dir.join(file_name) }
 
 /// Probe a device and determine the best codec configuration.
 ///
 /// Detects the device's hardware H.264 encoder, then iterates over known codec
 /// profiles to find the first one accepted by both the device and the host
 /// decoder.  The result is persisted to the [`EncoderProfileDatabase`] under
-/// `base_dir` so that subsequent calls can skip the probe.
+/// `config_dir` so that subsequent calls can skip the probe.
 ///
 /// Returns `Ok(Some(config))` with the optimal encoder option string, or
 /// `Ok(None)` if no profile was validated.
@@ -425,7 +425,7 @@ pub fn probe_device(
     decoder_probe: &impl DecoderProbe,
     serial: &str,
     server_jar: &str,
-    base_dir: &Path,
+    config_dir: &Path,
     progress_tx: Option<&Sender<ProbeStep>>,
 ) -> Result<Option<String>> {
     let send = |step: ProbeStep| {
@@ -521,24 +521,24 @@ pub fn probe_device(
                 decoder,
                 profile.video_encoder.as_deref(),
                 profile.optimal_config.as_deref(),
-                base_dir,
+                config_dir,
             )?;
         } else {
             profile.optimal_config = None;
             profile.supported_options.clear();
             profile.supported_profile = None;
-            clear_validated_decoder(serial, base_dir)?;
+            clear_validated_decoder(serial, config_dir)?;
         }
     }
 
     if profile.supported_options.is_empty() && profile.supported_profile.is_none() {
         profile.video_encoder = None;
-        clear_validated_decoder(serial, base_dir)?;
+        clear_validated_decoder(serial, config_dir)?;
     }
 
-    let mut db = EncoderProfileDatabase::load(base_dir)?;
+    let mut db = EncoderProfileDatabase::load(config_dir)?;
     db.insert(profile.clone());
-    db.save(base_dir)?;
+    db.save(config_dir)?;
     send(ProbeStep::Done(Ok(profile.optimal_config.clone())));
 
     Ok(profile.optimal_config)
@@ -743,20 +743,20 @@ fn save_validated_decoder(
     decoder: DecoderPreference,
     video_encoder: Option<&str>,
     optimal_config: Option<&str>,
-    base_dir: &Path,
+    config_dir: &Path,
 ) -> Result<()> {
-    let mut db = DecoderProfileDatabase::load(base_dir)?;
+    let mut db = DecoderProfileDatabase::load(config_dir)?;
     db.insert(DecoderProfile {
         serial: serial.to_string(),
         validated_decoder: decoder.profile_name().to_string(),
         encoder_fingerprint: encoder_fingerprint(video_encoder, optimal_config).unwrap_or_default(),
         tested_at: now_utc_rfc3339(),
     });
-    db.save(base_dir)
+    db.save(config_dir)
 }
 
-fn clear_validated_decoder(serial: &str, base_dir: &Path) -> Result<()> {
-    let mut db = DecoderProfileDatabase::load(base_dir)?;
+fn clear_validated_decoder(serial: &str, config_dir: &Path) -> Result<()> {
+    let mut db = DecoderProfileDatabase::load(config_dir)?;
     db.remove(serial);
-    db.save(base_dir)
+    db.save(config_dir)
 }

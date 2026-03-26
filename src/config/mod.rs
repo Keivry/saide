@@ -401,36 +401,25 @@ pub struct ConfigManager {
 impl ConfigManager {
     /// Create a new ConfigManager, loading existing config or using defaults
     pub fn new() -> Result<Self> {
-        // Determine which config file to load
-        // 1. Try standard config path (user config dir)
-        // 2. Fallback to ./config.toml in current directory
-        // 3. Fallback to temp directory if ProjectDirs unavailable
-        // 4. If none exist, create default config
-        let path = constant::config_dir().unwrap_or_else(|| {
-            warn!(
-                "Unable to determine config directory, using fallback: {:?}",
-                constant::fallback_config_path()
-            );
-            constant::fallback_config_path()
-        });
+        let config_file = constant::config_file();
 
-        let config = if path.is_file() {
-            SAideConfig::load(&path)?
+        let config = if config_file.is_file() {
+            SAideConfig::load(&config_file)?
         } else if PathBuf::from("config.toml").is_file() {
             SAideConfig::load("config.toml")?
         } else {
             let config = SAideConfig::default();
 
-            if let Some(parent) = path.parent() {
+            if let Some(parent) = config_file.parent() {
                 fs::create_dir_all(parent)?;
             }
-            config.save(&path)?;
+            config.save(&config_file)?;
 
             config
         };
 
         Ok(Self {
-            path,
+            path: config_file,
             config: Arc::new(config),
             degraded: false,
         })
@@ -446,10 +435,10 @@ impl ConfigManager {
             Ok(cm) => (cm, None),
             Err(e) => {
                 warn!("Failed to load config, using defaults: {}", e);
-                let path = constant::config_dir().unwrap_or_else(constant::fallback_config_path);
+                let config_file = constant::config_file();
                 (
                     Self {
-                        path,
+                        path: config_file,
                         config: Arc::new(SAideConfig::default()),
                         degraded: true,
                     },

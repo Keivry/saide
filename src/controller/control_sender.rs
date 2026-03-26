@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-pub use scrcpy::ControlSender;
+pub use scrcpy_protocol::ControlSender;
 
 #[cfg(test)]
 mod tests {

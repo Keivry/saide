@@ -1610,9 +1610,8 @@ impl SAideApp {
             InitState::NotStarted => {
                 let serial = self.app_state.device_serial().to_owned();
                 let needs_probe = {
-                    let base_dir = crate::constant::data_dir()
-                        .unwrap_or_else(crate::constant::fallback_data_path);
-                    EncoderProfileDatabase::load(&base_dir)
+                    let config_dir = crate::constant::config_dir();
+                    EncoderProfileDatabase::load(&config_dir)
                         .map(|db| db.get(&serial).is_none())
                         .unwrap_or(true)
                 };

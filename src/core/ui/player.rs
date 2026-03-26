@@ -38,7 +38,7 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     parking_lot::Mutex,
-    scrcpy::protocol::video::VideoPacket,
+    scrcpy_protocol::protocol::video::VideoPacket,
     std::{
         io::Read,
         net::TcpStream,
@@ -301,9 +301,8 @@ impl StreamPlayer {
         let recorder_video_tx = self.recorder_video_tx.clone();
         let recorder_audio_tx = self.recorder_audio_tx.clone();
         let current_encoder_fingerprint = {
-            let base_dir =
-                crate::constant::data_dir().unwrap_or_else(crate::constant::fallback_data_path);
-            EncoderProfileDatabase::load(&base_dir)
+            let config_dir = crate::constant::config_dir();
+            EncoderProfileDatabase::load(&config_dir)
                 .ok()
                 .and_then(|db| db.get(serial).cloned())
                 .and_then(|profile| {
@@ -314,9 +313,8 @@ impl StreamPlayer {
                 })
         };
         let preferred_decoder = {
-            let base_dir =
-                crate::constant::data_dir().unwrap_or_else(crate::constant::fallback_data_path);
-            DecoderProfileDatabase::load(&base_dir)
+            let config_dir = crate::constant::config_dir();
+            DecoderProfileDatabase::load(&config_dir)
                 .ok()
                 .and_then(|db| db.get(serial).cloned())
                 .filter(|profile| {

@@ -35,7 +35,7 @@ pub fn get_scrcpy_server_path() -> Result<String> {
     }
 
     anyhow::bail!(
-        "Scrcpy server JAR not found. Expected '{}' in the current directory, application data directory, or legacy 3rd-party/ path.",
+        "Scrcpy server JAR not found. Expected '{}' in the application data directory or current working directory.",
         path.display()
     )
 }

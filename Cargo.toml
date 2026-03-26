@@ -1,12 +1,9 @@
 [package]
 name = "saide"
 description = "Scrcpy companion app with key/mouse mapping"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-
-[workspace]
-members = [".", "3rd-party/scrcpy-rs", "3rd-party/adbshell"]
 
 [lib]
 name = "saide"
@@ -64,9 +61,6 @@ path = "examples/test_vulkan_import.rs"
 [dependencies]
 eframe = { version = "0.33", features = ["wgpu"] }
 egui = { version = "0.33", features = ["serde"] }
-egui-event = { path = "3rd-party/egui-event", features = ["macros"] }
-scrcpy = { path = "3rd-party/scrcpy-rs" }
-adbshell = { path = "3rd-party/adbshell" }
 
 crossbeam-channel = "0.5"
 
@@ -120,9 +114,13 @@ lru = "0.16"
 
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+scrcpy-protocol = "0.1"
+adbshell = "0.1"
+
 egui-cjk-font = "0.1"
-egui-command = "0.1"
-egui-command-binding = "0.1"
+egui-event = { version = "0.5", features = ["macros"] }
+egui-command = "0.2"
+egui-command-binding = "0.2"
 
 notify = "8"
 rfd = "0.17"

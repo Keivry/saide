@@ -6,7 +6,7 @@ mod utils;
 use {
     anyhow::Result,
     saide::scrcpy::{connection::ScrcpyConnection, server::ServerParams},
-    scrcpy::protocol::video::VideoPacket,
+    scrcpy_protocol::protocol::video::VideoPacket,
     utils::{get_device_serial, get_scrcpy_server_path},
 };
 

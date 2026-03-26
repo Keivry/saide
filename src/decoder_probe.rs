@@ -78,6 +78,6 @@ pub fn probe_device(
     progress_tx: Option<&Sender<ProbeStep>>,
 ) -> Result<Option<String>> {
     let decoder_probe = SaideDecoderProbe;
-    let base_dir = constant::data_dir().unwrap_or_else(constant::fallback_data_path);
-    scrcpy_probe_device(&decoder_probe, serial, server_jar, &base_dir, progress_tx)
+    let config_dir = constant::config_dir();
+    scrcpy_probe_device(&decoder_probe, serial, server_jar, &config_dir, progress_tx)
 }

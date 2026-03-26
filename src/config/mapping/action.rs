@@ -8,7 +8,7 @@
 //! mapping actions into scrcpy-specific actions by translating coordinate systems.
 
 use {
-    super::{Modifiers, mouse::WheelDirection},
+    super::{mouse::WheelDirection, Modifiers},
     crate::core::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys, ScrcpyPos},
     serde::{Deserialize, Serialize},
 };

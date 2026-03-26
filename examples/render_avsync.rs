@@ -27,7 +27,7 @@ use {
         },
         scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
-    scrcpy::protocol::video::VideoPacket,
+    scrcpy_protocol::protocol::video::VideoPacket,
     std::{io::Read, sync::Arc, thread},
     tracing::{debug, error, info},
     utils::{get_device_serial, get_scrcpy_server_path},
@@ -198,8 +198,8 @@ fn av_worker(
     let server_jar = get_scrcpy_server_path()?;
 
     // Single connection with both video and audio
-    let base_dir = saide::constant::data_dir().unwrap_or_else(saide::constant::fallback_data_path);
-    let mut params = ServerParams::for_device(&serial, &base_dir)?;
+    let config_dir = saide::constant::config_dir();
+    let mut params = ServerParams::for_device(&serial, &config_dir)?;
     params.video = true;
     params.video_codec = "h264".to_string();
     params.video_bit_rate = 8_000_000;
