@@ -4,17 +4,17 @@ use {
     crate::{
         constant,
         decoder::{
+            extract_resolution_from_stream,
             AutoDecoder,
             DecoderPreference as AppDecoderPreference,
             VideoDecoder,
-            extract_resolution_from_stream,
         },
         error::Result,
         scrcpy::codec_probe::{
+            probe_device as scrcpy_probe_device,
             DecoderPreference,
             DecoderProbe,
             ProbeStep,
-            probe_device as scrcpy_probe_device,
         },
     },
     crossbeam_channel::Sender,
@@ -68,7 +68,14 @@ impl DecoderProbe for SaideDecoderProbe {
             }
         }
 
-        false
+        // Hardware decoders (e.g. AMD VAAPI) maintain an internal frame buffer and
+        // may not emit any frame until the pipeline is flushed, even after receiving
+        // a full IDR + several P-frames.  Flush here to drain any buffered output
+        // before concluding that this decoder candidate is unsupported.
+        match decoder.flush() {
+            Ok(frames) => !frames.is_empty(),
+            Err(_) => false,
+        }
     }
 }
 

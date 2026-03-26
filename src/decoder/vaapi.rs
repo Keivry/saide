@@ -4,9 +4,9 @@
 
 use {
     super::{
+        error::{Result, VideoError},
         DecodedFrame,
         VideoDecoder,
-        error::{Result, VideoError},
     },
     ffmpeg::{
         codec,
@@ -165,6 +165,11 @@ impl VaapiDecoder {
             (*ctx_ptr).flags |= ffmpeg::sys::AV_CODEC_FLAG_LOW_DELAY as i32;
             (*ctx_ptr).flags2 |= ffmpeg::sys::AV_CODEC_FLAG2_FAST;
             (*ctx_ptr).strict_std_compliance = ffmpeg::sys::FF_COMPLIANCE_EXPERIMENTAL;
+            // AMD Mesa may not list VAProfileH264Baseline in vaQueryConfigProfiles even
+            // though the hardware can decode it; allow profile mismatches so that streams
+            // whose SPS profile_idc does not exactly match a reported VA profile are still
+            // accepted rather than rejected with AVERROR(ENOSYS).
+            (*ctx_ptr).hwaccel_flags |= ffmpeg::sys::AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
 
             (*ctx_ptr).thread_count = 1;
         }
