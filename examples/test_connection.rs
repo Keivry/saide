@@ -5,8 +5,10 @@
 mod utils;
 use {
     anyhow::Result,
+    adbshell::AdbShell,
     saide::scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     scrcpy_protocol::protocol::video::VideoPacket,
+    std::sync::Arc,
     utils::{get_device_serial, get_scrcpy_server_path},
 };
 
@@ -44,7 +46,8 @@ fn main() -> Result<()> {
     println!("  send_codec_meta: {}", params.send_codec_meta);
 
     println!("\n🔌 建立连接中...");
-    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
+    let shell = Arc::new(AdbShell::new(&serial)?);
+    let mut conn = ScrcpyConnection::connect(shell, &server_jar, "127.0.0.1", params)?;
 
     println!("✅ 连接成功!");
     println!(

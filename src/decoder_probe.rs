@@ -17,8 +17,10 @@ use {
             ProbeStep,
         },
     },
+    adbshell::AdbShell,
     crossbeam_channel::Sender,
     ffmpeg_next as ffmpeg,
+    std::sync::Arc,
 };
 
 pub struct SaideDecoderProbe;
@@ -98,11 +100,11 @@ impl DecoderProbe for SaideDecoderProbe {
 }
 
 pub fn probe_device(
-    serial: &str,
+    shell: Arc<AdbShell>,
     server_jar: &str,
     progress_tx: Option<&Sender<ProbeStep>>,
 ) -> Result<Option<String>> {
     let decoder_probe = SaideDecoderProbe;
     let config_dir = constant::config_dir();
-    scrcpy_probe_device(&decoder_probe, serial, server_jar, &config_dir, progress_tx)
+    scrcpy_probe_device(&decoder_probe, shell, server_jar, &config_dir, progress_tx)
 }

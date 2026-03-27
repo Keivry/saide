@@ -8,9 +8,9 @@ use {crate::error::Result, adbshell::AdbShell, tracing::info};
 /// known vendor encoder names (Qualcomm, MediaTek, Samsung Exynos, HiSilicon
 /// Kirin).  Returns `None` when no vendor match is found, in which case the
 /// caller should fall back to the Android software encoder.
-pub fn detect_h264_encoder(serial: &str) -> Result<Option<String>> {
-    info!("Detecting H.264 encoder on device: {}", serial);
-    let platform = get_soc_platform(serial)?;
+pub fn detect_h264_encoder(shell: &AdbShell) -> Result<Option<String>> {
+    info!("Detecting H.264 encoder on device: {}", shell.serial());
+    let platform = get_soc_platform(shell)?;
     info!("Device SoC platform: {}", platform);
     let encoder = match_encoder_for_platform(&platform);
 
@@ -26,13 +26,13 @@ pub fn detect_h264_encoder(serial: &str) -> Result<Option<String>> {
     Ok(encoder)
 }
 
-fn get_soc_platform(serial: &str) -> Result<String> {
-    let platform = AdbShell::get_prop(serial, "ro.board.platform")?;
+fn get_soc_platform(shell: &AdbShell) -> Result<String> {
+    let platform = shell.get_prop("ro.board.platform")?;
     if !platform.is_empty() && platform != "unknown" {
         return Ok(platform);
     }
 
-    let hardware = AdbShell::get_prop(serial, "ro.hardware")?;
+    let hardware = shell.get_prop("ro.hardware")?;
     if !hardware.is_empty() && hardware != "unknown" {
         return Ok(hardware);
     }

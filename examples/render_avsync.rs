@@ -10,6 +10,7 @@ mod utils;
 
 use {
     anyhow::{Context, Result},
+    adbshell::AdbShell,
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     parking_lot::Mutex,
@@ -218,7 +219,8 @@ fn av_worker(
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
+    let shell = Arc::new(AdbShell::new(&serial)?);
+    let mut conn = ScrcpyConnection::connect(shell, &server_jar, "127.0.0.1", params)?;
 
     // Get resolution before extracting streams
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));

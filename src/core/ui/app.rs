@@ -287,7 +287,14 @@ impl SAideApp {
         let server_jar = self.config().general.scrcpy_server.clone();
 
         thread::spawn(move || {
-            let result = decoder_probe::probe_device(&serial, &server_jar, Some(&tx));
+            let shell = match adbshell::AdbShell::new(&serial) {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    let _ = tx.send(ProbeStep::Done(Err(e.to_string())));
+                    return;
+                }
+            };
+            let result = decoder_probe::probe_device(shell, &server_jar, Some(&tx));
             if let Err(ref e) = result {
                 let _ = tx.send(ProbeStep::Done(Err(e.to_string())));
             }

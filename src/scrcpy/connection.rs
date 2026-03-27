@@ -22,6 +22,7 @@ use {
         io::{Read, Write},
         net::{TcpListener, TcpStream},
         process::Child,
+        sync::Arc,
         thread,
         time::{Duration, Instant},
     },
@@ -86,23 +87,24 @@ pub struct ScrcpyConnection {
     audio_stream: Option<TcpStream>,
     control_stream: Option<TcpStream>,
     server_process: Option<Child>,
-    serial: String,
+    shell: Arc<AdbShell>,
 }
 
 impl ScrcpyConnection {
     pub fn connect(
-        serial: &str,
+        shell: Arc<AdbShell>,
         server_jar_path: &str,
         bind_address: &str,
         mut params: ServerParams,
     ) -> Result<Self> {
+        let serial = shell.serial().to_string();
         let scid = params.scid;
         let socket_name = get_socket_name(scid);
         let mut audio_disabled_reason = None;
         let mut audio_codec_id: u32 = 0x6f70_7573; // Opus default
 
         if params.audio {
-            let android_version = AdbShell::get_android_version(serial)?;
+            let android_version = shell.get_android_version()?;
             if android_version < 30 {
                 let reason = AudioDisabledReason::UnsupportedAndroidVersion {
                     api_level: android_version,
@@ -113,16 +115,16 @@ impl ScrcpyConnection {
             }
         }
 
-        push_server(serial, server_jar_path)?;
+        push_server(&shell, server_jar_path)?;
         let listener = find_available_port(bind_address)?;
         let local_port = listener.local_addr()?.port();
-        setup_reverse_tunnel(serial, &socket_name, local_port)?;
-        let mut server_process = start_server(serial, &params)?;
+        setup_reverse_tunnel(&shell, &socket_name, local_port)?;
+        let mut server_process = start_server(&shell, &params)?;
 
         let result = Self::accept_streams(
             &listener,
             &mut server_process,
-            serial,
+            &serial,
             &socket_name,
             &mut params,
             &mut audio_codec_id,
@@ -134,7 +136,7 @@ impl ScrcpyConnection {
                 Ok(streams) => streams,
                 Err(e) => {
                     let _ = server_process.kill();
-                    let _ = remove_reverse_tunnel(serial, &socket_name);
+                    let _ = remove_reverse_tunnel(&shell, &socket_name);
                     return Err(e);
                 }
             };
@@ -152,7 +154,7 @@ impl ScrcpyConnection {
             audio_stream,
             control_stream,
             server_process: Some(server_process),
-            serial: serial.to_string(),
+            shell,
         })
     }
 
@@ -353,7 +355,7 @@ impl ScrcpyConnection {
 
             while start.elapsed().as_millis() < GRACEFUL_WAIT_MS as u128 {
                 if process.try_wait()?.is_some() {
-                    let _ = remove_reverse_tunnel(&self.serial, &get_socket_name(self.scid));
+                    let _ = remove_reverse_tunnel(&self.shell, &get_socket_name(self.scid));
                     return Ok(());
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -364,7 +366,7 @@ impl ScrcpyConnection {
             thread::sleep(Duration::from_millis(50));
         }
 
-        let _ = remove_reverse_tunnel(&self.serial, &get_socket_name(self.scid));
+        let _ = remove_reverse_tunnel(&self.shell, &get_socket_name(self.scid));
         Ok(())
     }
 }
@@ -392,12 +394,12 @@ fn find_available_port(bind_address: &str) -> Result<TcpListener> {
     })
 }
 
-fn setup_reverse_tunnel(serial: &str, socket_name: &str, local_port: u16) -> Result<()> {
-    AdbShell::setup_reverse_tunnel(serial, socket_name, local_port).map_err(Into::into)
+fn setup_reverse_tunnel(shell: &AdbShell, socket_name: &str, local_port: u16) -> Result<()> {
+    shell.setup_reverse_tunnel(socket_name, local_port).map_err(Into::into)
 }
 
-fn remove_reverse_tunnel(serial: &str, socket_name: &str) -> Result<()> {
-    AdbShell::remove_reverse_tunnel(serial, socket_name).map_err(Into::into)
+fn remove_reverse_tunnel(shell: &AdbShell, socket_name: &str) -> Result<()> {
+    shell.remove_reverse_tunnel(socket_name).map_err(Into::into)
 }
 
 fn accept_connection(listener: &TcpListener, channel: &Channel) -> Result<TcpStream> {

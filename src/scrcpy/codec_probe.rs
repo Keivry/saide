@@ -14,6 +14,7 @@ use {
         collections::HashMap,
         fs,
         path::{Path, PathBuf},
+        sync::Arc,
         time::Duration,
     },
     tracing::{debug, info},
@@ -165,12 +166,12 @@ pub struct EncoderProfile {
 }
 
 impl EncoderProfile {
-    pub fn new(serial: &str) -> Result<Self> {
+    pub fn new(shell: &AdbShell) -> Result<Self> {
         Ok(Self {
-            serial: serial.to_string(),
-            model: AdbShell::get_prop(serial, "ro.product.model")?,
-            platform: AdbShell::get_platform(serial)?,
-            android_version: AdbShell::get_android_version(serial)?,
+            serial: shell.serial().to_string(),
+            model: shell.get_prop("ro.product.model")?,
+            platform: shell.get_platform()?,
+            android_version: shell.get_android_version()?,
             video_encoder: None,
             supported_options: Vec::new(),
             supported_profile: None,
@@ -457,7 +458,7 @@ fn profile_path(config_dir: &Path, file_name: &str) -> PathBuf { config_dir.join
 /// to suppress progress reporting.
 pub fn probe_device(
     decoder_probe: &impl DecoderProbe,
-    serial: &str,
+    shell: Arc<AdbShell>,
     server_jar: &str,
     config_dir: &Path,
     progress_tx: Option<&Sender<ProbeStep>>,
@@ -468,11 +469,12 @@ pub fn probe_device(
         }
     };
 
+    let serial = shell.serial().to_string();
     info!("Codec probing started for serial={}", serial);
     send(ProbeStep::DetectingDevice);
-    let mut profile = EncoderProfile::new(serial)?;
+    let mut profile = EncoderProfile::new(&shell)?;
     send(ProbeStep::DetectingEncoder);
-    profile.video_encoder = hwcodec::detect_h264_encoder(serial)?;
+    profile.video_encoder = hwcodec::detect_h264_encoder(&shell)?;
 
     let total_profiles = CODEC_PROFILES.len();
     for (i, (key, value)) in CODEC_PROFILES.iter().enumerate() {
@@ -485,7 +487,7 @@ pub fn probe_device(
         let options = format!("{}={}", key, value);
         match validate_end_to_end(
             decoder_probe,
-            serial,
+            shell.clone(),
             server_jar,
             &options,
             profile.video_encoder.as_deref(),
@@ -524,7 +526,7 @@ pub fn probe_device(
 
         let options = format!("{}={}", key, value);
         if test_codec_options(
-            serial,
+            shell.clone(),
             server_jar,
             &options,
             profile.video_encoder.as_deref(),
@@ -539,7 +541,7 @@ pub fn probe_device(
         send(ProbeStep::Validating);
         if let Some((validated_profile, validated_options, decoder)) = validate_final_config(
             decoder_probe,
-            serial,
+            shell.clone(),
             server_jar,
             profile.video_encoder.as_deref(),
             profile.supported_profile.as_deref(),
@@ -552,7 +554,7 @@ pub fn probe_device(
                 &profile.supported_options,
             );
             save_validated_decoder(
-                serial,
+                &serial,
                 decoder,
                 profile.video_encoder.as_deref(),
                 profile.optimal_config.as_deref(),
@@ -562,13 +564,13 @@ pub fn probe_device(
             profile.optimal_config = None;
             profile.supported_options.clear();
             profile.supported_profile = None;
-            clear_validated_decoder(serial, config_dir)?;
+            clear_validated_decoder(&serial, config_dir)?;
         }
     }
 
     if profile.supported_options.is_empty() && profile.supported_profile.is_none() {
         profile.video_encoder = None;
-        clear_validated_decoder(serial, config_dir)?;
+        clear_validated_decoder(&serial, config_dir)?;
     }
 
     let mut db = EncoderProfileDatabase::load(config_dir)?;
@@ -625,7 +627,7 @@ fn trim_option_sets(supported_options: &[String]) -> Vec<Vec<String>> {
 }
 
 fn test_codec_options(
-    serial: &str,
+    shell: Arc<AdbShell>,
     server_jar: &str,
     options: &str,
     video_encoder: Option<&str>,
@@ -646,7 +648,7 @@ fn test_codec_options(
         ..Default::default()
     };
 
-    let mut conn = match ScrcpyConnection::connect(serial, server_jar, "127.0.0.1", params) {
+    let mut conn = match ScrcpyConnection::connect(shell, server_jar, "127.0.0.1", params) {
         Ok(c) => c,
         Err(_) => return Ok(false),
     };
@@ -658,7 +660,7 @@ fn test_codec_options(
 
 fn validate_decoder(
     decoder_probe: &impl DecoderProbe,
-    serial: &str,
+    shell: Arc<AdbShell>,
     server_jar: &str,
     options: &str,
     video_encoder: Option<&str>,
@@ -679,7 +681,7 @@ fn validate_decoder(
         ..Default::default()
     };
 
-    let mut conn = match ScrcpyConnection::connect(serial, server_jar, "127.0.0.1", params) {
+    let mut conn = match ScrcpyConnection::connect(shell, server_jar, "127.0.0.1", params) {
         Ok(conn) => conn,
         Err(_) => return Ok(None),
     };
@@ -701,17 +703,17 @@ fn validate_decoder(
 
 fn validate_end_to_end(
     decoder_probe: &impl DecoderProbe,
-    serial: &str,
+    shell: Arc<AdbShell>,
     server_jar: &str,
     options: &str,
     video_encoder: Option<&str>,
 ) -> Result<EndToEndValidation> {
-    if !test_codec_options(serial, server_jar, options, video_encoder)? {
+    if !test_codec_options(shell.clone(), server_jar, options, video_encoder)? {
         return Ok(EndToEndValidation::DeviceRejected);
     }
 
     Ok(
-        match validate_decoder(decoder_probe, serial, server_jar, options, video_encoder)? {
+        match validate_decoder(decoder_probe, shell, server_jar, options, video_encoder)? {
             Some(decoder) => EndToEndValidation::HostAccepted(decoder),
             None => EndToEndValidation::HostRejected,
         },
@@ -720,7 +722,7 @@ fn validate_end_to_end(
 
 fn validate_final_config(
     decoder_probe: &impl DecoderProbe,
-    serial: &str,
+    shell: Arc<AdbShell>,
     server_jar: &str,
     video_encoder: Option<&str>,
     selected_profile: Option<&str>,
@@ -732,7 +734,13 @@ fn validate_final_config(
                 continue;
             };
 
-            match validate_end_to_end(decoder_probe, serial, server_jar, &config, video_encoder)? {
+            match validate_end_to_end(
+                decoder_probe,
+                shell.clone(),
+                server_jar,
+                &config,
+                video_encoder,
+            )? {
                 EndToEndValidation::HostAccepted(decoder) => {
                     return Ok(Some((profile_candidate, option_set, decoder)));
                 }

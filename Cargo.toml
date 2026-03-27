@@ -115,7 +115,7 @@ lru = "0.16"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 scrcpy-protocol = "0.1"
-adbshell = "0.1"
+adbshell = "0.2"
 
 egui-cjk-font = "0.1"
 egui-event = { version = "0.5", features = ["macros"] }

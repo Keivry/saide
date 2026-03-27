@@ -5,11 +5,13 @@
 mod utils;
 use {
     anyhow::Result,
+    adbshell::AdbShell,
     saide::{
         decoder::{AutoDecoder, VideoDecoder},
         gpu::detect_gpu,
         scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
+    std::sync::Arc,
     tracing::info,
     utils::{get_device_serial, get_scrcpy_server_path},
 };
@@ -34,7 +36,8 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
+    let shell = Arc::new(AdbShell::new(&serial)?);
+    let mut conn = ScrcpyConnection::connect(shell, &server_jar, "127.0.0.1", params)?;
 
     let (width, height) = conn.video_resolution.unwrap_or((1920, 1080));
     info!("Video resolution: {}x{}", width, height);

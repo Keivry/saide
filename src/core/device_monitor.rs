@@ -7,13 +7,14 @@
 
 use {
     crate::{
-        controller::{AdbShell, DeviceState},
+        controller::DeviceState,
         error::{Result, SAideError},
         runtime::TOKIO_RT,
     },
+    adbshell::AdbShell,
     crossbeam_channel::{Receiver, Sender, bounded},
     egui_event::Event,
-    std::time::Duration,
+    std::{sync::Arc, time::Duration},
     tokio_util::sync::CancellationToken,
     tracing::{error, info, warn},
 };
@@ -34,10 +35,12 @@ pub struct DeviceMonitor;
 
 impl DeviceMonitor {
     /// Start device monitoring in background task
-    pub fn start(serial: &str, token: CancellationToken) -> Result<Receiver<DeviceMonitorEvent>> {
+    pub fn start(
+        shell: Arc<AdbShell>,
+        token: CancellationToken,
+    ) -> Result<Receiver<DeviceMonitorEvent>> {
         let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
 
-        let serial = serial.to_owned();
         TOKIO_RT.spawn(async move {
             info!("Starting device monitor tasks...");
 
@@ -47,9 +50,9 @@ impl DeviceMonitor {
             }
 
             tokio::join!(
-                Self::monitor_device_state(serial.clone(), event_tx.clone(), token.clone()),
-                Self::monitor_ime_state(serial.clone(), event_tx.clone(), token.clone()),
-                Self::monitor_rotation(serial, event_tx, token),
+                Self::monitor_device_state(shell.clone(), event_tx.clone(), token.clone()),
+                Self::monitor_ime_state(shell.clone(), event_tx.clone(), token.clone()),
+                Self::monitor_rotation(shell, event_tx, token),
             );
         });
 
@@ -57,7 +60,7 @@ impl DeviceMonitor {
     }
 
     async fn monitor_device_state(
-        serial: String,
+        shell: Arc<AdbShell>,
         event_tx: Sender<DeviceMonitorEvent>,
         token: CancellationToken,
     ) {
@@ -75,8 +78,11 @@ impl DeviceMonitor {
                 _ = interval.tick() => {}
             }
 
-            match run_adb_with_retry(token.clone(), AdbShell::get_device_state, serial.clone())
-                .await
+            let serial = shell.serial().to_string();
+            match run_adb_with_retry(token.clone(), shell.clone(), move |_s| {
+                AdbShell::get_device_state(&serial)
+            })
+            .await
             {
                 Ok(state) => {
                     if state != DeviceState::Connected {
@@ -98,7 +104,7 @@ impl DeviceMonitor {
     }
 
     async fn monitor_ime_state(
-        serial: String,
+        shell: Arc<AdbShell>,
         event_tx: Sender<DeviceMonitorEvent>,
         token: CancellationToken,
     ) {
@@ -116,7 +122,7 @@ impl DeviceMonitor {
                 _ = interval.tick() => {}
             }
 
-            match run_adb_with_retry(token.clone(), AdbShell::get_ime_state, serial.clone()).await {
+            match run_adb_with_retry(token.clone(), shell.clone(), |s| s.get_ime_state()).await {
                 Ok(is_shown) => {
                     event_tx
                         .send(DeviceMonitorEvent::ImStateChanged(is_shown))
@@ -133,7 +139,7 @@ impl DeviceMonitor {
     }
 
     async fn monitor_rotation(
-        serial: String,
+        shell: Arc<AdbShell>,
         event_tx: Sender<DeviceMonitorEvent>,
         token: CancellationToken,
     ) {
@@ -153,12 +159,8 @@ impl DeviceMonitor {
                 _ = interval.tick() => {}
             }
 
-            match run_adb_with_retry(
-                token.clone(),
-                AdbShell::get_screen_orientation,
-                serial.clone(),
-            )
-            .await
+            match run_adb_with_retry(token.clone(), shell.clone(), |s| s.get_screen_orientation())
+                .await
             {
                 Ok(orientation) => {
                     if Some(orientation) != last_orientation {
@@ -180,13 +182,14 @@ impl DeviceMonitor {
     }
 }
 
-async fn run_adb_with_retry<T>(
+async fn run_adb_with_retry<T, F>(
     token: CancellationToken,
-    f: fn(&str) -> adbshell::AdbResult<T>,
-    serial: String,
+    shell: Arc<AdbShell>,
+    f: F,
 ) -> Result<T>
 where
     T: Send + 'static,
+    F: Fn(&AdbShell) -> adbshell::AdbResult<T> + Send + Sync + 'static,
 {
     if token.is_cancelled() {
         return Err(SAideError::Cancelled);
@@ -195,10 +198,12 @@ where
     const MAX_RETRIES: u32 = 3;
     const RETRY_DELAY_MS: u64 = 100;
 
+    let f = Arc::new(f);
     let mut attempts = 0u32;
     loop {
-        let s = serial.clone();
-        let result = tokio::task::spawn_blocking(move || f(&s))
+        let shell_ref = shell.clone();
+        let f_ref = f.clone();
+        let result = tokio::task::spawn_blocking(move || f_ref(&shell_ref))
             .await
             .map_err(|e| SAideError::Other(format!("ADB task panic: {e:?}")))?;
 

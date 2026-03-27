@@ -97,25 +97,25 @@ impl ServerParams {
     }
 }
 
-pub fn push_server(serial: &str, server_jar_path: &str) -> Result<()> {
-    debug!("Pushing server to device: {}", serial);
-    AdbShell::push_file(serial, server_jar_path, SCRCPY_SERVER_PATH)?;
+pub fn push_server(shell: &AdbShell, server_jar_path: &str) -> Result<()> {
+    debug!("Pushing server to device: {}", shell.serial());
+    shell.push_file(server_jar_path, SCRCPY_SERVER_PATH)?;
     info!("Server pushed to {}", SCRCPY_SERVER_PATH);
     Ok(())
 }
 
-pub fn start_server(serial: &str, params: &ServerParams) -> Result<Child> {
+pub fn start_server(shell: &AdbShell, params: &ServerParams) -> Result<Child> {
     let args = build_server_args(params);
     info!("Starting server with args: {}", args.join(" "));
-    AdbShell::execute_jar(
-        serial,
-        SCRCPY_SERVER_PATH,
-        "/",
-        SCRCPY_SERVER_CLASS_NAME,
-        SCRCPY_SERVER_VERSION,
-        &args,
-    )
-    .map_err(Into::into)
+    shell
+        .execute_jar(
+            SCRCPY_SERVER_PATH,
+            "/",
+            SCRCPY_SERVER_CLASS_NAME,
+            SCRCPY_SERVER_VERSION,
+            &args,
+        )
+        .map_err(Into::into)
 }
 
 fn build_server_args(params: &ServerParams) -> Vec<String> {

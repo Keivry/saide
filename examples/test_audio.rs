@@ -6,11 +6,12 @@ mod utils;
 
 use {
     anyhow::Result,
+    adbshell::AdbShell,
     saide::{
         decoder::{AudioDecoder, AudioPlayer, OpusDecoder},
         scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     },
-    std::time::Duration,
+    std::{sync::Arc, time::Duration},
     utils::{get_device_serial, get_scrcpy_server_path},
 };
 
@@ -51,7 +52,8 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
 
-    let mut conn = ScrcpyConnection::connect(&serial, &server_jar, "127.0.0.1", params)?;
+    let shell = Arc::new(AdbShell::new(&serial)?);
+    let mut conn = ScrcpyConnection::connect(shell, &server_jar, "127.0.0.1", params)?;
 
     println!("✅ Connection established!");
 

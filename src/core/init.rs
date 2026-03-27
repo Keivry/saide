@@ -71,10 +71,16 @@ pub fn start_initialization(
         thread::sleep(Duration::from_millis(ADB_DEVICE_CHECK_INTERVAL_MS));
     }
 
-    let serial = serial.to_owned();
+    let shell = match AdbShell::new(serial) {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            let _ = tx.send(InitEvent::Error(e.into()));
+            return;
+        }
+    };
 
     // Start device monitor
-    match DeviceMonitor::start(&serial, cancellation_token.clone()) {
+    match DeviceMonitor::start(shell.clone(), cancellation_token.clone()) {
         Ok(device_monitor_rx) => {
             if tx
                 .send(InitEvent::DeviceMonitor(device_monitor_rx))
@@ -92,7 +98,7 @@ pub fn start_initialization(
     // Start scrcpy connection (async)
     let tx_clone = tx.clone();
     ConnectionService::start(
-        &serial,
+        shell,
         config.clone(),
         move |result| match result {
             Ok(conn_result) => {

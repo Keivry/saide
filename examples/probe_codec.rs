@@ -6,7 +6,9 @@ mod utils;
 
 use {
     anyhow::Result,
+    adbshell::AdbShell,
     saide::decoder_probe,
+    std::sync::Arc,
     utils::{get_device_serial, get_scrcpy_server_path},
 };
 
@@ -23,10 +25,11 @@ fn main() -> Result<()> {
     println!("\n📱 Device: {}", serial);
 
     let server_jar = get_scrcpy_server_path()?;
+    let shell = Arc::new(AdbShell::new(&serial)?);
 
     // Probe device
     println!("\n🚀 Starting compatibility probe...\n");
-    let optimal_config = decoder_probe::probe_device(&serial, &server_jar, None)?;
+    let optimal_config = decoder_probe::probe_device(shell, &server_jar, None)?;
 
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("✅ Probe Complete!");

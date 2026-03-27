@@ -17,6 +17,7 @@ use {
             server::ServerParams,
         },
     },
+    adbshell::AdbShell,
     std::{net::TcpStream, sync::Arc},
     tokio_util::sync::CancellationToken,
     tracing::{debug, error, info},
@@ -39,20 +40,23 @@ pub struct ConnectionService;
 
 impl ConnectionService {
     /// Start scrcpy connection in background task
-    pub fn start<F>(serial: &str, config: Arc<SAideConfig>, on_ready: F, token: CancellationToken)
-    where
+    pub fn start<F>(
+        shell: Arc<AdbShell>,
+        config: Arc<SAideConfig>,
+        on_ready: F,
+        token: CancellationToken,
+    ) where
         F: FnOnce(Result<ConnectionResult>) + Send + 'static,
     {
-        let serial = serial.to_owned();
         TOKIO_RT.spawn(async move {
             info!("Establishing scrcpy connection...");
-            let result = Self::establish_connection(&serial, config, token).await;
+            let result = Self::establish_connection(shell, config, token).await;
             on_ready(result);
         });
     }
 
     async fn establish_connection(
-        serial: &str,
+        shell: Arc<AdbShell>,
         config: Arc<SAideConfig>,
         token: CancellationToken,
     ) -> Result<ConnectionResult> {
@@ -61,7 +65,7 @@ impl ConnectionService {
             return Err(SAideError::Cancelled);
         }
 
-        debug!("Connecting to device: {}", serial);
+        debug!("Connecting to device: {}", shell.serial());
 
         let capture_orientation = config.scrcpy.video.capture_orientation.or_else(|| {
             if AutoDecoder::needs_orientation_lock(config.gpu.hwdecode) {
@@ -75,7 +79,7 @@ impl ConnectionService {
             _ = token.cancelled() => {
                 return Err(SAideError::Cancelled);
             }
-            conn = Self::scrcpy_connection(serial, config.clone(), capture_orientation) => {
+            conn = Self::scrcpy_connection(shell, config.clone(), capture_orientation) => {
                 conn?
             }
         };
@@ -126,13 +130,13 @@ impl ConnectionService {
 
     /// Establish scrcpy connection with given config
     async fn scrcpy_connection(
-        serial: &str,
+        shell: Arc<AdbShell>,
         config: Arc<SAideConfig>,
         capture_orientation: Option<u32>,
     ) -> Result<ScrcpyConnection> {
         // Create server params from config
         let config_dir = crate::constant::config_dir();
-        let mut params = ServerParams::for_device(serial, &config_dir)?;
+        let mut params = ServerParams::for_device(shell.serial(), &config_dir)?;
 
         // Apply config settings
         let bit_rate = {
@@ -176,12 +180,11 @@ impl ConnectionService {
         // - More stable, works on all devices
         params.capture_orientation = capture_orientation;
 
-        let serial = serial.to_owned();
         let server_path = config.general.scrcpy_server.clone();
         let bind_address = config.general.bind_address.clone();
 
         tokio::task::spawn_blocking(move || {
-            ScrcpyConnection::connect(&serial, &server_path, &bind_address, params).map_err(|e| {
+            ScrcpyConnection::connect(shell, &server_path, &bind_address, params).map_err(|e| {
                 error!("Failed to establish scrcpy connection: {}", e);
                 e
             })
