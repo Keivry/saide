@@ -445,7 +445,7 @@ impl SAideApp {
             window_w, window_h, video_w, video_h, smart_resize
         );
 
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+        ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             window_w as f32 + self.toolbar_layout_width(),
             window_h as f32,
         )));
@@ -492,11 +492,11 @@ impl SAideApp {
         let effects: Vec<UiEffect> = self.pending_ui_effects.drain(..).collect();
         for effect in effects {
             match effect {
-                UiEffect::RequestRepaint => ui.ctx().request_repaint(),
+                UiEffect::RequestRepaint => ui.request_repaint(),
                 UiEffect::Resize => self.resize(ui),
                 UiEffect::Close => {
                     should_close = true;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    ui.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
         }
@@ -909,7 +909,7 @@ impl SAideApp {
             error!("Failed to update mouse mapper: {}", e);
         }
 
-        let floating_toolbar_rect = self.visible_floating_toolbar_rect(ui.ctx().content_rect());
+        let floating_toolbar_rect = self.visible_floating_toolbar_rect(ui.content_rect());
         let skip_pointer_events = std::mem::take(&mut self.ui_state.pending_toggle_float);
 
         ui.input(|input| {
@@ -1024,8 +1024,8 @@ impl SAideApp {
         };
 
         match limiter {
-            Some(duration) => ui.ctx().request_repaint_after(duration),
-            None => ui.ctx().request_repaint(),
+            Some(duration) => ui.request_repaint_after(duration),
+            None => ui.request_repaint(),
         }
     }
 
@@ -1263,7 +1263,7 @@ impl SAideApp {
             return;
         }
 
-        let content_rect = ui.ctx().content_rect();
+        let content_rect = ui.content_rect();
         let reveal_width = if self.ui_state.floating_toolbar_visible() {
             Toolbar::width() + FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH
         } else {
@@ -1279,7 +1279,7 @@ impl SAideApp {
 
         if should_show != self.ui_state.floating_toolbar_visible() {
             self.ui_state.set_floating_toolbar_visible(should_show);
-            ui.ctx().request_repaint();
+            ui.request_repaint();
         }
     }
 
@@ -1311,7 +1311,7 @@ impl SAideApp {
         let toolbar_state = self.toolbar_view_state();
 
         let colors = AppColors::from_context(ui.ctx());
-        let content_rect = ui.ctx().content_rect();
+        let content_rect = ui.content_rect();
         let toolbar_rect = self
             .visible_floating_toolbar_rect(content_rect)
             .unwrap_or_else(|| {
@@ -1554,7 +1554,7 @@ impl SAideApp {
             return DialogState::None;
         };
 
-        let state = dialog.draw(ui.ctx());
+        let state = dialog.draw(ui);
         if state.is_closed() {
             self.dialog.take();
         }
@@ -1588,7 +1588,6 @@ impl SAideApp {
         _frame: &mut eframe::Frame,
         registry: &mut EventRegistry,
     ) {
-        let ctx = ui.ctx().clone();
         let mut received_new_frame = false;
 
         self.update_floating_toolbar_visibility(ui);
@@ -1648,12 +1647,12 @@ impl SAideApp {
                 }
 
                 self.draw_probe_codec_progress(ui);
-                ui.ctx().request_repaint();
+                ui.request_repaint();
             }
             InitState::InProgress => {
                 received_new_frame = self.player.update();
                 self.check_init_stage();
-                ui.ctx().request_repaint();
+                ui.request_repaint();
             }
             InitState::Ready => {
                 let old_dimensions = if self.ui_state.is_ui_initialized() {
@@ -1714,7 +1713,7 @@ impl SAideApp {
                     .as_ref()
                     .filter(|_| self.dialog.is_none())
                     .map(|_| &*MAPPING_EDITOR_SHORTCUTS);
-                let commands = SHORTCUT_MANAGER.dispatch_raw_with_extra(&ctx, editor_scope);
+                let commands = SHORTCUT_MANAGER.dispatch_raw_with_extra(ui.ctx(), editor_scope);
                 for cmd in commands {
                     registry.send(cmd);
                 }
@@ -1798,7 +1797,7 @@ impl SAideApp {
             }
         }
 
-        self.notifier.draw(ui, ctx.content_rect());
+        self.notifier.draw(ui, ui.content_rect());
 
         let should_close = self.process_pending_ui_effects(ui);
         if should_close {

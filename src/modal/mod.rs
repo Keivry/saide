@@ -416,10 +416,10 @@ impl ModalDialog {
     }
 
     /// Draw the modal dialog, returning the result
-    pub fn draw(&mut self, ctx: &egui::Context) -> DialogState {
+    pub fn draw(&mut self, ui: &egui::Ui) -> DialogState {
         let mut state = DialogState::NoAction;
 
-        Modal::new(self.id.clone().into()).show(ctx, |ui| {
+        Modal::new(self.id.clone().into()).show(ui.ctx(), |ui| {
             ui.vertical_centered(|ui| {
                 ui.spacing_mut().item_spacing.y = 10.0;
 

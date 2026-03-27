@@ -9,8 +9,8 @@
 mod utils;
 
 use {
-    anyhow::{Context, Result},
     adbshell::AdbShell,
+    anyhow::{Context, Result},
     crossbeam_channel::{Receiver, Sender, bounded},
     eframe::{egui, egui_wgpu},
     parking_lot::Mutex,
@@ -116,7 +116,7 @@ impl AVSyncApp {
 }
 
 impl eframe::App for AVSyncApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Poll for new frames (non-blocking)
         while let Ok(frame) = self.frame_rx.try_recv() {
             self.current_frame = Some(frame);
@@ -128,7 +128,7 @@ impl eframe::App for AVSyncApp {
         }
 
         // Top panel with stats
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        egui::Panel::top("top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🎬 AV Synchronized Renderer");
                 ui.separator();
@@ -155,7 +155,7 @@ impl eframe::App for AVSyncApp {
         });
 
         // Central panel with video
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             if let Some(frame) = &self.current_frame {
                 let available_size = ui.available_size();
                 let aspect_ratio = frame.width as f32 / frame.height as f32;
@@ -185,7 +185,7 @@ impl eframe::App for AVSyncApp {
             }
         });
 
-        ctx.request_repaint();
+        ui.request_repaint();
     }
 }
 
@@ -212,8 +212,6 @@ fn av_worker(
     params.send_device_meta = true;
     params.send_codec_meta = true;
     params.send_frame_meta = true;
-
-    info!("params.control = {}", params.control); // DEBUG
 
     let _rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

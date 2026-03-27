@@ -1141,6 +1141,8 @@ dependencies = [
 [[package]]
 name = "egui-cjk-font"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89cff4d93263dea0c958c0c7ebf478d299564ed54b457101ee8748c9783686f"
 dependencies = [
  "egui",
  "font-kit",
@@ -1159,6 +1161,8 @@ dependencies = [
 [[package]]
 name = "egui-command-binding"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50b794c958f2d20565c99337131abc141deb6513cb3ef832fa60e63f1e2fe743"
 dependencies = [
  "egui",
  "egui-command",
@@ -3548,7 +3552,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "saide"
-version = "0.1.6"
+version = "0.1.8"
 dependencies = [
  "adbshell",
  "anyhow",

@@ -4,8 +4,8 @@
 
 mod utils;
 use {
-    anyhow::Result,
     adbshell::AdbShell,
+    anyhow::Result,
     saide::{
         decoder::{AutoDecoder, VideoDecoder},
         gpu::detect_gpu,

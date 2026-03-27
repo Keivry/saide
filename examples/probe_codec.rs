@@ -5,8 +5,8 @@
 mod utils;
 
 use {
-    anyhow::Result,
     adbshell::AdbShell,
+    anyhow::Result,
     saide::decoder_probe,
     std::sync::Arc,
     utils::{get_device_serial, get_scrcpy_server_path},

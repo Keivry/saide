@@ -144,7 +144,7 @@ impl Toolbar {
 
         let mut result = None;
         let available = ui.available_rect_before_wrap();
-        let screen_bottom = ui.ctx().content_rect().max.y;
+        let screen_bottom = ui.content_rect().max.y;
         let full_rect = egui::Rect::from_min_max(
             available.min,
             egui::pos2(available.max.x, available.max.y.min(screen_bottom)),

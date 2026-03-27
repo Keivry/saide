@@ -4,8 +4,8 @@
 
 mod utils;
 use {
-    anyhow::Result,
     adbshell::AdbShell,
+    anyhow::Result,
     saide::scrcpy::{connection::ScrcpyConnection, server::ServerParams},
     scrcpy_protocol::protocol::video::VideoPacket,
     std::sync::Arc,

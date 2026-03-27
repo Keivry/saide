@@ -4,10 +4,10 @@ use {
     crate::{error::Result, scrcpy::codec_probe::EncoderProfileDatabase},
     adbshell::AdbShell,
     scrcpy_protocol::{
-        ScrcpyError,
         SCRCPY_SERVER_CLASS_NAME,
         SCRCPY_SERVER_PATH,
         SCRCPY_SERVER_VERSION,
+        ScrcpyError,
     },
     std::{path::Path, process::Child},
     tracing::{debug, info},

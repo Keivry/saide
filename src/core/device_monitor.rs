@@ -182,11 +182,7 @@ impl DeviceMonitor {
     }
 }
 
-async fn run_adb_with_retry<T, F>(
-    token: CancellationToken,
-    shell: Arc<AdbShell>,
-    f: F,
-) -> Result<T>
+async fn run_adb_with_retry<T, F>(token: CancellationToken, shell: Arc<AdbShell>, f: F) -> Result<T>
 where
     T: Send + 'static,
     F: Fn(&AdbShell) -> adbshell::AdbResult<T> + Send + Sync + 'static,

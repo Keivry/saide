@@ -4,17 +4,17 @@ use {
     crate::{
         constant,
         decoder::{
-            extract_resolution_from_stream,
             AutoDecoder,
             DecoderPreference as AppDecoderPreference,
             VideoDecoder,
+            extract_resolution_from_stream,
         },
         error::Result,
         scrcpy::codec_probe::{
-            probe_device as scrcpy_probe_device,
             DecoderPreference,
             DecoderProbe,
             ProbeStep,
+            probe_device as scrcpy_probe_device,
         },
     },
     adbshell::AdbShell,

@@ -395,7 +395,9 @@ fn find_available_port(bind_address: &str) -> Result<TcpListener> {
 }
 
 fn setup_reverse_tunnel(shell: &AdbShell, socket_name: &str, local_port: u16) -> Result<()> {
-    shell.setup_reverse_tunnel(socket_name, local_port).map_err(Into::into)
+    shell
+        .setup_reverse_tunnel(socket_name, local_port)
+        .map_err(Into::into)
 }
 
 fn remove_reverse_tunnel(shell: &AdbShell, socket_name: &str) -> Result<()> {

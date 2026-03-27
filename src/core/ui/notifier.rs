@@ -116,6 +116,6 @@ impl Notifier {
             anchor_y += effective_height + TOAST_MARGIN;
         }
 
-        ui.ctx().request_repaint_after(Duration::from_millis(16));
+        ui.request_repaint_after(Duration::from_millis(16));
     }
 }
