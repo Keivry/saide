@@ -115,9 +115,9 @@ dependencies = [
 
 [[package]]
 name = "adbshell"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff0c50e28380bc085463ee70339c547cc0b33fc96bd378fd56df268bd247a78f"
+checksum = "b2dc9a96904750338a0bae1f61e1b93434264f7006b103902b99b23839c4cfd1"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
