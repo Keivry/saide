@@ -1571,7 +1571,7 @@ impl SAideApp {
 
     pub fn toolbar_width() -> f32 { Toolbar::width() }
 
-    pub(super) fn on_exit_inner(&mut self, _gl: Option<&eframe::glow::Context>) {
+    pub(super) fn on_exit_inner(&mut self) {
         debug!("SAideApp exiting, cancelling background tasks");
 
         if let Some(handle) = self.recorder.take() {

@@ -18,7 +18,7 @@ use {
         tf,
     },
     tracing::{info, warn},
-    tracing_subscriber::{EnvFilter, fmt, prelude::*},
+    tracing_subscriber::{fmt, prelude::*, EnvFilter},
 };
 
 const WGPU_LOG_LEVEL: &str = "error";
@@ -140,12 +140,10 @@ fn start_ui(
                 wgpu::PresentMode::AutoNoVsync
             },
 
-            wgpu_setup: egui_wgpu::WgpuSetup::from(egui_wgpu::WgpuSetupCreateNew {
-                instance_descriptor: wgpu::InstanceDescriptor {
-                    backends: (&config.gpu.backend).into(),
-                    ..Default::default()
-                },
-                ..Default::default()
+            wgpu_setup: egui_wgpu::WgpuSetup::from({
+                let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+                setup.instance_descriptor.backends = (&config.gpu.backend).into();
+                setup
             }),
 
             desired_maximum_frame_latency: Some(1),

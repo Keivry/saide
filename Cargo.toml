@@ -59,8 +59,8 @@ path = "examples/test_vulkan_import.rs"
 
 
 [dependencies]
-eframe = { version = "0.33", features = ["wgpu"] }
-egui = { version = "0.33", features = ["serde"] }
+eframe = { version = "0.34", features = ["wgpu"] }
+egui = { version = "0.34", features = ["serde"] }
 
 crossbeam-channel = "0.5"
 
@@ -117,19 +117,19 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 scrcpy-protocol = "0.1"
 adbshell = "0.2"
 
-egui-cjk-font = "0.1"
+egui-cjk-font = { path = "../egui-cjk-font" }
 egui-event = { version = "0.5", features = ["macros"] }
 egui-command = "0.2"
-egui-command-binding = "0.2"
+egui-command-binding = { path = "../egui-command-binding" }
 
 notify = "8.2"
 rfd = "0.17"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-wgpu = { version = "27", features = ["vulkan"] }
+wgpu = { version = "29", features = ["vulkan"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { version = "27", features = ["dx12"] }
+wgpu = { version = "29", features = ["dx12"] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Com",
@@ -137,7 +137,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-wgpu = { version = "27", features = ["metal"] }
+wgpu = { version = "29", features = ["metal"] }
 core-foundation = "0.10"
 core-graphics = "0.25"
 

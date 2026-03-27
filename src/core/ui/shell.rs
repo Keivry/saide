@@ -42,7 +42,7 @@ impl AppShell {
 }
 
 impl eframe::App for AppShell {
-    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) { self.state.on_exit_inner(gl); }
+    fn on_exit(&mut self) { self.state.on_exit_inner(); }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.event_registry.update();
@@ -50,4 +50,6 @@ impl eframe::App for AppShell {
             .dispatch(&mut self.state, &self.event_registry);
         self.state.draw(ctx, frame, &mut self.event_registry);
     }
+
+    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
 }
