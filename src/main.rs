@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Disable console window on Windows in release builds
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 use {
     adbshell::AdbShell,
     crossbeam_channel::Receiver,
