@@ -72,7 +72,7 @@ impl Notifier {
         toasts.push_back(Toast::new(message));
     }
 
-    pub fn draw(&self, ctx: &egui::Context, screen_rect: egui::Rect) {
+    pub fn draw(&self, ui: &egui::Ui, screen_rect: egui::Rect) {
         let mut toasts = self.toasts.borrow_mut();
         toasts.retain(|t| !t.is_expired());
 
@@ -90,7 +90,7 @@ impl Notifier {
             let response = egui::Area::new(Id::new("toast").with(toast.id))
                 .fixed_pos(egui::pos2(anchor_x - TOAST_WIDTH, anchor_y))
                 .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
+                .show(ui.ctx(), |ui| {
                     egui::Frame::NONE
                         .fill(Color32::from_rgba_unmultiplied(30, 30, 30, alpha))
                         .corner_radius(CornerRadius::same(6))
@@ -116,6 +116,6 @@ impl Notifier {
             anchor_y += effective_height + TOAST_MARGIN;
         }
 
-        ctx.request_repaint_after(Duration::from_millis(16));
+        ui.ctx().request_repaint_after(Duration::from_millis(16));
     }
 }

@@ -128,7 +128,7 @@ impl AppColors {
         let use_dark = match theme_mode {
             ThemeMode::Dark => true,
             ThemeMode::Light => false,
-            ThemeMode::Auto => ctx.style().visuals.dark_mode,
+            ThemeMode::Auto => ctx.global_style().visuals.dark_mode,
         };
 
         if use_dark {

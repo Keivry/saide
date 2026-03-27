@@ -302,7 +302,7 @@ impl SAideApp {
     }
 
     /// Check initialization progress and update state
-    fn check_init_stage(&mut self, _ctx: &egui::Context) {
+    fn check_init_stage(&mut self) {
         if let Some(rx) = &self.init_rx {
             while let Ok(result) = rx.try_recv() {
                 match result {
@@ -415,7 +415,7 @@ impl SAideApp {
 
     /// Resize the application window to match video dimensions
     /// Intelligently scales down when video exceeds screen bounds
-    fn resize(&mut self, ctx: &egui::Context) {
+    fn resize(&mut self, ui: &egui::Ui) {
         let (video_w, video_h) = self.player.video_dimensions();
 
         if video_w == 0 || video_h == 0 {
@@ -426,7 +426,7 @@ impl SAideApp {
         let smart_resize = config.general.smart_window_resize;
 
         let (window_w, window_h) = if smart_resize {
-            let screen_rect = ctx.input(|i| i.viewport().monitor_size);
+            let screen_rect = ui.input(|i| i.viewport().monitor_size);
 
             if let Some(monitor_size) = screen_rect {
                 let screen_w = monitor_size.x;
@@ -445,7 +445,7 @@ impl SAideApp {
             window_w, window_h, video_w, video_h, smart_resize
         );
 
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             window_w as f32 + self.toolbar_layout_width(),
             window_h as f32,
         )));
@@ -487,16 +487,16 @@ impl SAideApp {
         }
     }
 
-    fn process_pending_ui_effects(&mut self, ctx: &egui::Context) -> bool {
+    fn process_pending_ui_effects(&mut self, ui: &egui::Ui) -> bool {
         let mut should_close = false;
         let effects: Vec<UiEffect> = self.pending_ui_effects.drain(..).collect();
         for effect in effects {
             match effect {
-                UiEffect::RequestRepaint => ctx.request_repaint(),
-                UiEffect::Resize => self.resize(ctx),
+                UiEffect::RequestRepaint => ui.ctx().request_repaint(),
+                UiEffect::Resize => self.resize(ui),
                 UiEffect::Close => {
                     should_close = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
         }
@@ -533,7 +533,7 @@ impl SAideApp {
     }
 
     /// Process device monitor events
-    fn process_device_monitor_events(&mut self, ctx: &egui::Context) {
+    fn process_device_monitor_events(&mut self, ui: &egui::Ui) {
         if self.init_state != InitState::Ready {
             debug!("Skipping device monitor processing - not initialized");
             return;
@@ -577,7 +577,7 @@ impl SAideApp {
                 self.app_state.display_rotation()
             );
 
-            self.apply_auto_rotation(ctx);
+            self.apply_auto_rotation(ui);
             self.refresh_mapping_profiles();
         }
     }
@@ -593,7 +593,7 @@ impl SAideApp {
     /// mode, the encoded frame orientation is affected by both the capture lock and the
     /// display rotation, so the player must compensate their combined rotation instead
     /// of treating them as two absolute orientations to subtract.
-    fn apply_auto_rotation(&mut self, ctx: &egui::Context) {
+    fn apply_auto_rotation(&mut self, ui: &egui::Ui) {
         if let Some(capture_orient) = self.app_state.scrcpy_coords().capture_orientation {
             let display_rotation = self.app_state.display_rotation();
 
@@ -605,7 +605,7 @@ impl SAideApp {
                 .visual_coords_mut()
                 .update_rotation(target_rotation);
 
-            self.resize(ctx);
+            self.resize(ui);
             self.indicator
                 .update_video_resolution(self.player.video_dimensions());
 
@@ -890,7 +890,7 @@ impl SAideApp {
     }
 
     /// Process input events for mouse and keyboard
-    fn process_input_events(&mut self, ctx: &egui::Context) {
+    fn process_input_events(&mut self, ui: &egui::Ui) {
         if self.init_state != InitState::Ready {
             trace!("Skipping input processing - not initialized");
             return;
@@ -909,10 +909,10 @@ impl SAideApp {
             error!("Failed to update mouse mapper: {}", e);
         }
 
-        let floating_toolbar_rect = self.visible_floating_toolbar_rect(ctx.content_rect());
+        let floating_toolbar_rect = self.visible_floating_toolbar_rect(ui.ctx().content_rect());
         let skip_pointer_events = std::mem::take(&mut self.ui_state.pending_toggle_float);
 
-        ctx.input(|input| {
+        ui.input(|input| {
             // Flag to ignore text events if egui::Event::Key was processed
             let mut ignore_text_events = false;
 
@@ -1011,7 +1011,7 @@ impl SAideApp {
 
     fn schedule_streaming_repaint(
         &self,
-        ctx: &egui::Context,
+        ui: &egui::Ui,
         received_new_frame: bool,
         saw_input_event: bool,
     ) {
@@ -1024,8 +1024,8 @@ impl SAideApp {
         };
 
         match limiter {
-            Some(duration) => ctx.request_repaint_after(duration),
-            None => ctx.request_repaint(),
+            Some(duration) => ui.ctx().request_repaint_after(duration),
+            None => ui.ctx().request_repaint(),
         }
     }
 
@@ -1257,19 +1257,19 @@ impl SAideApp {
         }
     }
 
-    fn update_floating_toolbar_visibility(&mut self, ctx: &egui::Context) {
+    fn update_floating_toolbar_visibility(&mut self, ui: &egui::Ui) {
         if self.toolbar_mode().is_docked() {
             self.ui_state.set_floating_toolbar_visible(false);
             return;
         }
 
-        let content_rect = ctx.content_rect();
+        let content_rect = ui.ctx().content_rect();
         let reveal_width = if self.ui_state.floating_toolbar_visible() {
             Toolbar::width() + FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH
         } else {
             FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH
         };
-        let should_show = ctx.input(|input| {
+        let should_show = ui.input(|input| {
             input.pointer.hover_pos().is_some_and(|pos| {
                 pos.x <= content_rect.left() + reveal_width
                     && pos.y >= content_rect.top()
@@ -1279,20 +1279,20 @@ impl SAideApp {
 
         if should_show != self.ui_state.floating_toolbar_visible() {
             self.ui_state.set_floating_toolbar_visible(should_show);
-            ctx.request_repaint();
+            ui.ctx().request_repaint();
         }
     }
 
-    fn draw_docked_toolbar(&mut self, ctx: &egui::Context, registry: &mut EventRegistry) {
+    fn draw_docked_toolbar(&mut self, ui: &mut egui::Ui, registry: &mut EventRegistry) {
         let toolbar_enabled = self.init_state == InitState::Ready;
         let toolbar_state = self.toolbar_view_state();
 
-        let colors = AppColors::from_context(ctx);
-        let event = egui::SidePanel::left("Toolbar")
+        let colors = AppColors::from_context(ui.ctx());
+        let event = egui::Panel::left("Toolbar")
             .frame(egui::Frame::NONE.fill(colors.toolbar_bg))
             .resizable(false)
-            .exact_width(Toolbar::width())
-            .show(ctx, |ui| {
+            .exact_size(Toolbar::width())
+            .show_inside(ui, |ui| {
                 ui.add_enabled_ui(toolbar_enabled, |ui| self.toolbar.draw(ui, toolbar_state))
                     .inner
             })
@@ -1302,7 +1302,7 @@ impl SAideApp {
         }
     }
 
-    fn draw_floating_toolbar(&mut self, ctx: &egui::Context, registry: &mut EventRegistry) {
+    fn draw_floating_toolbar(&mut self, ui: &egui::Ui, registry: &mut EventRegistry) {
         if !self.ui_state.floating_toolbar_visible() {
             return;
         }
@@ -1310,8 +1310,8 @@ impl SAideApp {
         let toolbar_enabled = self.init_state == InitState::Ready;
         let toolbar_state = self.toolbar_view_state();
 
-        let colors = AppColors::from_context(ctx);
-        let content_rect = ctx.content_rect();
+        let colors = AppColors::from_context(ui.ctx());
+        let content_rect = ui.ctx().content_rect();
         let toolbar_rect = self
             .visible_floating_toolbar_rect(content_rect)
             .unwrap_or_else(|| {
@@ -1326,7 +1326,7 @@ impl SAideApp {
         let event = egui::Area::new(egui::Id::new("floating_toolbar"))
             .order(egui::Order::Foreground)
             .fixed_pos(toolbar_rect.left_top())
-            .show(ctx, |ui| {
+            .show(ui.ctx(), |ui| {
                 egui::Frame::NONE.fill(colors.toolbar_bg).show(ui, |ui| {
                     ui.set_min_size(toolbar_rect.size());
                     ui.add_enabled_ui(toolbar_enabled, |ui| self.toolbar.draw(ui, toolbar_state))
@@ -1340,16 +1340,16 @@ impl SAideApp {
         }
     }
 
-    fn draw_toolbar(&mut self, ctx: &egui::Context, registry: &mut EventRegistry) {
+    fn draw_toolbar(&mut self, ui: &mut egui::Ui, registry: &mut EventRegistry) {
         if self.toolbar_mode().is_floating() {
-            self.draw_floating_toolbar(ctx, registry);
+            self.draw_floating_toolbar(ui, registry);
         } else {
-            self.draw_docked_toolbar(ctx, registry);
+            self.draw_docked_toolbar(ui, registry);
         }
     }
 
     /// Draw indicator overlay on video
-    fn draw_indicator(&mut self, ctx: &egui::Context) {
+    fn draw_indicator(&mut self, ui: &egui::Ui) {
         let video_rect = self.player.video_rect();
 
         // Only draw indicator if video rect is valid (has positive dimensions)
@@ -1357,12 +1357,12 @@ impl SAideApp {
             egui::Area::new(egui::Id::new("indicator"))
                 .fixed_pos(egui::pos2(0.0, 0.0))
                 .interactable(false)
-                .show(ctx, |ui| self.indicator.draw_indicator(ui, video_rect));
+                .show(ui.ctx(), |ui| self.indicator.draw_indicator(ui, video_rect));
         }
     }
 
     /// Draw mapping visualization overlay on video
-    fn draw_mapping_overlay(&mut self, ctx: &egui::Context) {
+    fn draw_mapping_overlay(&mut self, ui: &egui::Ui) {
         if !self.ui_state.mapping_visualization_enabled() {
             return;
         }
@@ -1380,7 +1380,7 @@ impl SAideApp {
         egui::Area::new(egui::Id::new("mapping_overlay"))
             .fixed_pos(video_rect.min)
             .interactable(false)
-            .show(ctx, |ui| {
+            .show(ui.ctx(), |ui| {
                 let painter = ui.painter();
 
                 for (key, action) in profile.read().iter() {
@@ -1405,7 +1405,7 @@ impl SAideApp {
                         );
 
                         let key_text = format!("{:?}", key);
-                        let colors = AppColors::from_context(ctx);
+                        let colors = AppColors::from_context(ui.ctx());
 
                         painter.circle_filled(screen_pos, 12.0, colors.mapping_overlay_fill);
 
@@ -1549,12 +1549,12 @@ impl SAideApp {
     }
 
     /// Draw dialog, and close it if requested by the dialog state
-    pub fn draw_dialog(&mut self, ctx: &egui::Context) -> DialogState {
+    pub fn draw_dialog(&mut self, ui: &egui::Ui) -> DialogState {
         let Some(dialog) = &mut self.dialog else {
             return DialogState::None;
         };
 
-        let state = dialog.draw(ctx);
+        let state = dialog.draw(ui.ctx());
         if state.is_closed() {
             self.dialog.take();
         }
@@ -1584,13 +1584,14 @@ impl SAideApp {
 
     pub(super) fn draw(
         &mut self,
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         _frame: &mut eframe::Frame,
         registry: &mut EventRegistry,
     ) {
+        let ctx = ui.ctx().clone();
         let mut received_new_frame = false;
 
-        self.update_floating_toolbar_visibility(ctx);
+        self.update_floating_toolbar_visibility(ui);
         self.poll_capture_events();
 
         if !self.shutdown_requested && self.shutdown_rx.try_recv().is_ok() {
@@ -1600,11 +1601,11 @@ impl SAideApp {
 
         if self.shutdown_requested {
             self.pending_ui_effects.push(UiEffect::Close);
-            let _ = self.process_pending_ui_effects(ctx);
+            let _ = self.process_pending_ui_effects(ui);
             return;
         }
 
-        self.draw_toolbar(ctx, registry);
+        self.draw_toolbar(ui, registry);
 
         if !self.startup_warnings.is_empty() {
             let warnings: Vec<String> = self.startup_warnings.drain(..).collect();
@@ -1646,13 +1647,13 @@ impl SAideApp {
                     }
                 }
 
-                self.draw_probe_codec_progress(ctx);
-                ctx.request_repaint();
+                self.draw_probe_codec_progress(ui);
+                ui.ctx().request_repaint();
             }
             InitState::InProgress => {
                 received_new_frame = self.player.update();
-                self.check_init_stage(ctx);
-                ctx.request_repaint();
+                self.check_init_stage();
+                ui.ctx().request_repaint();
             }
             InitState::Ready => {
                 let old_dimensions = if self.ui_state.is_ui_initialized() {
@@ -1671,7 +1672,7 @@ impl SAideApp {
                         old_dimensions, new_dimensions
                     );
 
-                    self.resize(ctx);
+                    self.resize(ui);
                     self.indicator.update_video_resolution(new_dimensions);
 
                     self.app_state
@@ -1713,16 +1714,16 @@ impl SAideApp {
                     .as_ref()
                     .filter(|_| self.dialog.is_none())
                     .map(|_| &*MAPPING_EDITOR_SHORTCUTS);
-                let commands = SHORTCUT_MANAGER.dispatch_raw_with_extra(ctx, editor_scope);
+                let commands = SHORTCUT_MANAGER.dispatch_raw_with_extra(&ctx, editor_scope);
                 for cmd in commands {
                     registry.send(cmd);
                 }
 
                 if self.dialog.is_none() {
-                    self.process_input_events(ctx);
+                    self.process_input_events(ui);
                 }
 
-                self.process_device_monitor_events(ctx);
+                self.process_device_monitor_events(ui);
             }
             InitState::Failed(ref reason) => {
                 let reason = reason.clone();
@@ -1734,7 +1735,7 @@ impl SAideApp {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 self.player.draw(ui);
 
                 if self.init_state == InitState::Ready {
@@ -1746,24 +1747,24 @@ impl SAideApp {
             self.handle_editor_request(editor_request);
         }
 
-        let dialog_result = self.draw_dialog(ctx);
+        let dialog_result = self.draw_dialog(ui);
         self.apply_dialog_result(dialog_result);
 
         if self.init_state == InitState::Ready && self.config().general.indicator {
             self.indicator.update_video_stats(self.player.video_stats());
-            self.draw_indicator(ctx);
+            self.draw_indicator(ui);
         }
 
         if self.init_state == InitState::Ready {
-            self.draw_mapping_overlay(ctx);
+            self.draw_mapping_overlay(ui);
         }
 
         if let Some(warning) = self.ui_state.audio_warning.clone() {
-            let colors = AppColors::from_context(ctx);
+            let colors = AppColors::from_context(ui.ctx());
             let mut close_clicked = false;
             egui::Area::new(egui::Id::new("audio_warning"))
                 .fixed_pos(egui::pos2(self.audio_warning_offset_x(), 10.0))
-                .show(ctx, |ui| {
+                .show(ui.ctx(), |ui| {
                     egui::Frame::new()
                         .fill(colors.audio_warning_bg)
                         .corner_radius(5.0)
@@ -1797,16 +1798,16 @@ impl SAideApp {
             }
         }
 
-        self.notifier.draw(ctx, ctx.content_rect());
+        self.notifier.draw(ui, ctx.content_rect());
 
-        let should_close = self.process_pending_ui_effects(ctx);
+        let should_close = self.process_pending_ui_effects(ui);
         if should_close {
             return;
         }
 
         if matches!(self.player.state(), PlayerState::Streaming) {
-            let saw_input_event = ctx.input(|input| !input.events.is_empty());
-            self.schedule_streaming_repaint(ctx, received_new_frame, saw_input_event);
+            let saw_input_event = ui.input(|input| !input.events.is_empty());
+            self.schedule_streaming_repaint(ui, received_new_frame, saw_input_event);
         }
     }
 }

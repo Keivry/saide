@@ -189,7 +189,7 @@ impl SAideApp {
         }
     }
 
-    pub(super) fn draw_probe_codec_progress(&self, ctx: &egui::Context) {
+    pub(super) fn draw_probe_codec_progress(&self, ui: &egui::Ui) {
         let step_text = match &self.probe_current_step {
             None | Some(ProbeStep::DetectingDevice) => {
                 t!("probe-codec-step-detecting-device")
@@ -240,7 +240,7 @@ impl SAideApp {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
+            .show(ui.ctx(), |ui| {
                 ui.set_min_width(320.0);
                 ui.add_space(8.0);
                 ui.label(step_text);

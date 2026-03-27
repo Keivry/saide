@@ -44,12 +44,10 @@ impl AppShell {
 impl eframe::App for AppShell {
     fn on_exit(&mut self) { self.state.on_exit_inner(); }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.event_registry.update();
         self.dispatcher
             .dispatch(&mut self.state, &self.event_registry);
-        self.state.draw(ctx, frame, &mut self.event_registry);
+        self.state.draw(ui, frame, &mut self.event_registry);
     }
-
-    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
 }
