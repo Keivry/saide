@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 反检测行为配置示例
+# 此文件展示 [behavior] 节的所有可用字段，使用 balanced（均衡）预设值。
+# 将以下内容复制到 config.toml 中即可启用反检测行为模拟。
+
+[behavior]
+# 预设名称：conservative（保守）/ balanced（均衡，默认）/ aggressive（激进）
+# 预设决定未显式指定字段的默认值
+preset = "balanced"
+
+# 全局开关：true 启用反检测，false 则完全关闭（使用原始 convenience 方法）
+enabled = true
+
+# 坐标抖动幅度（屏幕尺寸百分比，范围 0.0-0.10）
+# 每次点击/滑动会对坐标施加随机偏移，使输入轨迹更自然
+position_jitter = 0.03
+
+# 抖动权重策略：uniform（均匀分布）/ center（中心加权，高斯分布）
+jitter_weighting = "uniform"
+
+# --- 操作间延迟（连续两次操作之间的停顿） ---
+# 是否启用操作间延迟
+inter_action_delay_enabled = true
+
+# 延迟分布类型：uniform（均匀）/ gaussian（高斯）
+delay_distribution = "gaussian"
+
+# 延迟均值（毫秒）
+delay_mean_ms = 80
+
+# 延迟标准差
+delay_stddev_ms = 40.0
+
+# 延迟最小值（毫秒）
+delay_min_ms = 20
+
+# 延迟最大值（毫秒）
+delay_max_ms = 200
+
+# --- 动作内延迟（TouchDown 与 TouchUp 之间的间隔，模拟真实按压时长） ---
+# 是否启用动作内延迟
+intra_action_delay_enabled = true
+
+# Tap 内延迟均值（毫秒）
+tap_downup_delay_mean_ms = 80
+
+# Tap 内延迟标准差
+tap_downup_delay_stddev_ms = 30.0
+
+# --- 路径模拟（滑动时插入中间点，模拟人类非直线路径） ---
+# 是否启用路径模拟
+path_simulation_enabled = true
+
+# 路径采样点数量（贝塞尔曲线控制点数量）
+path_points = 6
+
+# 每步像素数（路径插值步长）
+path_step_px = 8.0
+
+# 控制点偏移比例（0.0-1.0，决定曲线弯曲程度）
+control_offset = 0.2
+
+# 滑动持续时间最小值（毫秒）
+swipe_duration_min_ms = 100
+
+# 滑动持续时间最大值（毫秒）
+swipe_duration_max_ms = 400
+
+# --- 文本键入（逐字输入，模拟真实打字节奏） ---
+# 是否启用逐字键入
+char_by_char_enabled = true
+
+# 字符间延迟均值（毫秒）
+char_delay_mean_ms = 50
+
+# 字符间延迟标准差
+char_delay_stddev_ms = 25.0
+
+# --- 停滞检测（检测输入流是否过于规律） ---
+# 是否启用停滞检测
+stall_detection_enabled = true
+
+# 停滞阈值（连续相同帧数触发警告）
+stall_threshold = 10
+
+# --- 速率限制（防止操作过于频繁） ---
+# 是否启用速率限制
+rate_limit_enabled = true
+
+# 每秒最大操作数
+rate_limit_ops_per_sec = 10
+
+# 突发允许量（短时间内允许的超额操作数）
+rate_limit_burst = 3
+
+# --- 触摸压力（随机化触摸压力值） ---
+# 是否启用触摸压力随机化
+touch_pressure_enabled = true
+
+# 压力均值（范围 0.0-1.0）
+touch_pressure_mean = 0.7
+
+# 压力标准差
+touch_pressure_stddev = 0.15
+
+# 压力最小值
+touch_pressure_min = 0.3
+
+# 压力最大值
+touch_pressure_max = 1.0
+
+# --- pointer_id 交替（在不同操作间切换 pointer_id，避免固定 ID 被追踪） ---
+# 是否启用 pointer_id 交替
+pointer_id_alternation_enabled = true
+
+# --- 微抖动（滑动过程中叠加微小高频抖动，模拟手指自然颤抖） ---
+# 是否启用微抖动
+micro_tremor_enabled = true
+
+# 微抖动频率（Hz）
+micro_tremor_frequency_hz = 10.0
+
+# 最小振幅（像素）
+micro_tremor_amplitude_min = 0.5
+
+# 最大振幅（像素）
+micro_tremor_amplitude_max = 1.5
+
+# --- 多指间距（双指操作时间距随机化） ---
+# 是否启用多指间距抖动
+pinch_jitter_enabled = true
+
+# --- 会话节奏（模拟人类使用中的活跃/停顿周期） ---
+# 是否启用会话节奏管理
+session_rhythm_enabled = true
+
+# 活跃度更新周期范围（秒，最小值, 最大值）
+cycle_duration_sec_range = [300.0, 900.0]
+
+# 停顿间隔范围（秒，最小值, 最大值）
+pause_interval_sec_range = [300.0, 900.0]
+
+# 停顿时长范围（秒，最小值, 最大值）
+pause_duration_sec_range = [2.0, 10.0]
+
+# 空闲阈值（秒，超过此时间无输入则视为空闲）
+idle_threshold_sec = 2.0
