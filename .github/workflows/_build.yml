@@ -214,6 +214,7 @@ jobs:
         run: cargo build --release --target ${{ inputs.target }}
 
       - name: Verify binary
+        shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
             dir "target/${{ inputs.target }}/release/${{ inputs.binary_name }}"
