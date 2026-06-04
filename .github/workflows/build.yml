@@ -55,14 +55,20 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          api-level: 34
+          cmdline-tools-version: 12266719
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14'
 
       - name: Build scrcpy-server from source
+        working-directory: scrcpy-server
         run: |
           set -euo pipefail
-          cd scrcpy-server
-          chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon --console=plain 2>&1
+          gradle assembleRelease --no-daemon --console=plain 2>&1
           BUILT_JAR="build/outputs/apk/release/scrcpy-server-release-unsigned.apk"
           if [ ! -f "$BUILT_JAR" ]; then
             echo "ERROR: scrcpy-server jar not found at $BUILT_JAR" >&2
