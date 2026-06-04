@@ -104,6 +104,42 @@ jobs:
           sudo make install
           printf 'PKG_CONFIG_PATH=%s/lib/pkgconfig\n' "$FFMPEG_PREFIX" >> "$GITHUB_ENV"
 
+      - name: Set up vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_DEFAULT_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_TARGET_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_OVERLAY_TRIPLETS=$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKGRS_DYNAMIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install Windows pkg-config
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y pkgconfiglite
+          "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Install CUDA toolkit (Windows)
+        if: runner.os == 'Windows'
+        uses: MZWNET/cuda-toolkit@master
+        with:
+          cuda: "13.2.0"
+          method: network
+
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install --overlay-triplets "$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" "ffmpeg[nvcodec]:x64-windows-release" "opus:x64-windows-release"
+          "VCPKG_INSTALLED_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "FFMPEG_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PKG_CONFIG_PATH=$env:VCPKG_ROOT\installed\x64-windows-release\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$env:VCPKG_ROOT\installed\x64-windows-release\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          if ($env:CUDA_PATH) {
+            "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
       - name: Cache Rust build artifacts
         uses: actions/cache@v5
         with:
