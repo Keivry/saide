@@ -16,7 +16,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: saide
 
 jobs:
   changelog:
@@ -43,7 +42,7 @@ jobs:
             tag="${GITHUB_REF_NAME}"
           fi
           if [[ ! "$tag" =~ ^v[0-9].* ]]; then
-            printf 'Release tag must match v* and start with a digit after v: %s\n' "$tag" >&2
+            printf 'Release tag must match v*: %s\n' "$tag" >&2
             exit 1
           fi
           printf 'release_tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
@@ -55,24 +54,15 @@ jobs:
 
       - name: Check out existing release tag
         if: github.event_name == 'workflow_dispatch' && steps.meta.outputs.tag_exists == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git checkout "refs/tags/${{ steps.meta.outputs.release_tag }}"
+        run: git checkout "refs/tags/${{ steps.meta.outputs.release_tag }}"
 
       - name: Create local tag for changelog generation
         if: github.event_name == 'workflow_dispatch' && steps.meta.outputs.tag_exists == 'false'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git tag "${{ steps.meta.outputs.release_tag }}" "$GITHUB_SHA"
+        run: git tag "${{ steps.meta.outputs.release_tag }}" "$GITHUB_SHA"
 
       - name: Resolve release commit
         id: release
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf 'release_commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: printf 'release_commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         id: cliff
@@ -82,10 +72,7 @@ jobs:
           args: --current --tag ${{ steps.meta.outputs.release_tag }} --strip all
 
       - name: Persist generated changelog
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp "${{ steps.cliff.outputs.changelog }}" release-notes.md
+        run: cp "${{ steps.cliff.outputs.changelog }}" release-notes.md
 
       - name: Upload changelog artifact
         uses: actions/upload-artifact@v7
@@ -94,7 +81,7 @@ jobs:
           path: release-notes.md
 
   build-linux:
-    name: Build Linux
+    name: Build + Package Linux
     needs: changelog
     uses: ./.github/workflows/_build.yml
     with:
@@ -102,131 +89,31 @@ jobs:
       runner: ubuntu-latest
       binary_name: saide
       extra_runtime_lib_dirs: /opt/ffmpeg8/lib
+      package: true
+      archive_basename: saide-${{ needs.changelog.outputs.release_tag }}-linux-glibc-x64
+      package_dir_name: saide-${{ needs.changelog.outputs.release_tag }}-linux-glibc-x64
+      archive_format: tar.gz
+      artifact_name: linux-glibc-x64
 
   build-windows:
-    name: Build Windows
+    name: Build + Package Windows
     needs: changelog
-    runs-on: windows-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.changelog.outputs.tag_exists == 'true' && format('refs/tags/{0}', needs.changelog.outputs.release_tag) || needs.changelog.outputs.release_commit }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Set up vcpkg
-        run: |
-          git clone --depth 1 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
-          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
-          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VCPKG_DEFAULT_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VCPKG_TARGET_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VCPKG_OVERLAY_TRIPLETS=$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VCPKGRS_DYNAMIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Install Windows pkg-config fallback
-        run: |
-          choco install -y pkgconfiglite
-          "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-
-      - name: Install CUDA toolkit
-        uses: MZWNET/cuda-toolkit@master
-        with:
-          cuda: "13.2.0"
-          method: network
-
-      - name: Install Windows build dependencies
-        run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install --overlay-triplets "$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" "ffmpeg[nvcodec]:x64-windows-release" "opus:x64-windows-release"
-          "VCPKG_INSTALLED_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "FFMPEG_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "PKG_CONFIG_PATH=$env:VCPKG_ROOT\installed\x64-windows-release\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$env:VCPKG_ROOT\installed\x64-windows-release\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          if ($env:CUDA_PATH) {
-            "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
-          }
-
-      - name: Cache Rust build artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-
-
-      - name: Build release binary
-        run: cargo build --release --target x86_64-pc-windows-msvc
-
-      - name: Package release archive
-        env:
-          BINARY_PATH: target/x86_64-pc-windows-msvc/release/saide.exe
-          ARCHIVE_BASENAME: saide-${{ needs.changelog.outputs.release_tag }}-windows-x64
-          PACKAGE_DIR_NAME: saide-${{ needs.changelog.outputs.release_tag }}-windows-x64
-          ARCHIVE_FORMAT: zip
-          EXTRA_RUNTIME_LIB_DIRS: ""
-        shell: bash
-        run: |
-          chmod +x scripts/package-release.sh 2>/dev/null || true
-          scripts/package-release.sh
-
-      - name: Upload packaged artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-x64
-          path: dist/saide-${{ needs.changelog.outputs.release_tag }}-windows-x64.zip
-
-  package-linux:
-    name: Package + Upload Linux
-    needs:
-      - changelog
-      - build-linux
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.changelog.outputs.tag_exists == 'true' && format('refs/tags/{0}', needs.changelog.outputs.release_tag) || needs.changelog.outputs.release_commit }}
-
-      - name: Install packaging tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y patchelf tar zip
-
-      - name: Package release archive
-        env:
-          BINARY_PATH: target/x86_64-unknown-linux-gnu/release/saide
-          ARCHIVE_BASENAME: saide-${{ needs.changelog.outputs.release_tag }}-linux-glibc-x64
-          PACKAGE_DIR_NAME: saide-${{ needs.changelog.outputs.release_tag }}-linux-glibc-x64
-          ARCHIVE_FORMAT: tar.gz
-          EXTRA_RUNTIME_LIB_DIRS: /opt/ffmpeg8/lib
-        run: |
-          set -euo pipefail
-          chmod +x scripts/package-release.sh
-          scripts/package-release.sh
-
-      - name: Upload scrcpy-server JAR
-        uses: actions/upload-artifact@v7
-        with:
-          name: scrcpy-server
-          path: ${{ needs.build-linux.outputs.scrcpy-server-jar-path }}
-
-      - name: Upload packaged artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: linux-glibc-x64
-          path: dist/saide-${{ needs.changelog.outputs.release_tag }}-linux-glibc-x64.tar.gz
+    uses: ./.github/workflows/_build.yml
+    with:
+      target: x86_64-pc-windows-msvc
+      runner: windows-latest
+      binary_name: saide.exe
+      package: true
+      archive_basename: saide-${{ needs.changelog.outputs.release_tag }}-windows-x64
+      package_dir_name: saide-${{ needs.changelog.outputs.release_tag }}-windows-x64
+      archive_format: zip
+      artifact_name: windows-x64
 
   publish:
     name: Publish GitHub release
     needs:
       - changelog
-      - package-linux
+      - build-linux
       - build-windows
     runs-on: ubuntu-latest
     steps:
@@ -236,7 +123,6 @@ jobs:
           path: artifacts
 
       - name: Collect release files
-        shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-assets
