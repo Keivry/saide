@@ -30,12 +30,21 @@ jobs:
         run: cargo fmt --all -- --check
 
   build-linux:
-    name: Build Linux (glibc x64)
-    runs-on: ubuntu-latest
+    name: Build + Check Linux
     needs: fmt
+    uses: ./.github/workflows/_build.yml
+    with:
+      target: x86_64-unknown-linux-gnu
+      runner: ubuntu-latest
+      binary_name: saide
+      extra_runtime_lib_dirs: /opt/ffmpeg8/lib
+
+  check-linux:
+    name: Clippy + Test Linux
+    needs: build-linux
+    runs-on: ubuntu-latest
     env:
       FFMPEG_PREFIX: /opt/ffmpeg8
-      FFMPEG_VERSION: "8.1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -43,88 +52,25 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
-          targets: x86_64-unknown-linux-gnu
           components: clippy
 
-      - name: Set up Java 17 for scrcpy-server build
-        uses: actions/setup-java@v5
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          cmdline-tools-version: 12266719
-          accept-android-sdk-licenses: true
-          log-accepted-android-sdk-licenses: false
-          packages: tools platform-tools platforms;android-36
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v5
-        with:
-          gradle-version: '8.14'
-
-      - name: Build scrcpy-server from source
-        working-directory: scrcpy-server
-        run: |
-          set -euo pipefail
-          gradle assembleRelease --no-daemon --console=plain 2>&1
-          BUILT_JAR="build/outputs/apk/release/scrcpy-server-release-unsigned.apk"
-          if [ ! -f "$BUILT_JAR" ]; then
-            echo "ERROR: scrcpy-server jar not found at $BUILT_JAR" >&2
-            exit 1
-          fi
-          echo "Built scrcpy-server v3.3.4 from source"
-
-      - name: Install Ubuntu build dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            curl \
-            libasound2-dev \
-            libdrm-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev \
-            libopus-dev \
-            libssl-dev \
-            libva-dev \
-            libvdpau-dev \
-            libvulkan-dev \
-            libwayland-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxcb-shm0-dev \
-            libxcb-xfixes0-dev \
-            libxcursor-dev \
-            libxi-dev \
-            libxkbcommon-dev \
-            libxrandr-dev \
-            nasm \
-            patchelf \
-            perl \
-            pkg-config \
-            tar \
-            xz-utils \
-            yasm
+            libasound2-dev libfontconfig1-dev libfreetype6-dev libssl-dev \
+            libvulkan-dev libwayland-dev libx11-dev libxcb1-dev libxcb-shm0-dev \
+            libxcb-xfixes0-dev libxcursor-dev libxi-dev libxkbcommon-dev libxrandr-dev pkg-config
 
       - name: Build FFmpeg 8 from source
         run: |
           set -euo pipefail
-          curl -L "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" -o "/tmp/ffmpeg-${FFMPEG_VERSION}.tar.xz"
-          rm -rf "/tmp/ffmpeg-${FFMPEG_VERSION}"
-          tar -xf "/tmp/ffmpeg-${FFMPEG_VERSION}.tar.xz" -C /tmp
-          cd "/tmp/ffmpeg-${FFMPEG_VERSION}"
-          ./configure \
-            --prefix="$FFMPEG_PREFIX" \
-            --enable-gpl \
-            --enable-pic \
-            --enable-shared \
-            --disable-static \
-            --disable-programs \
-            --disable-doc \
-            --disable-debug
+          curl -L "https://ffmpeg.org/releases/ffmpeg-8.1.tar.xz" -o /tmp/ffmpeg-8.1.tar.xz
+          rm -rf /tmp/ffmpeg-8.1
+          tar -xf /tmp/ffmpeg-8.1.tar.xz -C /tmp
+          cd /tmp/ffmpeg-8.1
+          ./configure --prefix="$FFMPEG_PREFIX" --enable-gpl --enable-pic \
+            --enable-shared --disable-static --disable-programs --disable-doc --disable-debug
           make -j"$(getconf _NPROCESSORS_ONLN)"
           sudo make install
           printf 'PKG_CONFIG_PATH=%s/lib/pkgconfig\n' "$FFMPEG_PREFIX" >> "$GITHUB_ENV"
@@ -148,20 +94,25 @@ jobs:
       - name: Run tests
         env:
           LD_LIBRARY_PATH: /opt/ffmpeg8/lib
-        run: cargo test --workspace -- --skip test_audio_player_creation --skip recorder_writes_audio_stream_to_mp4 --skip test_detect_gpu_linux
-
-      - name: Build release binary
-        run: cargo build --release --target x86_64-unknown-linux-gnu
-
-      - name: Verify binary
-        run: |
-          file target/x86_64-unknown-linux-gnu/release/saide
-          ldd target/x86_64-unknown-linux-gnu/release/saide || true
+        run: >-
+          cargo test --workspace --
+          --skip test_audio_player_creation
+          --skip recorder_writes_audio_stream_to_mp4
+          --skip test_detect_gpu_linux
 
   build-windows:
-    name: Build Windows (x64)
-    runs-on: windows-latest
+    name: Build Windows
     needs: fmt
+    uses: ./.github/workflows/_build.yml
+    with:
+      target: x86_64-pc-windows-msvc
+      runner: windows-latest
+      binary_name: saide.exe
+
+  check-windows:
+    name: Clippy + Test Windows
+    needs: build-windows
+    runs-on: windows-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -170,6 +121,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           targets: x86_64-pc-windows-msvc
+          components: clippy
 
       - name: Set up vcpkg
         run: |
@@ -210,12 +162,18 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Build release binary
-        run: cargo build --release --target x86_64-pc-windows-msvc
+      - name: Check compilation
+        run: cargo check --workspace
 
-      - name: Verify binary
-        run: |
-          dir target\x86_64-pc-windows-msvc\release\saide.exe
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run tests
+        run: >-
+          cargo test --workspace --
+          --skip test_audio_player_creation
+          --skip recorder_writes_audio_stream_to_mp4
+          --skip test_detect_gpu_linux
