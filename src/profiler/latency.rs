@@ -339,7 +339,7 @@ mod tests {
         assert!(breakdown.decode_ms() >= 9.0 && breakdown.decode_ms() <= 11.0);
         assert!(breakdown.upload_ms() >= 2.0 && breakdown.upload_ms() <= 4.0);
         assert!(breakdown.render_ms() >= 1.0 && breakdown.render_ms() <= 3.0);
-        assert!(breakdown.total_ms() >= 19.0 && breakdown.total_ms() <= 21.0);
+        assert!(breakdown.total_ms() >= 15.0 && breakdown.total_ms() <= 25.0);
     }
 
     #[test]

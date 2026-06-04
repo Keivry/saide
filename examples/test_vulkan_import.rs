@@ -32,6 +32,7 @@ async fn main() {
         std::process::exit(1);
     }
 
+    #[allow(unused_variables)]
     let (device, _queue) = adapter
         .request_device(&wgpu::DeviceDescriptor::default())
         .await
@@ -44,39 +45,37 @@ async fn main() {
         eprintln!("ERROR: External memory import only supported on Linux");
         std::process::exit(1);
     }
+    #[cfg(target_os = "linux")]
+    {
+        let hal_available = test_hal_access(&device);
 
-    println!("✅ Platform: Linux (DMA-BUF supported)\n");
+        if !hal_available {
+            eprintln!("❌ FAILED: Cannot access wgpu-hal Vulkan backend");
+            eprintln!("\nConclusion:");
+            eprintln!("  wgpu 0.27 does not expose stable hal API for external memory import.");
+            eprintln!("\nRecommended actions:");
+            eprintln!("  1. Wait for wgpu 0.28+ with stable external memory support");
+            eprintln!(
+                "  2. OR switch to ash (direct Vulkan bindings) - requires rewriting render pipeline"
+            );
+            eprintln!("  3. OR keep Phase 1 CPU path as acceptable solution (12-20ms overhead)");
+            std::process::exit(1);
+        }
 
-    println!("--- Step 1: Checking wgpu-hal API availability ---");
+        println!("✅ wgpu-hal access successful\n");
 
-    let hal_available = test_hal_access(&device);
+        println!("--- Step 2: Checking Vulkan extensions ---");
+        check_vulkan_extensions();
 
-    if !hal_available {
-        eprintln!("❌ FAILED: Cannot access wgpu-hal Vulkan backend");
-        eprintln!("\nConclusion:");
-        eprintln!("  wgpu 0.27 does not expose stable hal API for external memory import.");
-        eprintln!("\nRecommended actions:");
-        eprintln!("  1. Wait for wgpu 0.28+ with stable external memory support");
-        eprintln!(
-            "  2. OR switch to ash (direct Vulkan bindings) - requires rewriting render pipeline"
-        );
-        eprintln!("  3. OR keep Phase 1 CPU path as acceptable solution (12-20ms overhead)");
-        std::process::exit(1);
+        println!("\n=== Prototype Result ===");
+        println!("✅ wgpu-hal API is accessible");
+        println!("✅ Vulkan backend detected");
+        println!("\n⚠️  Next steps:");
+        println!("  1. Implement DMA-BUF texture import using hal API");
+        println!("  2. Test with real VAAPI decoded frames");
+        println!("  3. Measure latency improvement");
+        println!("\nPhase 2 implementation can proceed.");
     }
-
-    println!("✅ wgpu-hal access successful\n");
-
-    println!("--- Step 2: Checking Vulkan extensions ---");
-    check_vulkan_extensions();
-
-    println!("\n=== Prototype Result ===");
-    println!("✅ wgpu-hal API is accessible");
-    println!("✅ Vulkan backend detected");
-    println!("\n⚠️  Next steps:");
-    println!("  1. Implement DMA-BUF texture import using hal API");
-    println!("  2. Test with real VAAPI decoded frames");
-    println!("  3. Measure latency improvement");
-    println!("\nPhase 2 implementation can proceed.");
 }
 
 #[allow(unexpected_cfgs)]
