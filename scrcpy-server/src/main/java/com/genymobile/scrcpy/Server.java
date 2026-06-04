@@ -34,6 +34,8 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 
+import android.content.Context;
+
 // PATCH: anti-detection - imports for device monitoring listeners
 import android.hardware.SensorManager;
 import android.view.Gravity;
@@ -41,7 +43,6 @@ import android.view.OrientationEventListener;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.WindowManager;
-import android.content.Context;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import com.genymobile.scrcpy.control.DeviceMessage;
@@ -172,7 +173,7 @@ public final class Server {
             }
 
             // PATCH: anti-detection - register screen rotation and IME visibility listeners
-            OrientationEventListener orientationListener = new OrientationEventListener(ServiceManager.getServiceManager().getContext(), SensorManager.SENSOR_DELAY_NORMAL) {
+            OrientationEventListener orientationListener = new OrientationEventListener(FakeContext.get(), SensorManager.SENSOR_DELAY_NORMAL) {
                 @Override
                 public void onOrientationChanged(int orientation) {
                     try {
@@ -188,7 +189,7 @@ public final class Server {
                         }
                         DeviceMessageSender sender = controller.getSender();
                         if (sender != null) {
-                            sender.push(DeviceMessage.createRotationChanged(rotation));
+                            sender.send(DeviceMessage.createRotationChanged(rotation));
                         }
                     } catch (Exception e) {
                         // silently ignore
@@ -197,8 +198,8 @@ public final class Server {
             };
             orientationListener.enable();
 
-            WindowManager windowManager = (WindowManager) ServiceManager.getServiceManager().getContext().getSystemService(Context.WINDOW_SERVICE);
-            View dummyView = new View(ServiceManager.getServiceManager().getContext());
+            WindowManager windowManager = (WindowManager) FakeContext.get().getSystemService(Context.WINDOW_SERVICE);
+            View dummyView = new View(FakeContext.get());
             WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                     0, 0,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -222,7 +223,7 @@ public final class Server {
                             lastVisible = imeVisible;
                             DeviceMessageSender sender = controller.getSender();
                             if (sender != null) {
-                                sender.push(DeviceMessage.createImeStateChanged(imeVisible));
+                                sender.send(DeviceMessage.createImeStateChanged(imeVisible));
                             }
                         }
                     } catch (Exception e) {
