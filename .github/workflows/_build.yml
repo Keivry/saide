@@ -206,7 +206,7 @@ jobs:
             "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
 
-      # ── Rust cache (deps only, target/ too large for GitHub cache) ──
+      # ── Rust cache (registry + release deps only) ──
 
       - name: Cache Rust dependencies
         uses: actions/cache@v5
@@ -214,6 +214,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            target/release/deps
+            target/release/.fingerprint
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
