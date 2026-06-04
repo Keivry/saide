@@ -168,10 +168,31 @@ jobs:
           cuda: "13.2.0"
           method: network
 
-      - name: Install Windows build dependencies
+      - name: Cache vcpkg artifacts (Windows)
         if: runner.os == 'Windows'
+        id: vcpkg-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}/installed
+            ${{ env.VCPKG_ROOT }}/packages
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('scrcpy-server/build.gradle') }}
+
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         run: |
           & "$env:VCPKG_ROOT\vcpkg.exe" install --overlay-triplets "$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" "ffmpeg[nvcodec]:x64-windows-release" "opus:x64-windows-release"
+          "VCPKG_INSTALLED_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "FFMPEG_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PKG_CONFIG_PATH=$env:VCPKG_ROOT\installed\x64-windows-release\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$env:VCPKG_ROOT\installed\x64-windows-release\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          if ($env:CUDA_PATH) {
+            "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
+      - name: Set vcpkg env vars (cache hit)
+        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit == 'true'
+        run: |
           "VCPKG_INSTALLED_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
           "FFMPEG_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
           "PKG_CONFIG_PATH=$env:VCPKG_ROOT\installed\x64-windows-release\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
