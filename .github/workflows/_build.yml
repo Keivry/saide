@@ -161,12 +161,11 @@ jobs:
           choco install -y pkgconfiglite
           "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
-      - name: Install CUDA toolkit (Windows)
+      - name: Set CUDA env var (Windows, pre-installed)
         if: runner.os == 'Windows'
-        uses: MZWNET/cuda-toolkit@master
-        with:
-          cuda: "13.2.0"
-          method: network
+        run: |
+          "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Cache vcpkg artifacts (Windows)
         if: runner.os == 'Windows'
