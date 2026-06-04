@@ -192,6 +192,9 @@ jobs:
           --skip test_detect_gpu_linux
 
       - name: Build release binary
+        env:
+          LD_LIBRARY_PATH: ${{ inputs.extra_runtime_lib_dirs }}
+        run: cargo build --release --target ${{ inputs.target }}
 
       - name: Verify binary
         run: |
