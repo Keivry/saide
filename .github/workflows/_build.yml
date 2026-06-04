@@ -146,10 +146,14 @@ jobs:
 
       - name: Set up vcpkg (Windows)
         if: runner.os == 'Windows'
+        shell: bash
         run: |
-          git clone --depth 1 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
-          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
-          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+          VCPKG_DIR="C:/vcpkg"
+          if [ ! -d "$VCPKG_DIR" ]; then
+            git clone --depth 1 https://github.com/microsoft/vcpkg "$VCPKG_DIR"
+            "$VCPKG_DIR/bootstrap-vcpkg.bat" -disableMetrics
+          fi
+          echo "VCPKG_ROOT=$VCPKG_DIR" >> "$GITHUB_ENV"
           "VCPKG_DEFAULT_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKG_TARGET_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKG_OVERLAY_TRIPLETS=$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -173,9 +177,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: |
-            ${{ env.VCPKG_ROOT }}/installed
-            ${{ env.VCPKG_ROOT }}/packages
+            C:/vcpkg/installed
+            C:/vcpkg/packages
           key: ${{ runner.os }}-vcpkg-${{ hashFiles('scrcpy-server/build.gradle') }}
+          restore-keys: ${{ runner.os }}-vcpkg-
 
       - name: Install Windows build dependencies
         if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
@@ -187,8 +192,8 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: |
-            ${{ env.VCPKG_ROOT }}/installed
-            ${{ env.VCPKG_ROOT }}/packages
+            C:/vcpkg/installed
+            C:/vcpkg/packages
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Set vcpkg env vars (Windows)
