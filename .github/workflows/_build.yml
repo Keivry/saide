@@ -173,19 +173,12 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Build release binary
-        env:
-          LD_LIBRARY_PATH: ${{ inputs.extra_runtime_lib_dirs }}
-        run: cargo build --release --target ${{ inputs.target }}
-
-      # ── Checks (only when enabled, after build reuses target/) ─
-
-      - name: Check compilation
-        if: inputs.checks
-        run: cargo check --workspace
+      # ── Checks (before release build — fail fast) ───────
 
       - name: Run clippy
         if: inputs.checks
+        env:
+          LD_LIBRARY_PATH: ${{ inputs.extra_runtime_lib_dirs }}
         run: cargo clippy --workspace -- -D warnings
 
       - name: Run tests
@@ -197,6 +190,8 @@ jobs:
           --skip test_audio_player_creation
           --skip recorder_writes_audio_stream_to_mp4
           --skip test_detect_gpu_linux
+
+      - name: Build release binary
 
       - name: Verify binary
         run: |
