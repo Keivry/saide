@@ -58,6 +58,7 @@ jobs:
           cmdline-tools-version: 12266719
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
+          packages: tools platform-tools platforms;android-36
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
