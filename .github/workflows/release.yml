@@ -127,41 +127,52 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Download scrcpy server asset
+      - name: Set up Java 17 for scrcpy-server build
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Android SDK
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+
+      - name: Build scrcpy-server from source
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import os
-          import pathlib
-          import re
-          import urllib.request
+          cd scrcpy-server
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon --console=plain 2>&1
 
-          constant_path = pathlib.Path('src/constant.rs')
-          constant_source = constant_path.read_text(encoding='utf-8')
-          match = re.search(r'pub const SCRCPY_SERVER_VERSION_STRING: &str = "(v[^"]+)";', constant_source)
-          if match is None:
-              raise SystemExit(f'failed to parse SCRCPY_SERVER_VERSION_STRING from {constant_path}')
+          BUILT_JAR="build/outputs/apk/release/scrcpy-server-release-unsigned.apk"
+          if [ ! -f "$BUILT_JAR" ]; then
+            echo "ERROR: scrcpy-server jar not found at $BUILT_JAR" >&2
+            exit 1
+          fi
 
-          version = match.group(1)
-          asset_name = f'scrcpy-server-{version}'
-          download_url = f'https://github.com/Genymobile/scrcpy/releases/download/{version}/{asset_name}'
-          asset_dir = pathlib.Path('.release-assets')
-          asset_dir.mkdir(exist_ok=True)
-          asset_path = asset_dir / asset_name
+          version="v3.3.4"
+          asset_name="scrcpy-server-${version}"
+          asset_dir="$(dirname "$BUILT_JAR")"
+          cp "$BUILT_JAR" "${asset_dir}/${asset_name}"
 
-          request = urllib.request.Request(download_url, headers={'User-Agent': 'saide-release-workflow'})
-          with urllib.request.urlopen(request) as response, asset_path.open('wb') as output:
-              output.write(response.read())
+          printf 'SCRCPY_SERVER_VERSION_STRING=%s\n' "$version" >> "$GITHUB_ENV"
+          printf 'SCRCPY_SERVER_ASSET_NAME=%s\n' "$asset_name" >> "$GITHUB_ENV"
+          printf 'SCRCPY_SERVER_ASSET_PATH=%s/%s\n' "$asset_dir" "$asset_name" >> "$GITHUB_ENV"
+          printf 'SCRCPY_SERVER_JAR_PATH=%s/%s\n' "$asset_dir" "$asset_name" >> "$GITHUB_ENV"
 
-          with pathlib.Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as env_file:
-              env_file.write(f'SCRCPY_SERVER_VERSION_STRING={version}\n')
-              env_file.write(f'SCRCPY_SERVER_ASSET_NAME={asset_name}\n')
-              env_file.write(f'SCRCPY_SERVER_ASSET_PATH={asset_path.as_posix()}\n')
-              env_file.write(f'SCRCPY_SERVER_DOWNLOAD_URL={download_url}\n')
+          echo "Built ${asset_name} from source"
 
-          print(f'downloaded {asset_name} from {download_url}')
-          PY
+      - name: Upload scrcpy-server JAR artifact
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: actions/upload-artifact@v7
+        with:
+          name: scrcpy-server
+          path: ${{ env.SCRCPY_SERVER_JAR_PATH }}
 
       - name: Install Ubuntu build dependencies
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -307,6 +318,7 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
           find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name 'release-notes.md' \) -exec cp {} release-assets/ \;
+          find artifacts -type f -name 'scrcpy-server-v*' -exec cp {} release-assets/ \;
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -317,6 +329,7 @@ jobs:
           files: |
             release-assets/*.zip
             release-assets/*.tar.gz
+            release-assets/scrcpy-server-v*
             release-assets/release-notes.md
           draft: false
           prerelease: false

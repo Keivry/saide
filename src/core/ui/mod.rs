@@ -43,6 +43,8 @@ pub enum AppCommand {
     ToggleFloat,
     TakeScreenshot,
     ToggleRecording,
+    SwitchBehaviorPreset,
+    ToggleBehavior,
 }
 
 impl Event for AppCommand {}
@@ -75,6 +77,8 @@ lazy_static! {
             "F6" => AppCommand::ShowProfileSelection,
             "F7" => AppCommand::PrevProfile,
             "F8" => AppCommand::NextProfile,
+            "Ctrl+Shift+P" => AppCommand::SwitchBehaviorPreset,
+            "Ctrl+Shift+B" => AppCommand::ToggleBehavior,
         }));
     pub static ref SHORTCUT_MANAGER: ShortcutManager<AppCommand> =
         ShortcutManager::new(GLOBAL_SHORTCUTS.clone());

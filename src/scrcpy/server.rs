@@ -9,9 +9,18 @@ use {
         SCRCPY_SERVER_VERSION,
         ScrcpyError,
     },
-    std::{path::Path, process::Child},
+    std::{
+        path::{Path, PathBuf},
+        process::Child,
+    },
     tracing::{debug, info},
 };
+
+/// Path to the built scrcpy server JAR when `build-scrcpy-server` feature is
+/// enabled. This JAR is produced by `build.rs` running
+/// `scrcpy-server/build-server.sh`.
+#[cfg(feature = "build-scrcpy-server")]
+const BUILD_OUTPUT_JAR_PATH: &str = concat!(env!("OUT_DIR"), "/scrcpy-server.jar");
 
 /// Parameters passed to the scrcpy server at startup.
 ///
@@ -95,6 +104,20 @@ impl ServerParams {
 
         Ok(params)
     }
+}
+
+/// Resolve the path to the scrcpy server JAR file, considering the
+/// `build-scrcpy-server` feature.
+pub fn resolve_server_jar_path() -> PathBuf {
+    #[cfg(feature = "build-scrcpy-server")]
+    {
+        let built = PathBuf::from(BUILD_OUTPUT_JAR_PATH);
+        if built.exists() {
+            return built;
+        }
+    }
+    // Fallback to config-specified or auto-detected path
+    crate::constant::resolve_scrcpy_server_path()
 }
 
 pub fn push_server(shell: &AdbShell, server_jar_path: &str) -> Result<()> {

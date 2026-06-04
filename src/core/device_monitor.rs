@@ -3,23 +3,29 @@
 //! Device monitoring service
 //!
 //! Monitors device state (online/offline), rotation, and IME (keyboard) state.
-//! Runs as async tasks and reports changes via channels.
+//! When a TCP control stream is available, listens for scrcpy server
+//! `DeviceMessage` events (low-latency). Falls back to ADB polling when the
+//! scrcpy server does not send these messages (e.g. pre-built JAR).
 
 use {
     crate::{
         controller::DeviceState,
         error::{Result, SAideError},
         runtime::TOKIO_RT,
+        scrcpy::device_message::DeviceMessage,
     },
     adbshell::AdbShell,
     crossbeam_channel::{Receiver, Sender, bounded},
     egui_event::Event,
-    std::{sync::Arc, time::Duration},
+    std::{
+        net::TcpStream,
+        sync::{Arc, Mutex},
+        time::Duration,
+    },
     tokio_util::sync::CancellationToken,
     tracing::{error, info, warn},
 };
 
-const DEVICE_MONITOR_POLL_INTERVAL_MS: u64 = 1000;
 const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 64;
 
 /// Device state change events
@@ -31,15 +37,30 @@ pub enum DeviceMonitorEvent {
 }
 
 /// Device monitor service
-pub struct DeviceMonitor;
+pub struct DeviceMonitor {
+    shell: Arc<AdbShell>,
+    monitor_stream: Option<TcpStream>,
+    event_tx: Sender<DeviceMonitorEvent>,
+}
 
 impl DeviceMonitor {
-    /// Start device monitoring in background task
+    /// Start device monitoring in background tasks.
+    ///
+    /// When `monitor_stream` is `Some`, listens for `DeviceMessage` events on
+    /// the TCP control channel and performs lightweight TCP health checks.
+    /// Falls back to ADB polling when no TCP stream is available.
     pub fn start(
         shell: Arc<AdbShell>,
+        monitor_stream: Option<TcpStream>,
         token: CancellationToken,
     ) -> Result<Receiver<DeviceMonitorEvent>> {
         let (event_tx, event_rx) = bounded::<DeviceMonitorEvent>(DEVICE_MONITOR_CHANNEL_CAPACITY);
+
+        let monitor = Self {
+            shell,
+            monitor_stream,
+            event_tx,
+        };
 
         TOKIO_RT.spawn(async move {
             info!("Starting device monitor tasks...");
@@ -49,30 +70,171 @@ impl DeviceMonitor {
                 return;
             }
 
-            tokio::join!(
-                Self::monitor_device_state(shell.clone(), event_tx.clone(), token.clone()),
-                Self::monitor_ime_state(shell.clone(), event_tx.clone(), token.clone()),
-                Self::monitor_rotation(shell, event_tx, token),
-            );
+            monitor.run(token).await;
         });
 
         Ok(event_rx)
     }
 
-    async fn monitor_device_state(
+    async fn run(self, token: CancellationToken) {
+        if let Some(stream) = self.monitor_stream {
+            let event_tx = self.event_tx.clone();
+            let shell = self.shell.clone();
+            let health_stream = stream.try_clone().expect("monitor_stream try_clone failed");
+
+            tokio::join!(
+                Self::listen_device_messages(stream, event_tx.clone(), token.clone()),
+                Self::monitor_device_state_tcp(health_stream, event_tx, shell, token),
+            );
+        } else {
+            let event_tx = self.event_tx;
+            let shell = self.shell;
+            let token_clone = token.clone();
+
+            tokio::join!(
+                Self::monitor_device_state_adb(shell.clone(), event_tx.clone(), token),
+                Self::monitor_rotation_adb_fallback(
+                    shell.clone(),
+                    event_tx.clone(),
+                    token_clone.clone()
+                ),
+                Self::monitor_ime_state_adb_fallback(shell, event_tx, token_clone),
+            );
+        }
+    }
+
+    /// Listen for `DeviceMessage` events on the TCP control stream.
+    ///
+    /// Parses `RotationChanged` and `ImeStateChanged` messages and forwards
+    /// them as `DeviceMonitorEvent`s. Other message types are silently
+    /// ignored.
+    async fn listen_device_messages(
+        stream: TcpStream,
+        event_tx: Sender<DeviceMonitorEvent>,
+        token: CancellationToken,
+    ) {
+        info!("Starting TCP device message listener...");
+
+        if let Err(e) = stream.set_nonblocking(true) {
+            error!("Failed to set monitor stream to non-blocking: {}", e);
+            return;
+        }
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+
+        let stream = Arc::new(Mutex::new(stream));
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    info!("Device message listener cancelled");
+                    return;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            }
+
+            let stream = Arc::clone(&stream);
+            match tokio::task::spawn_blocking(move || {
+                DeviceMessage::read_from(&mut *stream.lock().expect("mutex poisoned"))
+            })
+            .await
+            {
+                Ok(Ok(Some(DeviceMessage::RotationChanged(rot)))) => {
+                    let _ = event_tx.send(DeviceMonitorEvent::Rotated(rot % 360));
+                }
+                Ok(Ok(Some(DeviceMessage::ImeStateChanged(visible)))) => {
+                    let _ = event_tx.send(DeviceMonitorEvent::ImStateChanged(visible));
+                }
+                Ok(Ok(Some(_))) => {
+                    // Ignore other message types (Clipboard, UhidOutput, etc.)
+                }
+                Ok(Ok(None)) => {
+                    // WouldBlock / UnexpectedEof — no data available
+                }
+                Ok(Err(_e)) => {
+                    // IO error on stream → device likely offline
+                    let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
+                    return;
+                }
+                Err(_) => {
+                    error!("spawn_blocking join error in device message listener");
+                    return;
+                }
+            }
+        }
+    }
+
+    /// TCP-based device health check using `peer_addr()`.
+    ///
+    /// Every 2 seconds, tests whether the TCP connection is still alive.
+    /// After 3 consecutive failures, confirms with ADB once before declaring
+    /// the device offline.
+    async fn monitor_device_state_tcp(
+        stream: TcpStream,
+        event_tx: Sender<DeviceMonitorEvent>,
+        shell: Arc<AdbShell>,
+        token: CancellationToken,
+    ) {
+        info!("Starting TCP device state monitor...");
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+
+        let mut failures: u32 = 0;
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    info!("TCP device state monitor cancelled");
+                    return;
+                }
+                _ = interval.tick() => {}
+            }
+
+            match stream.peer_addr() {
+                Ok(_) => {
+                    failures = 0;
+                }
+                Err(_) => {
+                    failures += 1;
+                    if failures >= MAX_CONSECUTIVE_FAILURES {
+                        let serial = shell.serial().to_string();
+                        let confirmed_offline = tokio::task::spawn_blocking(move || {
+                            matches!(
+                                AdbShell::get_device_state(&serial),
+                                Err(_) | Ok(DeviceState::Disconnected)
+                            )
+                        })
+                        .await
+                        .unwrap_or(true);
+
+                        if confirmed_offline {
+                            info!("Device offline ({} TCP failures, ADB confirmed)", failures);
+                            let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
+                            return;
+                        }
+                        failures = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── ADB fallback methods (pre-built JAR) ──────────────────────────
+
+    /// DEPRECATED: pre-built jar fallback — ADB-based device state polling.
+    async fn monitor_device_state_adb(
         shell: Arc<AdbShell>,
         event_tx: Sender<DeviceMonitorEvent>,
         token: CancellationToken,
     ) {
-        info!("Starting device state monitor...");
-        let mut interval =
-            tokio::time::interval(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        info!("Starting ADB device state monitor (fallback)...");
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
-                    info!("Device state monitor cancellation requested, stopping...");
+                    info!("ADB device state monitor cancelled");
                     return;
                 }
                 _ = interval.tick() => {}
@@ -86,37 +248,33 @@ impl DeviceMonitor {
             {
                 Ok(state) => {
                     if state != DeviceState::Connected {
-                        info!("Device went offline: {:?}", state);
-                        event_tx
-                            .send(DeviceMonitorEvent::DeviceOffline)
-                            .unwrap_or_else(|e| {
-                                error!("Failed to send DeviceOffline event: {}", e);
-                            });
+                        info!("Device went offline (ADB): {:?}", state);
+                        let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
                         return;
                     }
                 }
                 Err(e) => {
-                    error!("Failed to get device state: {}", e);
+                    error!("Failed to get device state (ADB): {}", e);
                     return;
                 }
             }
         }
     }
 
-    async fn monitor_ime_state(
+    /// DEPRECATED: pre-built jar fallback — ADB-based IME state polling.
+    async fn monitor_ime_state_adb_fallback(
         shell: Arc<AdbShell>,
         event_tx: Sender<DeviceMonitorEvent>,
         token: CancellationToken,
     ) {
-        info!("Starting IME state monitor...");
-        let mut interval =
-            tokio::time::interval(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        info!("Starting ADB IME state monitor (fallback)...");
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
-                    info!("Device IME monitor cancellation requested, stopping...");
+                    info!("ADB IME monitor cancelled");
                     return;
                 }
                 _ = interval.tick() => {}
@@ -124,28 +282,24 @@ impl DeviceMonitor {
 
             match run_adb_with_retry(token.clone(), shell.clone(), |s| s.get_ime_state()).await {
                 Ok(is_shown) => {
-                    event_tx
-                        .send(DeviceMonitorEvent::ImStateChanged(is_shown))
-                        .unwrap_or_else(|e| {
-                            error!("Failed to send IME state event: {}", e);
-                        });
+                    let _ = event_tx.send(DeviceMonitorEvent::ImStateChanged(is_shown));
                 }
                 Err(e) => {
-                    error!("Failed to get IME state: {}", e);
+                    error!("Failed to get IME state (ADB): {}", e);
                     return;
                 }
             }
         }
     }
 
-    async fn monitor_rotation(
+    /// DEPRECATED: pre-built jar fallback — ADB-based rotation polling.
+    async fn monitor_rotation_adb_fallback(
         shell: Arc<AdbShell>,
         event_tx: Sender<DeviceMonitorEvent>,
         token: CancellationToken,
     ) {
-        info!("Starting device rotation monitor...");
-        let mut interval =
-            tokio::time::interval(Duration::from_millis(DEVICE_MONITOR_POLL_INTERVAL_MS));
+        info!("Starting ADB device rotation monitor (fallback)...");
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         let mut last_orientation: Option<u32> = None;
@@ -153,7 +307,7 @@ impl DeviceMonitor {
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
-                    info!("Device rotation monitor cancellation requested, stopping...");
+                    info!("ADB rotation monitor cancelled");
                     return;
                 }
                 _ = interval.tick() => {}
@@ -166,16 +320,71 @@ impl DeviceMonitor {
                     if Some(orientation) != last_orientation {
                         info!("Device rotated to orientation: {}", orientation);
                         last_orientation = Some(orientation);
-                        event_tx
-                            .send(DeviceMonitorEvent::Rotated(orientation))
-                            .unwrap_or_else(|e| {
-                                error!("Failed to send rotation event: {}", e);
-                            });
+                        let _ = event_tx.send(DeviceMonitorEvent::Rotated(orientation));
                     }
                 }
                 Err(e) => {
-                    error!("Failed to get device orientation: {}", e);
+                    error!("Failed to get device orientation (ADB): {}", e);
                     return;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, std::io::Cursor};
+
+    #[test]
+    fn test_rotation_message_parsed() {
+        // DeviceMessage type byte 3 = RotationChanged, followed by 4-byte BE u32
+        let mut buf = Vec::new();
+        buf.push(3u8);
+        buf.extend_from_slice(&90u32.to_be_bytes());
+
+        let msg = DeviceMessage::read_from(&mut Cursor::new(buf))
+            .expect("read_from failed")
+            .expect("message should be Some");
+        assert_eq!(msg, DeviceMessage::RotationChanged(90));
+    }
+
+    #[test]
+    fn test_ime_message_parsed() {
+        // DeviceMessage type byte 4 = ImeStateChanged, followed by 1-byte bool
+        let mut buf = Vec::new();
+        buf.push(4u8);
+        buf.push(0x01);
+
+        let msg = DeviceMessage::read_from(&mut Cursor::new(buf))
+            .expect("read_from failed")
+            .expect("message should be Some");
+        assert_eq!(msg, DeviceMessage::ImeStateChanged(true));
+    }
+
+    #[test]
+    fn test_tcp_probe_detects_disconnect() {
+        // peer_addr() may return Ok after remote disconnect — the address is
+        // cached by the kernel; real disconnection is detected via read errors.
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).expect("failed to connect");
+        let (server, _addr) = listener.accept().expect("failed to accept");
+        drop(server);
+
+        let mut failures: u32 = 0;
+        const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+
+        for _ in 0..(MAX_CONSECUTIVE_FAILURES + 2) {
+            match client.peer_addr() {
+                Ok(_) => failures = 0,
+                Err(_) => {
+                    failures += 1;
+                    if failures >= MAX_CONSECUTIVE_FAILURES {
+                        break;
+                    }
                 }
             }
         }

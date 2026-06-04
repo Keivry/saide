@@ -27,6 +27,7 @@ use {
         toolbar::{Toolbar, ToolbarViewState},
     },
     crate::{
+        behavior::profiles::BehaviorProfile,
         capture::{
             CaptureEvent,
             recorder::{RecorderConfig, RecorderHandle},
@@ -112,6 +113,9 @@ pub struct SAideApp {
 
     pub(super) startup_warnings: Vec<String>,
     pub(super) pending_ui_effects: Vec<UiEffect>,
+
+    pub(super) behavior_enabled: bool,
+    pub(super) current_behavior_profile: BehaviorProfile,
 }
 
 const FLOATING_TOOLBAR_EDGE_TRIGGER_WIDTH: f32 = 4.0;
@@ -130,6 +134,7 @@ impl SAideApp {
         startup_warnings: Vec<String>,
     ) -> Self {
         let config = config_manager.config();
+        let behavior_config = config.behavior_config();
         let indicator_position = config.general.indicator_position;
         let max_fps = config.scrcpy.video.max_fps;
         let audio_buffer_frames = config.scrcpy.audio.buffer_frames;
@@ -183,6 +188,9 @@ impl SAideApp {
 
             startup_warnings,
             pending_ui_effects: Vec::new(),
+
+            behavior_enabled: behavior_config.effective_enabled(),
+            current_behavior_profile: behavior_config.preset.unwrap_or_default(),
         }
     }
 
@@ -315,6 +323,7 @@ impl SAideApp {
                         device_name,
                         audio_disabled_reason,
                         capture_orientation: corientation,
+                        behavior_engine,
                     } => {
                         info!(
                             "ScrcpyConnection ready: {}x{}, device: {} ({:?}), capture_orientation: {:?}",
@@ -334,6 +343,9 @@ impl SAideApp {
 
                         // Save control sender
                         self.app_state.control_sender = Some(control_sender);
+
+                        // 注入行为模拟引擎（必须在 start() 之前调用）
+                        self.player.set_behavior_engine(behavior_engine);
 
                         // Start player with streams
                         self.player.start(
@@ -384,6 +396,12 @@ impl SAideApp {
             if self.app_state.device_monitor_rx.is_some() && stream_ready {
                 self.init_state = InitState::Ready;
                 info!("Initialization completed successfully");
+
+                if self.behavior_enabled {
+                    let profile_name = behavior_profile_display_name(self.current_behavior_profile);
+                    self.indicator
+                        .update_behavior_profile(Some(profile_name.to_string()));
+                }
 
                 // Initialize coordinate systems now that video is ready
                 self.ui_state
@@ -1085,6 +1103,8 @@ impl SAideApp {
                 | AppCommand::ToggleFloat
                 | AppCommand::TakeScreenshot
                 | AppCommand::ToggleRecording
+                | AppCommand::SwitchBehaviorPreset
+                | AppCommand::ToggleBehavior
         );
         if requires_ready && self.init_state != InitState::Ready {
             debug!("Ignoring app command while app is not ready: {:?}", cmd);
@@ -1170,6 +1190,12 @@ impl SAideApp {
             AppCommand::ToggleRecording => {
                 self.toggle_recording();
             }
+            AppCommand::SwitchBehaviorPreset => {
+                self.switch_behavior_preset();
+            }
+            AppCommand::ToggleBehavior => {
+                self.toggle_behavior();
+            }
         }
     }
 
@@ -1219,6 +1245,61 @@ impl SAideApp {
         self.recorder = Some(handle);
         info!("Recording started");
         self.notifier.notify(&t!("notification-recording-started"));
+    }
+
+    fn switch_behavior_preset(&mut self) {
+        // Cycle: Conservative → Balanced → Aggressive → Conservative
+        let next_profile = match self.current_behavior_profile {
+            BehaviorProfile::Conservative => BehaviorProfile::Balanced,
+            BehaviorProfile::Balanced => BehaviorProfile::Aggressive,
+            BehaviorProfile::Aggressive => BehaviorProfile::Conservative,
+        };
+
+        let profile_name = behavior_profile_display_name(next_profile);
+        let config = next_profile.to_config();
+
+        if let Some(ref keyboard_mapper) = self.app_state.keyboard_mapper
+            && let Ok(mut engine) = keyboard_mapper.get_behavior_engine().lock()
+        {
+            engine.reconfigure(config);
+        }
+
+        self.current_behavior_profile = next_profile;
+        self.behavior_enabled = true;
+
+        self.indicator
+            .update_behavior_profile(Some(profile_name.to_string()));
+        let msg = format!("已切换到 {} 预设", profile_name);
+        self.notify(&msg);
+        info!("Behavior profile switched to: {}", profile_name);
+    }
+
+    fn toggle_behavior(&mut self) {
+        self.behavior_enabled = !self.behavior_enabled;
+
+        let mut config = self.current_behavior_profile.to_config();
+        config.enabled = Some(self.behavior_enabled);
+
+        if let Some(ref keyboard_mapper) = self.app_state.keyboard_mapper
+            && let Ok(mut engine) = keyboard_mapper.get_behavior_engine().lock()
+        {
+            engine.reconfigure(config);
+        }
+
+        if self.behavior_enabled {
+            let profile_name = behavior_profile_display_name(self.current_behavior_profile);
+            self.indicator
+                .update_behavior_profile(Some(profile_name.to_string()));
+            let msg = format!("已开启 {} 预设", profile_name);
+            self.notify(&msg);
+            info!("Behavior enabled, profile: {}", profile_name);
+        } else {
+            self.indicator
+                .update_behavior_profile(Some("已关闭".to_string()));
+            let msg = "行为模拟已关闭".to_string();
+            self.notify(&msg);
+            info!("Behavior disabled");
+        }
     }
 
     fn poll_capture_events(&mut self) {
@@ -1821,6 +1902,7 @@ impl Drop for SAideApp {
 
         // Explicitly shutdown connection to ensure server process is killed
         if let Some(mut conn) = self.app_state.connection.take()
+            && let Some(conn) = Arc::get_mut(&mut conn)
             && let Err(e) = conn.shutdown()
         {
             debug!("Failed to shutdown connection: {}", e);
@@ -1888,6 +1970,15 @@ fn localize_audio_warning(reason: AudioDisabledReason) -> String {
         AudioDisabledReason::UnsupportedAndroidVersion { api_level } => {
             tf!("audio-warning-unsupported-android", "api_level" => api_level)
         }
+    }
+}
+
+/// 将 BehaviorProfile 枚举值映射为用户可读的中文名称
+fn behavior_profile_display_name(profile: BehaviorProfile) -> &'static str {
+    match profile {
+        BehaviorProfile::Conservative => "保守",
+        BehaviorProfile::Balanced => "均衡",
+        BehaviorProfile::Aggressive => "激进",
     }
 }
 

@@ -31,12 +31,12 @@ pub struct BehaviorConfig {
     pub preset: Option<super::super::behavior::profiles::BehaviorProfile>,
 
     /// 全局开关
-    #[serde(default = "default_true")]
-    pub enabled: bool,
+    #[serde(default)]
+    pub enabled: Option<bool>,
 
     /// 坐标抖动幅度（屏幕尺寸百分比，0.0-0.10）
-    #[serde(default = "default_jitter_balanced")]
-    pub position_jitter: f32,
+    #[serde(default)]
+    pub position_jitter: Option<f32>,
 
     /// 抖动权重策略
     #[serde(default)]
@@ -182,9 +182,6 @@ pub struct BehaviorConfig {
     pub idle_threshold_sec: Option<f64>,
 }
 
-fn default_true() -> bool { true }
-fn default_jitter_balanced() -> f32 { 0.03 }
-
 impl Default for BehaviorConfig {
     fn default() -> Self {
         // 使用 balanced 预设作为默认值
@@ -197,14 +194,8 @@ impl BehaviorConfig {
     pub fn merge_with_preset(&self, default_config: &BehaviorConfig) -> BehaviorConfig {
         BehaviorConfig {
             preset: self.preset.or(default_config.preset),
-            enabled: self.enabled,
-            position_jitter: if self.position_jitter != 0.03
-                || default_config.position_jitter == 0.03
-            {
-                self.position_jitter
-            } else {
-                default_config.position_jitter
-            },
+            enabled: self.enabled.or(default_config.enabled),
+            position_jitter: self.position_jitter.or(default_config.position_jitter),
             jitter_weighting: self.jitter_weighting,
             inter_action_delay_enabled: self.inter_action_delay_enabled
                 || default_config.inter_action_delay_enabled,
@@ -293,16 +284,24 @@ impl BehaviorConfig {
         }
     }
 
+    /// 获取有效 enabled 值（None → true）
+    pub fn effective_enabled(&self) -> bool { self.enabled.unwrap_or(true) }
+
+    /// 获取有效 position_jitter 值（None → 0.03）
+    pub fn effective_position_jitter(&self) -> f32 { self.position_jitter.unwrap_or(0.03) }
+
     /// 验证配置参数合法性，对非法值记录 warning 并使用默认值
     pub fn validate(&mut self) {
         use tracing::warn;
 
-        if self.position_jitter < 0.0 || self.position_jitter > 0.10 {
+        if let Some(jitter) = self.position_jitter
+            && (jitter < 0.0 || jitter > 0.10)
+        {
             warn!(
                 "behavior.position_jitter = {} out of [0.0, 0.10], falling back to 0.03",
-                self.position_jitter
+                jitter
             );
-            self.position_jitter = 0.03;
+            self.position_jitter = Some(0.03);
         }
 
         if let (Some(min), Some(max)) = (self.delay_min_ms, self.delay_max_ms)
@@ -340,16 +339,16 @@ mod tests {
 
         // 坐标抖动幅度递增：保守 < 均衡 < 激进
         assert!(
-            conservative.position_jitter < balanced.position_jitter,
+            conservative.effective_position_jitter() < balanced.effective_position_jitter(),
             "conservative jitter ({}) should be less than balanced jitter ({})",
-            conservative.position_jitter,
-            balanced.position_jitter
+            conservative.effective_position_jitter(),
+            balanced.effective_position_jitter()
         );
         assert!(
-            balanced.position_jitter < aggressive.position_jitter,
+            balanced.effective_position_jitter() < aggressive.effective_position_jitter(),
             "balanced jitter ({}) should be less than aggressive jitter ({})",
-            balanced.position_jitter,
-            aggressive.position_jitter
+            balanced.effective_position_jitter(),
+            aggressive.effective_position_jitter()
         );
 
         // 延迟均值递增：保守 < 均衡 < 激进
@@ -370,14 +369,17 @@ mod tests {
     #[test]
     fn test_merge_override() {
         let mut user_cfg = BehaviorConfig::default();
-        user_cfg.enabled = false;
+        user_cfg.enabled = Some(false);
         user_cfg.delay_mean_ms = Some(999);
 
         let balanced = BehaviorProfile::Balanced.to_config();
         let merged = user_cfg.merge_with_preset(&balanced);
 
         // 用户显式设置应覆盖预设
-        assert!(!merged.enabled, "user disabled should override preset");
+        assert!(
+            !merged.effective_enabled(),
+            "user disabled should override preset"
+        );
         assert_eq!(
             merged.delay_mean_ms,
             Some(999),
@@ -388,7 +390,7 @@ mod tests {
     #[test]
     fn test_validate_invalid() {
         let mut cfg = BehaviorConfig::default();
-        cfg.position_jitter = -1.0; // 超出 [0.0, 0.10]
+        cfg.position_jitter = Some(-1.0); // 超出 [0.0, 0.10]
         cfg.delay_min_ms = Some(100);
         cfg.delay_max_ms = Some(50); // min > max
         cfg.touch_pressure_mean = Some(2.0); // 超出 [0.0, 1.0]
@@ -398,9 +400,9 @@ mod tests {
 
         // 验证非法值被修正
         assert!(
-            (cfg.position_jitter - 0.03).abs() < f32::EPSILON,
+            (cfg.effective_position_jitter() - 0.03).abs() < f32::EPSILON,
             "position_jitter should be reset to default 0.03, got {}",
-            cfg.position_jitter
+            cfg.effective_position_jitter()
         );
         assert_eq!(cfg.delay_min_ms, Some(50), "min/max should be swapped");
         assert_eq!(cfg.delay_max_ms, Some(100), "min/max should be swapped");

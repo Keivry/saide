@@ -15,6 +15,7 @@ use {
     scrcpy_protocol::{
         GRACEFUL_WAIT_MS,
         MAX_PACKET_SIZE,
+        SCRCPY_SERVER_PATH,
         protocol::{audio::AudioPacket, video::VideoPacket},
     },
     std::{
@@ -85,7 +86,7 @@ pub struct ScrcpyConnection {
     pub audio_codec_id: u32,
     video_stream: Option<TcpStream>,
     audio_stream: Option<TcpStream>,
-    control_stream: Option<TcpStream>,
+    pub control_stream: Option<TcpStream>,
     server_process: Option<Child>,
     shell: Arc<AdbShell>,
 }
@@ -116,9 +117,13 @@ impl ScrcpyConnection {
         }
 
         push_server(&shell, server_jar_path)?;
+        // PATCH: anti-detection — random delay to break ADB timing fingerprint
+        thread::sleep(Duration::from_millis(rand::random_range(100u64..=300u64)));
         let listener = find_available_port(bind_address)?;
         let local_port = listener.local_addr()?.port();
         setup_reverse_tunnel(&shell, &socket_name, local_port)?;
+        // PATCH: anti-detection — random delay between reverse tunnel and server start
+        thread::sleep(Duration::from_millis(rand::random_range(100u64..=300u64)));
         let mut server_process = start_server(&shell, &params)?;
 
         let result = Self::accept_streams(
@@ -142,6 +147,31 @@ impl ScrcpyConnection {
             };
 
         info!("All sockets connected successfully");
+
+        // PATCH: anti-detection — delete server JAR from device filesystem
+        // JAR is already loaded by Dalvik/ART; deleting the file removes the filesystem fingerprint
+        match std::process::Command::new("adb")
+            .args(["-s", &serial, "shell", "rm", "-f", SCRCPY_SERVER_PATH])
+            .status()
+        {
+            Ok(status) if status.success() => {
+                info!("Deleted server JAR from device: {}", SCRCPY_SERVER_PATH);
+            }
+            Ok(status) => {
+                tracing::warn!(
+                    "Failed to delete server JAR (exit code: {}) — non-fatal: {}",
+                    status,
+                    SCRCPY_SERVER_PATH
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to run adb rm to delete JAR (non-fatal): {} — {}",
+                    e,
+                    SCRCPY_SERVER_PATH
+                );
+            }
+        }
 
         Ok(Self {
             scid,

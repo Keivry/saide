@@ -20,7 +20,7 @@ use {
 /// Application connection and device state
 pub struct AppState {
     /// ScrcpyConnection (kept alive to prevent server shutdown)
-    pub connection: Option<ScrcpyConnection>,
+    pub connection: Option<Arc<ScrcpyConnection>>,
 
     /// Control sender (for sending input commands to device)
     pub control_sender: Option<ControlSender>,

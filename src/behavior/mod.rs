@@ -47,6 +47,7 @@ use {
             pressure::{TouchParams, TouchParamsConfig},
             rate_limit::RateLimiter,
             session::{SessionRhythm, SessionRhythmConfig},
+            stall::StallDetector,
             tremor::{MicroTremor, MicroTremorConfig},
             typing::{TypingConfig, TypingSimulator},
         },
@@ -100,6 +101,8 @@ pub struct BehaviorEngine {
     rate_limiter: RateLimiter,
     /// 操作节奏周期化管理器
     session_rhythm: SessionRhythm,
+    /// 画面停滞检测器
+    stall_detector: StallDetector,
     /// 屏幕宽度（像素）
     screen_width: u16,
     /// 屏幕高度（像素）
@@ -128,6 +131,7 @@ impl BehaviorEngine {
             config.rate_limit_burst.unwrap_or(3),
         );
         let session_rhythm = SessionRhythm::new(Self::build_rhythm_config(&config));
+        let stall_detector = StallDetector::new(config.stall_threshold.unwrap_or(30));
 
         Self {
             config,
@@ -140,6 +144,7 @@ impl BehaviorEngine {
             micro_tremor,
             rate_limiter,
             session_rhythm,
+            stall_detector,
             screen_width: screen_w,
             screen_height: screen_h,
         }
@@ -240,8 +245,8 @@ impl BehaviorEngine {
     ///
     /// 抖动幅度 = `position_jitter × screen_dimension`
     pub fn jitter_pos(&mut self, x: u32, y: u32) -> (u32, u32) {
-        let jitter_x = self.config.position_jitter * self.screen_width as f32;
-        let jitter_y = self.config.position_jitter * self.screen_height as f32;
+        let jitter_x = self.config.effective_position_jitter() * self.screen_width as f32;
+        let jitter_y = self.config.effective_position_jitter() * self.screen_height as f32;
 
         let (dx, dy) = match self.config.jitter_weighting {
             JitterWeighting::Uniform => {
@@ -267,19 +272,19 @@ impl BehaviorEngine {
     /// 启用后：经过速率限制 → 会话节奏检查 → 坐标抖动 →
     /// 压力随机化 → pointer_id 交替 → `send_custom()` 注入。
     pub fn execute_tap(&mut self, x: u32, y: u32, sender: &ControlSender) {
-        if !self.config.enabled {
+        if !self.config.effective_enabled() {
             let _ = sender.send_touch_down(x, y);
             let _ = sender.send_touch_up(x, y);
             return;
         }
 
         // 速率限制
-        if !self.rate_limiter.try_acquire() {
+        if self.config.rate_limit_enabled && !self.rate_limiter.try_acquire() {
             return;
         }
 
         // 会话节奏：更新活跃度、延迟倍率、速率倍率
-        let _delay_mod = self.session_rhythm.update_delay_modifier();
+        let delay_mod = self.session_rhythm.update_delay_modifier();
         let _rate_mult = self.session_rhythm.update_rate_multiplier();
 
         // 检查是否需要间歇性停顿
@@ -314,7 +319,8 @@ impl BehaviorEngine {
 
         // 动作内延迟（TouchDown → TouchUp）
         if self.config.intra_action_delay_enabled {
-            let delay_ms = self.gen_intra_action_delay_ms();
+            let raw_delay = self.gen_intra_action_delay_ms() as f64;
+            let delay_ms = (raw_delay * delay_mod) as u64;
             thread::sleep(Duration::from_millis(delay_ms));
         }
 
@@ -340,7 +346,7 @@ impl BehaviorEngine {
     /// 使用贝塞尔曲线生成中间路径点，兼顾坐标抖动、微抖动、
     /// 压力随机化和 pointer_id 交替。
     pub fn execute_swipe(&mut self, from: (u32, u32), to: (u32, u32), sender: &ControlSender) {
-        if !self.config.enabled {
+        if !self.config.effective_enabled() {
             let _ = sender.send_touch_down(from.0, from.1);
             let _ = sender.send_touch_move(to.0, to.1);
             let _ = sender.send_touch_up(to.0, to.1);
@@ -348,12 +354,12 @@ impl BehaviorEngine {
         }
 
         // 速率限制
-        if !self.rate_limiter.try_acquire() {
+        if self.config.rate_limit_enabled && !self.rate_limiter.try_acquire() {
             return;
         }
 
         // 会话节奏
-        let _delay_mod = self.session_rhythm.update_delay_modifier();
+        let delay_mod = self.session_rhythm.update_delay_modifier();
         let _rate_mult = self.session_rhythm.update_rate_multiplier();
 
         if let Some(pause_sec) = self.session_rhythm.should_pause() {
@@ -432,8 +438,9 @@ impl BehaviorEngine {
             };
             let _ = sender.send_custom(&move_msg);
 
-            // 点间延迟
-            self.delay_generator.sleep();
+            // 点间延迟（应用会话节奏修饰符）
+            let raw_delay = self.delay_generator.generate_ms() as f64;
+            thread::sleep(Duration::from_millis((raw_delay * delay_mod) as u64));
         }
 
         // TouchUp（最后一个点）
@@ -465,6 +472,60 @@ impl BehaviorEngine {
     /// 而不插入延迟。
     pub fn execute_text<F: FnMut(char)>(&mut self, text: &str, inject_fn: F) {
         self.typing_simulator.type_text(text, inject_fn);
+    }
+
+    /// 获取下一个 pointer_id（供调用者在多事件序列中保持一致性）
+    pub fn next_pointer_id(&mut self, new_gesture: bool, multi_finger: bool) -> u64 {
+        self.pointer_manager
+            .next_pointer_id(new_gesture, multi_finger)
+    }
+
+    /// 生成触摸压力值
+    pub fn generate_pressure(&mut self) -> f32 {
+        if self.config.touch_pressure_enabled {
+            self.touch_params.generate_pressure()
+        } else {
+            1.0
+        }
+    }
+
+    /// 发送单次触摸按下事件（带 pointer_id + pressure，不经过率限制）
+    pub fn send_touch_down_event(
+        &mut self,
+        x: u32,
+        y: u32,
+        sender: &ControlSender,
+        pointer_id: u64,
+    ) {
+        let pressure = self.generate_pressure();
+        let (jx, jy) = self.jitter_pos(x, y);
+        let msg =
+            self.build_touch_event(AndroidMotionEventAction::Down, jx, jy, pointer_id, pressure);
+        sender.send_custom(&msg).ok();
+    }
+
+    /// 发送单次触摸移动事件
+    pub fn send_touch_move_event(
+        &mut self,
+        x: u32,
+        y: u32,
+        sender: &ControlSender,
+        pointer_id: u64,
+    ) {
+        let pressure = self.generate_pressure();
+        let (jx, jy) = self.jitter_pos(x, y);
+        let msg =
+            self.build_touch_event(AndroidMotionEventAction::Move, jx, jy, pointer_id, pressure);
+        sender.send_custom(&msg).ok();
+    }
+
+    /// 发送单次触摸抬起事件
+    pub fn send_touch_up_event(&mut self, x: u32, y: u32, sender: &ControlSender, pointer_id: u64) {
+        let pressure = self.generate_pressure();
+        let (jx, jy) = self.jitter_pos(x, y);
+        let msg =
+            self.build_touch_event(AndroidMotionEventAction::Up, jx, jy, pointer_id, pressure);
+        sender.send_custom(&msg).ok();
     }
 
     /// 构造参数化触摸事件
@@ -533,7 +594,18 @@ impl BehaviorEngine {
             config.rate_limit_burst.unwrap_or(3),
         );
         self.session_rhythm = SessionRhythm::new(Self::build_rhythm_config(&config));
+        self.stall_detector = StallDetector::new(config.stall_threshold.unwrap_or(30));
         self.config = config;
+    }
+
+    /// 检查画面是否停滞
+    ///
+    /// 传入当前帧哈希值。若未启用停滞检测或未检测到停滞则返回 `false`。
+    pub fn check_frame_hash(&mut self, frame_hash: u64) -> bool {
+        if !self.config.stall_detection_enabled {
+            return false;
+        }
+        self.stall_detector.check_stall(frame_hash)
     }
 
     /// 返回当前屏幕宽度
@@ -643,7 +715,7 @@ mod tests {
         let mut engine = make_engine();
         let w = engine.screen_width() as f32;
         let h = engine.screen_height() as f32;
-        let jitter = engine.config.position_jitter;
+        let jitter = engine.config.effective_position_jitter();
 
         for _ in 0..500 {
             let (jx, jy) = engine.jitter_pos(540, 1170); // screen center
@@ -677,7 +749,7 @@ mod tests {
         assert_eq!(engine.config.jitter_weighting, JitterWeighting::Center);
 
         let center = (540u32, 1170u32);
-        let jitter_x = engine.config.position_jitter * engine.screen_width as f32;
+        let jitter_x = engine.config.effective_position_jitter() * engine.screen_width as f32;
         let half_x = (jitter_x * 0.5).ceil() as u32;
         let total = 2000u32;
 
@@ -807,7 +879,7 @@ mod tests {
         // conservative 预设：enabled=true 但 pointer/pressure 关闭
         // 构造一个 enabled=false 的配置
         let mut config = BehaviorConfig::default();
-        config.enabled = false;
+        config.enabled = Some(false);
         let mut engine = BehaviorEngine::new(config, 1080, 2340);
 
         let (stream, handle) = setup_mock_server();
@@ -851,7 +923,7 @@ mod tests {
     #[test]
     fn test_enabled_false_does_not_panic() {
         let mut config = BehaviorConfig::default();
-        config.enabled = false;
+        config.enabled = Some(false);
         let mut engine = BehaviorEngine::new(config, 1080, 2340);
 
         let (stream, _handle) = setup_mock_server();

@@ -11,6 +11,7 @@
 
 use {
     crate::{
+        behavior::BehaviorEngine,
         config::{
             InputConfig,
             mapping::{MouseButton, WheelDirection},
@@ -19,7 +20,11 @@ use {
         error::Result,
     },
     std::{
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            Arc,
+            Mutex,
+            atomic::{AtomicU64, Ordering},
+        },
         time::Instant,
     },
     tracing::{debug, trace},
@@ -134,16 +139,23 @@ pub struct MouseMapper {
     /// Timestamp in milliseconds (for Pressed/Dragging states)
     timestamp_ms: AtomicU64,
     config: InputConfig,
+    /// 行为模拟引擎（共享引用，与 KeyboardMapper 共用同一实例）
+    behavior_engine: Arc<Mutex<BehaviorEngine>>,
 }
 
 impl MouseMapper {
-    pub fn new(sender: ControlSender, config: InputConfig) -> Self {
+    pub fn new(
+        sender: ControlSender,
+        config: InputConfig,
+        behavior_engine: Arc<Mutex<BehaviorEngine>>,
+    ) -> Self {
         Self {
             sender,
             snapshot: AtomicU64::new(pack_snapshot(MouseStateKind::Idle, 0, 0)),
             start_coords: AtomicU64::new(0),
             timestamp_ms: AtomicU64::new(0),
             config,
+            behavior_engine,
         }
     }
 
@@ -165,7 +177,8 @@ impl MouseMapper {
             MouseStateKind::Dragging => {
                 let elapsed_ms = instant_to_ms(Instant::now()).saturating_sub(timestamp);
                 if elapsed_ms >= self.config.drag_interval_ms {
-                    self.sender.send_touch_move(x, y)?;
+                    let (jx, jy) = self.behavior_engine.lock().unwrap().jitter_pos(x, y);
+                    self.sender.send_touch_move(jx, jy)?;
                     debug!(
                         "UPDATE: Drag move to ({}, {}) [elapsed={}ms]",
                         x, y, elapsed_ms
@@ -243,13 +256,18 @@ impl MouseMapper {
     fn handle_left_button_press(&self, x: u32, y: u32) -> Result<()> {
         let now = instant_to_ms(Instant::now());
         self.timestamp_ms.store(now, Ordering::Relaxed);
+
+        let (jx, jy) = self.behavior_engine.lock().unwrap().jitter_pos(x, y);
         self.snapshot.store(
-            pack_snapshot(MouseStateKind::Pressed, x, y),
+            pack_snapshot(MouseStateKind::Pressed, jx, jy),
             Ordering::Release,
         );
 
-        self.sender.send_touch_down(x, y)?;
-        trace!("Left button pressed at ({}, {}), sent TouchDown", x, y);
+        self.sender.send_touch_down(jx, jy)?;
+        trace!(
+            "Left button pressed at ({}, {}), sent TouchDown at ({}, {})",
+            x, y, jx, jy
+        );
         Ok(())
     }
 
@@ -356,7 +374,8 @@ impl MouseMapper {
                 let elapsed_ms = instant_to_ms(Instant::now()).saturating_sub(last_update_ms);
 
                 if elapsed_ms >= self.config.drag_interval_ms {
-                    self.sender.send_touch_move(x, y)?;
+                    let (jx, jy) = self.behavior_engine.lock().unwrap().jitter_pos(x, y);
+                    self.sender.send_touch_move(jx, jy)?;
                     trace!("Drag move to ({}, {}) [elapsed={}ms]", x, y, elapsed_ms);
 
                     self.timestamp_ms
@@ -398,11 +417,25 @@ impl MouseMapper {
     }
 
     pub fn handle_wheel_event(&self, x: u32, y: u32, dir: &WheelDirection) -> Result<()> {
-        let (hscroll, vscroll) = match dir {
+        let (hscroll, vscroll): (f32, f32) = match dir {
             WheelDirection::Up => (0.0, -5.0),
             WheelDirection::Down => (0.0, 5.0),
         };
-        self.sender.send_scroll(x, y, hscroll, vscroll)?;
+        let mut engine = self.behavior_engine.lock().unwrap();
+        let (jx, jy) = engine.jitter_pos(x, y);
+
+        // 将滚轮滚动距离视为捏合距离进行抖动，模拟人类手指间距的自然变化
+        let scroll_magnitude = (hscroll.powi(2) + vscroll.powi(2)).sqrt();
+        let jittered_magnitude = engine.jitter_pinch_distance(scroll_magnitude, 0.7);
+        let scale = if scroll_magnitude.abs() > f32::EPSILON {
+            jittered_magnitude / scroll_magnitude
+        } else {
+            1.0
+        };
+        drop(engine);
+
+        self.sender
+            .send_scroll(jx, jy, hscroll * scale, vscroll * scale)?;
 
         debug!("Mouse wheel {:?}", dir);
 

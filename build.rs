@@ -12,6 +12,40 @@ fn main() {
 
     println!("cargo:rerun-if-changed=i18n");
 
+    // If build-scrcpy-server feature is enabled, build the scrcpy server JAR
+    #[cfg(feature = "build-scrcpy-server")]
+    {
+        let scrcpy_dir = manifest_dir.join("scrcpy-server");
+        let build_script = scrcpy_dir.join("build-server.sh");
+
+        if build_script.exists() {
+            let output_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+            let jar_output = output_dir.join("scrcpy-server.jar");
+
+            println!("cargo:rerun-if-changed=scrcpy-server/src");
+            println!("cargo:rerun-if-changed=scrcpy-server/build-server.sh");
+
+            let status = std::process::Command::new(&build_script)
+                .arg("-o")
+                .arg(&jar_output)
+                .current_dir(&scrcpy_dir)
+                .status()
+                .expect("failed to execute build-server.sh");
+
+            if !status.success() {
+                panic!("build-server.sh failed with exit code: {:?}", status.code());
+            }
+
+            // Tell Cargo about the generated JAR
+            println!("cargo:rustc-cfg=built_scrcpy_server");
+        } else {
+            println!(
+                "cargo:warning=build-server.sh not found at {}",
+                build_script.display()
+            );
+        }
+    }
+
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let out_file = out_dir.join("i18n_embedded.rs");
 

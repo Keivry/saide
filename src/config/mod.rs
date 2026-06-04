@@ -5,13 +5,19 @@
 //! This module defines the configuration structures and management for the SAide application,
 //! including loading and saving configuration files, as well as default values.
 
+pub mod behavior;
 pub mod log;
 pub mod mapping;
 pub mod scrcpy;
 
 use {
     crate::{
-        config::{log::LogConfig, mapping::MappingsConfig, scrcpy::ScrcpyConfig},
+        config::{
+            behavior::BehaviorConfig,
+            log::LogConfig,
+            mapping::MappingsConfig,
+            scrcpy::ScrcpyConfig,
+        },
         constant::{self},
         error::{Result, SAideError},
     },
@@ -246,9 +252,25 @@ pub struct SAideConfig {
     pub mappings: Arc<MappingsConfig>,
     #[serde(default)]
     pub logging: LogConfig,
+    #[serde(default)]
+    pub behavior: Option<BehaviorConfig>,
 }
 
 impl SAideConfig {
+    /// 获取有效的行为配置
+    ///
+    /// 如果配置文件中未指定 `[behavior]` 节，返回保守预设。
+    /// 否则将用户配置与保守预设合并（用户显式值覆盖预设默认值）。
+    pub fn behavior_config(&self) -> BehaviorConfig {
+        match &self.behavior {
+            Some(config) => {
+                let preset = crate::behavior::profiles::BehaviorProfile::Conservative.to_config();
+                config.merge_with_preset(&preset)
+            }
+            None => crate::behavior::profiles::BehaviorProfile::Conservative.to_config(),
+        }
+    }
+
     /// Load configuration from file
     pub fn load<P>(path: P) -> Result<Self>
     where
@@ -256,9 +278,12 @@ impl SAideConfig {
     {
         let content = fs::read_to_string(path)
             .map_err(|e| SAideError::ConfigError(format!("Failed to read config file: {}", e)))?;
-        let config: SAideConfig = toml::from_str(&content)
+        let mut config: SAideConfig = toml::from_str(&content)
             .map_err(|e| SAideError::ConfigError(format!("Failed to parse config file: {}", e)))?;
         config.validate()?;
+        if let Some(ref mut b) = config.behavior {
+            b.validate();
+        }
         Ok(config)
     }
 

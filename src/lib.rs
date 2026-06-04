@@ -8,6 +8,7 @@
 //! layers that build on top of that reusable crate.
 
 pub mod avsync;
+pub mod behavior;
 pub mod capture;
 pub mod config;
 pub mod constant;

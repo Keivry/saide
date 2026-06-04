@@ -105,7 +105,7 @@ impl MappingEditor {
                     painter.circle_stroke(
                         screen_pos,
                         12.0,
-                        Stroke::new(2.0, colors.mapping_circle_stroke),
+                        Stroke::new(2.0_f32, colors.mapping_circle_stroke),
                     );
 
                     let key_text = format!("{:?}", key);

@@ -46,6 +46,8 @@ indicator-panel-decode = 解码：
 indicator-panel-gpu-upload = GPU 上传：
 indicator-panel-profile = 配置：
 indicator-panel-profile-none = 不可用
+indicator-panel-behavior = 行为：
+indicator-panel-behavior-none = 不可用
 
 ## UI - 映射编辑器
 editor-title = 映射编辑器

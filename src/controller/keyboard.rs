@@ -6,8 +6,8 @@
 
 use {
     crate::{
+        behavior::BehaviorEngine,
         config::mapping::{Modifiers, ProfileRef, ScrcpyAction},
-        constant::CUSTOM_KEYMAPPING_POS_JITTER,
         controller::{
             android_keycode::{keycode as kc, metastate},
             control_sender::ControlSender,
@@ -17,8 +17,10 @@ use {
     },
     egui::Key,
     parking_lot::RwLock,
-    rand::RngExt,
-    std::collections::HashMap,
+    std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    },
     tracing::trace,
 };
 
@@ -112,14 +114,18 @@ pub struct KeyboardMapper {
 
     /// Active mappings for runtime use, converted to scrcpy video coordinates
     mappings: RwLock<HashMap<Key, ScrcpyAction>>,
+
+    /// 行为模拟引擎（共享引用，与 MouseMapper 共用同一实例）
+    behavior_engine: Arc<Mutex<BehaviorEngine>>,
 }
 
 impl KeyboardMapper {
     /// Create a new keyboard mapper
-    pub fn new(sender: ControlSender) -> Self {
+    pub fn new(sender: ControlSender, behavior_engine: Arc<Mutex<BehaviorEngine>>) -> Self {
         Self {
             sender,
             mappings: RwLock::new(HashMap::new()),
+            behavior_engine,
         }
     }
 
@@ -144,6 +150,9 @@ impl KeyboardMapper {
     }
 
     pub fn clear_mappings(&self) { self.mappings.write().clear(); }
+
+    /// 获取行为模拟引擎的共享引用
+    pub fn get_behavior_engine(&self) -> &Arc<Mutex<BehaviorEngine>> { &self.behavior_engine }
 
     pub fn remove_mapping(&self, key: &Key) { self.mappings.write().remove(key); }
 
@@ -185,6 +194,9 @@ impl KeyboardMapper {
     }
 
     /// Handle text input event, returns true if handled
+    ///
+    /// 通过 BehaviorEngine 逐字符发送文本，字符间插入类人延迟。
+    /// TEXT_MAPPINGS 特殊字符转义在逐字符发送前完成。
     pub fn handle_text_input_event(&self, text: &str) -> Result<bool> {
         let text = text.trim();
         if text.is_empty() {
@@ -195,8 +207,13 @@ impl KeyboardMapper {
             .iter()
             .fold(text.to_owned(), |acc, (k, v)| acc.replace(k, v));
 
-        trace!("Handling text input event: {}", text);
-        self.sender.send_text(&text)?;
+        trace!("Handling text input event (per-char): {}", text);
+        self.behavior_engine
+            .lock()
+            .unwrap()
+            .execute_text(&text, |c| {
+                let _ = self.sender.send_text(&c.to_string());
+            });
         Ok(true)
     }
 
@@ -240,27 +257,6 @@ impl KeyboardMapper {
         Ok(false)
     }
 
-    /// Apply ±0.5% random jitter to touch coordinates before sending via custom key mapping
-    fn jitter_pos(&self, x: u32, y: u32) -> (u32, u32) {
-        let (width, height) = self.sender.get_screen_size();
-        if width == 0 || height == 0 {
-            return (x, y);
-        }
-
-        let max_dx = width as f32 * CUSTOM_KEYMAPPING_POS_JITTER;
-        let max_dy = height as f32 * CUSTOM_KEYMAPPING_POS_JITTER;
-
-        let mut rng = rand::rng();
-        let dx: f32 = rng.random_range(-max_dx..=max_dx);
-        let dy: f32 = rng.random_range(-max_dy..=max_dy);
-
-        let new_x = (x as f32 + dx).clamp(0.0, width as f32 - 1.0) as u32;
-        let new_y = (y as f32 + dy).clamp(0.0, height as f32 - 1.0) as u32;
-
-        trace!("Key mapping jitter: ({x}, {y}) -> ({new_x}, {new_y}) delta=({dx:.1}, {dy:.1})");
-        (new_x, new_y)
-    }
-
     /// Send input action via control sender
     fn send_input_action(&self, action: &ScrcpyAction) -> Result<()> {
         match action {
@@ -296,37 +292,53 @@ impl KeyboardMapper {
                 self.sender.send_key_press(kc::POWER as u32, 0)?;
             }
             ScrcpyAction::Tap { pos } => {
-                let (x, y) = self.jitter_pos(pos.x, pos.y);
-                self.sender.send_touch_down(x, y)?;
-                self.sender.send_touch_up(x, y)?;
+                self.behavior_engine
+                    .lock()
+                    .unwrap()
+                    .execute_tap(pos.x, pos.y, &self.sender);
             }
             ScrcpyAction::TouchDown { pos } => {
-                let (x, y) = self.jitter_pos(pos.x, pos.y);
-                self.sender.send_touch_down(x, y)?;
+                let mut engine = self.behavior_engine.lock().unwrap();
+                let pid = engine.next_pointer_id(true, false);
+                engine.send_touch_down_event(pos.x, pos.y, &self.sender, pid);
             }
             ScrcpyAction::TouchMove { pos } => {
-                let (x, y) = self.jitter_pos(pos.x, pos.y);
-                self.sender.send_touch_move(x, y)?;
+                let mut engine = self.behavior_engine.lock().unwrap();
+                let pid = engine.next_pointer_id(true, false);
+                engine.send_touch_move_event(pos.x, pos.y, &self.sender, pid);
             }
             ScrcpyAction::TouchUp { pos } => {
-                let (x, y) = self.jitter_pos(pos.x, pos.y);
-                self.sender.send_touch_up(x, y)?;
+                let mut engine = self.behavior_engine.lock().unwrap();
+                let pid = engine.next_pointer_id(true, false);
+                engine.send_touch_up_event(pos.x, pos.y, &self.sender, pid);
             }
             ScrcpyAction::Scroll { pos, direction } => {
                 use crate::config::mapping::WheelDirection;
-                let (x, y) = self.jitter_pos(pos.x, pos.y);
-                let (h, v) = match direction {
+                let mut engine = self.behavior_engine.lock().unwrap();
+                let (x, y) = engine.jitter_pos(pos.x, pos.y);
+                let (h, v): (f32, f32) = match direction {
                     WheelDirection::Up => (0.0, -5.0),
                     WheelDirection::Down => (0.0, 5.0),
                 };
-                self.sender.send_scroll(x, y, h, v)?;
+
+                // 将滚轮滚动距离视为捏合距离进行抖动，模拟人类手指间距的自然变化
+                let scroll_magnitude = (h.powi(2) + v.powi(2)).sqrt();
+                let jittered_magnitude = engine.jitter_pinch_distance(scroll_magnitude, 0.7);
+                let scale = if scroll_magnitude.abs() > f32::EPSILON {
+                    jittered_magnitude / scroll_magnitude
+                } else {
+                    1.0
+                };
+                drop(engine);
+
+                self.sender.send_scroll(x, y, h * scale, v * scale)?;
             }
             ScrcpyAction::Swipe { path, .. } => {
-                let (x0, y0) = self.jitter_pos(path[0].x, path[0].y);
-                let (x1, y1) = self.jitter_pos(path[1].x, path[1].y);
-                self.sender.send_touch_down(x0, y0)?;
-                self.sender.send_touch_move(x1, y1)?;
-                self.sender.send_touch_up(x1, y1)?;
+                self.behavior_engine.lock().unwrap().execute_swipe(
+                    (path[0].x, path[0].y),
+                    (path[1].x, path[1].y),
+                    &self.sender,
+                );
             }
             ScrcpyAction::Ignore => {}
         }
@@ -339,12 +351,21 @@ mod tests {
     use {
         super::KeyboardMapper,
         crate::{
-            config::mapping::{Key, MappingAction, Profile, ScrcpyAction},
+            behavior::BehaviorEngine,
+            config::{
+                behavior::BehaviorConfig,
+                mapping::{Key, MappingAction, Profile, ScrcpyAction},
+            },
             controller::control_sender::ControlSender,
             core::coords::{MappingCoordSys, MappingPos, ScrcpyCoordSys},
         },
         parking_lot::RwLock,
-        std::{net::TcpListener, sync::Arc, thread, time::Duration},
+        std::{
+            net::TcpListener,
+            sync::{Arc, Mutex},
+            thread,
+            time::Duration,
+        },
     };
 
     fn setup_control_sender() -> ControlSender {
@@ -360,10 +381,18 @@ mod tests {
         ControlSender::new(stream, 1080, 2400)
     }
 
+    fn setup_behavior_engine() -> Arc<Mutex<BehaviorEngine>> {
+        Arc::new(Mutex::new(BehaviorEngine::new(
+            BehaviorConfig::default(),
+            1080,
+            2400,
+        )))
+    }
+
     #[test]
     fn update_mappings_rebuilds_cached_scrcpy_positions_for_current_display_rotation() {
         let sender = setup_control_sender();
-        let mapper = KeyboardMapper::new(sender);
+        let mapper = KeyboardMapper::new(sender, setup_behavior_engine());
 
         let mut profile = Profile::new("test", "serial", 1);
         profile.add_mapping(
@@ -394,7 +423,7 @@ mod tests {
     #[test]
     fn clear_mappings_removes_cached_actions() {
         let sender = setup_control_sender();
-        let mapper = KeyboardMapper::new(sender);
+        let mapper = KeyboardMapper::new(sender, setup_behavior_engine());
 
         let mut profile = Profile::new("test", "serial", 0);
         profile.add_mapping(

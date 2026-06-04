@@ -38,8 +38,8 @@ impl BehaviorProfile {
 fn conservative_config() -> BehaviorConfig {
     BehaviorConfig {
         preset: Some(BehaviorProfile::Conservative),
-        enabled: true,
-        position_jitter: 0.005, // ±0.5%, 与当前 CUSTOM_KEYMAPPING_POS_JITTER 一致
+        enabled: Some(true),
+        position_jitter: Some(0.005), // ±0.5%, 与当前 CUSTOM_KEYMAPPING_POS_JITTER 一致
         jitter_weighting: crate::config::behavior::JitterWeighting::Uniform,
         inter_action_delay_enabled: false,
         delay_distribution: Some(crate::config::behavior::DelayDistributionConfig::Gaussian),
@@ -87,8 +87,8 @@ fn conservative_config() -> BehaviorConfig {
 fn balanced_config() -> BehaviorConfig {
     BehaviorConfig {
         preset: Some(BehaviorProfile::Balanced),
-        enabled: true,
-        position_jitter: 0.03, // ±3%
+        enabled: Some(true),
+        position_jitter: Some(0.03), // ±3%
         jitter_weighting: crate::config::behavior::JitterWeighting::Uniform,
         inter_action_delay_enabled: true,
         delay_distribution: Some(crate::config::behavior::DelayDistributionConfig::Gaussian),
@@ -136,8 +136,8 @@ fn balanced_config() -> BehaviorConfig {
 fn aggressive_config() -> BehaviorConfig {
     BehaviorConfig {
         preset: Some(BehaviorProfile::Aggressive),
-        enabled: true,
-        position_jitter: 0.05, // ±5%
+        enabled: Some(true),
+        position_jitter: Some(0.05), // ±5%
         jitter_weighting: crate::config::behavior::JitterWeighting::Center,
         inter_action_delay_enabled: true,
         delay_distribution: Some(crate::config::behavior::DelayDistributionConfig::Gaussian),
@@ -194,7 +194,7 @@ mod tests {
         assert!(!config.pointer_id_alternation_enabled);
         assert!(!config.micro_tremor_enabled);
         assert!(!config.session_rhythm_enabled);
-        assert!((config.position_jitter - 0.005).abs() < f32::EPSILON);
+        assert!((config.effective_position_jitter() - 0.005).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(config.delay_mean_ms, Some(80));
         assert_eq!(config.delay_min_ms, Some(20));
         assert_eq!(config.delay_max_ms, Some(200));
-        assert!((config.position_jitter - 0.03).abs() < f32::EPSILON);
+        assert!((config.effective_position_jitter() - 0.03).abs() < f32::EPSILON);
         assert_eq!(config.touch_pressure_stddev, Some(0.15));
         assert_eq!(config.micro_tremor_amplitude_max, Some(1.5));
     }
@@ -214,7 +214,7 @@ mod tests {
         let config = BehaviorProfile::Aggressive.to_config();
         assert_eq!(config.delay_mean_ms, Some(200));
         assert_eq!(config.delay_max_ms, Some(500));
-        assert!((config.position_jitter - 0.05).abs() < f32::EPSILON);
+        assert!((config.effective_position_jitter() - 0.05).abs() < f32::EPSILON);
         assert_eq!(config.touch_pressure_stddev, Some(0.25));
         assert_eq!(config.micro_tremor_amplitude_max, Some(2.0));
     }

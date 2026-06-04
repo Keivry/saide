@@ -8,5 +8,6 @@
 
 pub mod codec_probe;
 pub mod connection;
+pub mod device_message;
 pub mod hwcodec;
 pub mod server;

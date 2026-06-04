@@ -164,6 +164,10 @@ Supported action tags currently include:
 - `TouchMove`
 - `TouchUp`
 - `Scroll`
+- `TouchDown`
+- `TouchMove`
+- `TouchUp`
+- `Scroll`
 - `Key`
 - `KeyCombo`
 - `Text`
@@ -172,6 +176,135 @@ Supported action tags currently include:
 - `Menu`
 - `Power`
 - `Ignore`
+
+### `[behavior]`
+
+Anti-detection behavior simulation. This section is entirely optional; when absent SAide falls back to `conservative` defaults with no extra delay.
+
+```toml
+[behavior]
+# Preset: conservative | balanced | aggressive
+# The preset determines default values for all unset fields below.
+preset = "balanced"
+
+# Master toggle. Set to false to disable all behavior simulation.
+enabled = true
+
+# ── coordinate jitter ─────────────────────────────────────
+# Jitter amplitude as a fraction of the screen dimension (0.0–0.10).
+# Each touch coordinate is offset by a random amount within ±position_jitter.
+position_jitter = 0.03
+
+# Jitter weighting strategy.
+# "uniform" — uniform random within [-jitter, +jitter]
+# "center"  — Gaussian (centre-weighted); more natural, but slightly less spread
+jitter_weighting = "uniform"
+
+# ── inter-action delay ────────────────────────────────────
+# Enable pauses between consecutive actions (taps, swipes, key presses).
+inter_action_delay_enabled = true
+
+# Random distribution for delays.
+# "uniform" | "gaussian"
+delay_distribution = "gaussian"
+
+delay_mean_ms = 80
+delay_stddev_ms = 40.0
+delay_min_ms = 20
+delay_max_ms = 200
+
+# ── intra-action delay (TouchDown → TouchUp) ──────────────
+# Enable a realistic press-duration delay inside each tap.
+intra_action_delay_enabled = true
+
+tap_downup_delay_mean_ms = 80
+tap_downup_delay_stddev_ms = 30.0
+
+# ── path simulation ───────────────────────────────────────
+# Replace straight-line swipes with cubic-Bézier trajectories.
+path_simulation_enabled = true
+
+# Number of intermediate points sampled along the Bézier curve.
+path_points = 6
+
+# Pixel step size for path interpolation.
+path_step_px = 8.0
+
+# Control-point lateral offset ratio (0.0–1.0).
+# Higher values produce more pronounced curves.
+control_offset = 0.2
+
+# Swipe duration range (ms). The actual duration is randomly picked from [min, max].
+swipe_duration_min_ms = 100
+swipe_duration_max_ms = 400
+
+# ── character-by-character typing ─────────────────────────
+# Send text one character at a time instead of as a single paste block.
+char_by_char_enabled = true
+
+char_delay_mean_ms = 50
+char_delay_stddev_ms = 25.0
+
+# ── stall detection ───────────────────────────────────────
+# Monitor video frames and warn when the screen appears frozen
+# (which may indicate the automation is stuck in a loop).
+stall_detection_enabled = true
+stall_threshold = 10
+
+# ── rate limiting ─────────────────────────────────────────
+# Token-bucket limiter to prevent operation bursts that exceed human speeds.
+rate_limit_enabled = true
+rate_limit_ops_per_sec = 10
+rate_limit_burst = 3
+
+# ── touch pressure ────────────────────────────────────────
+# Randomise the pressure field in touch events.
+# Real human pressure varies naturally; a fixed 1.0 is a clear automation fingerprint.
+touch_pressure_enabled = true
+touch_pressure_mean = 0.7
+touch_pressure_stddev = 0.15
+touch_pressure_min = 0.3
+touch_pressure_max = 1.0
+
+# ── pointer ID alternation ────────────────────────────────
+# Rotate the pointer_id across operations so no single ID becomes traceable.
+pointer_id_alternation_enabled = true
+
+# ── micro-tremor ──────────────────────────────────────────
+# Overlay a high-frequency (8–12 Hz) physiological tremor onto move events
+# and long-press down events. Amplitude varies inversely with pressure.
+micro_tremor_enabled = true
+micro_tremor_frequency_hz = 10.0
+micro_tremor_amplitude_min = 0.5
+micro_tremor_amplitude_max = 1.5
+
+# ── multi-finger pinch spacing ────────────────────────────
+# Add a random Gaussian offset to the inter-finger distance during
+# two-finger pinch/zoom operations.
+pinch_jitter_enabled = true
+
+# ── session rhythm ────────────────────────────────────────
+# Introduce macro-level activity cycles and idle pauses to simulate
+# natural human attention fluctuations over long sessions.
+session_rhythm_enabled = true
+
+# How often the activity level is randomly re-evaluated (seconds).
+cycle_duration_sec_range = [300.0, 900.0]
+
+# How often an idle pause is inserted (seconds).
+pause_interval_sec_range = [300.0, 900.0]
+
+# Duration of an idle pause (seconds).
+pause_duration_sec_range = [2.0, 10.0]
+
+# Time without user input after which the engine is considered "idle" (seconds).
+# Pauses are only inserted when the session is idle.
+idle_threshold_sec = 2.0
+```
+
+> **Tip:** Start with a preset (`conservative`, `balanced`, or `aggressive`) and then override individual fields you want to tune. Pauses are only inserted when the session has been idle for at least `idle_threshold_sec`, so they never interrupt active gameplay.
+
+A full commented example is available at [`config.behavior-example.toml`](../config.behavior-example.toml).
 
 ### `[logging]`
 
@@ -206,6 +339,16 @@ level = "info"
 | `input.long_press_ms` | `50..=2000` |
 | `input.drag_threshold_px` | `1.0..=50.0` |
 | `input.drag_interval_ms` | `1..=100` |
+
+### Behavior
+
+| Key | Range |
+| --- | --- |
+| `behavior.position_jitter` | `0.0..=0.10` |
+| `behavior.touch_pressure_mean` | `0.0..=1.0` |
+| `behavior.touch_pressure_min` | `0.0..=1.0` |
+| `behavior.touch_pressure_max` | `0.0..=1.0` |
+| `behavior.control_offset` | `0.0..=1.0` |
 
 ### Audio
 

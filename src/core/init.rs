@@ -7,6 +7,7 @@
 
 use {
     crate::{
+        behavior::BehaviorEngine,
         config::SAideConfig,
         controller::{control_sender::ControlSender, keyboard::KeyboardMapper, mouse::MouseMapper},
         core::{
@@ -20,7 +21,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     std::{
         net::TcpStream,
-        sync::Arc,
+        sync::{Arc, Mutex},
         thread,
         time::{Duration, Instant},
     },
@@ -35,7 +36,7 @@ pub const INIT_RESULT_CHANNEL_CAPACITY: usize = 4;
 pub enum InitEvent {
     /// ScrcpyConnection established with streams
     ConnectionReady {
-        connection: ScrcpyConnection,
+        connection: Arc<ScrcpyConnection>,
         control_sender: ControlSender,
         video_stream: TcpStream,
         audio_stream: Option<TcpStream>,
@@ -43,6 +44,7 @@ pub enum InitEvent {
         device_name: Option<String>,
         audio_disabled_reason: Option<AudioDisabledReason>,
         capture_orientation: Option<u32>,
+        behavior_engine: Arc<Mutex<BehaviorEngine>>,
     },
     KeyboardMapper(KeyboardMapper),
     MouseMapper(MouseMapper),
@@ -79,30 +81,23 @@ pub fn start_initialization(
         }
     };
 
-    // Start device monitor
-    match DeviceMonitor::start(shell.clone(), cancellation_token.clone()) {
-        Ok(device_monitor_rx) => {
-            if tx
-                .send(InitEvent::DeviceMonitor(device_monitor_rx))
-                .is_err()
-            {
-                return;
-            }
-        }
-        Err(e) => {
-            let _ = tx.send(InitEvent::Error(e));
-            return;
-        }
-    }
+    let shell_for_monitor = shell.clone();
 
-    // Start scrcpy connection (async)
     let tx_clone = tx.clone();
+    let monitor_shell = shell_for_monitor;
+    let monitor_token = cancellation_token.clone();
     ConnectionService::start(
         shell,
         config.clone(),
         move |result| match result {
             Ok(conn_result) => {
-                send_connection_events(&tx_clone, conn_result, &config);
+                send_connection_events(
+                    &tx_clone,
+                    conn_result,
+                    &config,
+                    monitor_shell,
+                    monitor_token.clone(),
+                );
             }
             Err(e) => {
                 let _ = tx_clone.send(InitEvent::Error(e));
@@ -116,6 +111,8 @@ fn send_connection_events(
     tx: &Sender<InitEvent>,
     conn_result: ConnectionResult,
     config: &Arc<SAideConfig>,
+    monitor_shell: Arc<AdbShell>,
+    token: CancellationToken,
 ) {
     let ConnectionResult {
         connection,
@@ -126,11 +123,25 @@ fn send_connection_events(
         device_name,
         audio_disabled_reason,
         capture_orientation,
+        shell: _connection_shell,
+        monitor_stream,
     } = conn_result;
+
+    // 创建共享的 BehaviorEngine 实例
+    let behavior_config = config.behavior_config();
+    let engine = BehaviorEngine::new(
+        behavior_config,
+        video_resolution.0 as u16,
+        video_resolution.1 as u16,
+    );
+    let engine = Arc::new(Mutex::new(engine));
+    let engine_for_player = Arc::clone(&engine);
+
+    let connection = Arc::new(connection);
 
     if tx
         .send(InitEvent::ConnectionReady {
-            connection,
+            connection: Arc::clone(&connection),
             control_sender: control_sender.clone(),
             video_stream,
             audio_stream,
@@ -138,6 +149,7 @@ fn send_connection_events(
             device_name,
             audio_disabled_reason,
             capture_orientation,
+            behavior_engine: engine_for_player,
         })
         .is_err()
     {
@@ -145,12 +157,30 @@ fn send_connection_events(
     }
 
     let tx_keyboard = tx.clone();
-    InputManager::create_keyboard_mapper(control_sender.clone(), move |mapper| {
+    InputManager::create_keyboard_mapper(control_sender.clone(), engine.clone(), move |mapper| {
         let _ = tx_keyboard.send(InitEvent::KeyboardMapper(mapper));
     });
 
     let tx_mouse = tx.clone();
-    InputManager::create_mouse_mapper(config.input.clone(), control_sender, move |mapper| {
-        let _ = tx_mouse.send(InitEvent::MouseMapper(mapper));
-    });
+    InputManager::create_mouse_mapper(
+        config.input.clone(),
+        control_sender,
+        engine,
+        move |mapper| {
+            let _ = tx_mouse.send(InitEvent::MouseMapper(mapper));
+        },
+    );
+
+    // Start DeviceMonitor with TCP stream (after connection is established)
+    match DeviceMonitor::start(monitor_shell, monitor_stream, token) {
+        Ok(device_monitor_rx) => {
+            if tx
+                .send(InitEvent::DeviceMonitor(device_monitor_rx))
+                .is_err()
+            {}
+        }
+        Err(e) => {
+            let _ = tx.send(InitEvent::Error(e));
+        }
+    }
 }

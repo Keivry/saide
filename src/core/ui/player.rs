@@ -8,6 +8,7 @@ use {
     super::VideoStats,
     crate::{
         avsync::AVSync,
+        behavior::BehaviorEngine,
         decoder::{
             AudioDecoder,
             AudioPlayer,
@@ -42,7 +43,7 @@ use {
     std::{
         io::Read,
         net::TcpStream,
-        sync::Arc,
+        sync::{Arc, Mutex as StdMutex},
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     },
@@ -200,6 +201,12 @@ pub struct StreamPlayer {
 
     /// Recorder audio frame sender (shared with stream worker via Arc<Mutex<>>)
     recorder_audio_tx: Arc<Mutex<Option<Sender<DecodedAudio>>>>,
+
+    /// 行为模拟引擎引用，用于画面停滞检测
+    ///
+    /// 在 SAideApp 初始化流程晚期通过 `set_behavior_engine()` 注入。
+    /// 若为 None，则跳过停滞检测（无操作）。
+    behavior_engine: Option<Arc<StdMutex<BehaviorEngine>>>,
 }
 
 impl StreamPlayer {
@@ -258,6 +265,7 @@ impl StreamPlayer {
             audio_ctrl: None,
             recorder_video_tx: Arc::new(Mutex::new(None)),
             recorder_audio_tx: Arc::new(Mutex::new(None)),
+            behavior_engine: None,
         }
     }
 
@@ -300,6 +308,7 @@ impl StreamPlayer {
         let hwdecode = self.hwdecode;
         let recorder_video_tx = self.recorder_video_tx.clone();
         let recorder_audio_tx = self.recorder_audio_tx.clone();
+        let behavior_engine = self.behavior_engine.clone();
         let current_encoder_fingerprint = {
             let config_dir = crate::constant::config_dir();
             EncoderProfileDatabase::load(&config_dir)
@@ -348,6 +357,7 @@ impl StreamPlayer {
                     repaint_ctx,
                     recorder_video_tx,
                     recorder_audio_tx,
+                    behavior_engine,
                 },
             ) {
                 let is_cancelled = e.is_cancelled();
@@ -623,6 +633,14 @@ impl StreamPlayer {
         *self.recorder_audio_tx.lock() = None;
     }
 
+    /// 注入行为模拟引擎引用（用于画面停滞检测）
+    ///
+    /// 必须在 `start()` 之前调用，否则当前 session 不会进行停滞检测。
+    /// StreamPlayer 创建早于 BehaviorEngine，因此采用晚期注入模式。
+    pub fn set_behavior_engine(&mut self, engine: Arc<StdMutex<BehaviorEngine>>) {
+        self.behavior_engine = Some(engine);
+    }
+
     fn draw_failed_overlay(&self, ui: &mut egui::Ui, err_msg: &str) {
         use super::theme::AppColors;
 
@@ -695,6 +713,7 @@ struct StreamWorkerConfig {
     repaint_ctx: egui::Context,
     recorder_video_tx: Arc<Mutex<Option<Sender<Arc<DecodedFrame>>>>>,
     recorder_audio_tx: Arc<Mutex<Option<Sender<DecodedAudio>>>>,
+    behavior_engine: Option<Arc<StdMutex<BehaviorEngine>>>,
 }
 
 /// Stream worker thread
@@ -728,6 +747,7 @@ fn stream_worker(
         repaint_ctx,
         recorder_video_tx,
         recorder_audio_tx,
+        behavior_engine,
     } = config;
 
     let decoder_mgr = DecoderManager::init(
@@ -772,6 +792,7 @@ fn stream_worker(
         decoder_mgr.preferred_decoder,
         &token,
         &recorder_video_tx,
+        behavior_engine,
     );
 
     // Video loop ended — cancel the token to signal the audio thread to exit.
@@ -961,6 +982,25 @@ impl AudioThread {
     }
 }
 
+/// 快速像素哈希 — 采样策略，适用于 60-240 FPS 视频帧
+///
+/// 每隔 64 行采样一次，使用乘法混合折叠为 u64。
+/// 非加密哈希，仅用于停滞判重，追求极低开销。
+fn compute_frame_hash(data: &[u8], width: usize) -> u64 {
+    let row_bytes = width.saturating_mul(4); // RGBA
+    let stride = row_bytes.saturating_mul(64).max(1);
+    let mut hash: u64 = 0;
+    let mut i = 0;
+    while i < data.len() {
+        hash = hash
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(data[i] as u64);
+        i += stride;
+    }
+    // 混合长度信息以避免空帧误判
+    hash.wrapping_add(data.len() as u64)
+}
+
 struct VideoLoop;
 
 impl VideoLoop {
@@ -981,6 +1021,7 @@ impl VideoLoop {
         preferred_decoder: Option<DecoderPreference>,
         token: &CancellationToken,
         recorder_video_tx: &Arc<Mutex<Option<Sender<Arc<DecodedFrame>>>>>,
+        behavior_engine: Option<Arc<StdMutex<BehaviorEngine>>>,
     ) -> Result<()> {
         let mut consecutive_read_errors = 0u32;
         let mut pending_resolution: Option<(u32, u32)> = None;
@@ -1126,6 +1167,14 @@ impl VideoLoop {
             };
 
             if let Some(frame) = frame_opt {
+                // 画面停滞检测：若帧哈希连续相同则日志告警
+                if let Some(ref engine) = behavior_engine {
+                    let hash = compute_frame_hash(&frame.data, frame.width as usize);
+                    if engine.lock().unwrap().check_frame_hash(hash) {
+                        warn!("Video stall detected — consecutive identical frames");
+                    }
+                }
+
                 profiler.mark_upload();
 
                 let frame_resolution = (frame.width, frame.height);

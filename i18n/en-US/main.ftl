@@ -46,6 +46,8 @@ indicator-panel-decode = Decode:
 indicator-panel-gpu-upload = GPU Upload:
 indicator-panel-profile = Profile:
 indicator-panel-profile-none = N/A
+indicator-panel-behavior = Behavior:
+indicator-panel-behavior-none = N/A
 
 ## UI - Mapping Editor
 editor-title = Mapping Editor

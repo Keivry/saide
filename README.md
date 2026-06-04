@@ -16,6 +16,41 @@ SAide is a desktop client for mirroring and controlling Android devices through 
 - built-in latency profiling and status indicators
 - one-click screenshot and screen recording saved locally as PNG / MP4
 
+## Anti-Detection System
+
+SAide includes a behavior simulation engine that humanizes all input operations to reduce the risk of detection by game anti-cheat systems.
+
+**What it does:**
+
+- **Jittering** — randomizes touch coordinates (±0.5%–±5%) and multi-finger pinch spacing so clicks and swipes never hit the exact same pixel
+- **Delay randomization** — inserts realistic Gaussian-distributed pauses between actions (20–500 ms) and within taps (TouchDown → TouchUp, 30–200 ms)
+- **Bézier path smoothing** — replaces straight-line swipes with cubic-Bézier paths that mimic the natural curve of a human finger
+- **Character-by-character typing** — sends text one character at a time with variable inter-key delays instead of pasting in one block
+- **Touch pressure variation** — varies the `pressure` field (0.3–1.0) using a Gaussian distribution rather than a fixed value of 1.0
+- **Pointer ID rotation** — cycles through multiple pointer IDs across operations so no single ID becomes a tracking fingerprint
+- **Micro-tremor** — overlays 8–12 Hz physiological tremor onto move and long-press events (0.5–2 px amplitude)
+- **Session rhythm** — introduces macro-level activity cycles (5–15 min) with idle pauses (2–10 s) that simulate natural attention decay
+- **Rate limiting** — a token-bucket limiter prevents operation bursts that exceed human reaction speeds
+- **Stall detection** — monitors video frames to detect and warn about suspiciously uniform input patterns
+
+**Configuration:**
+
+Enable anti-detection in `config.toml`:
+
+```toml
+[behavior]
+preset = "balanced"   # conservative | balanced | aggressive
+enabled = true
+```
+
+| Preset          | Jitter  | Delay (ms)   | Path smoothing | Typing | Pressure | Tremor |
+| --------------- | ------- | ------------ | -------------- | ------ | -------- | ------ |
+| `conservative`  | ±0.5%   | 0            | off            | off    | off      | off    |
+| `balanced`      | ±3%     | 80 (20–200)  | on             | on     | on       | on     |
+| `aggressive`    | ±5%     | 200 (50–500) | on             | on     | on       | on     |
+
+Every option can be tuned individually — see [`config.behavior-example.toml`](config.behavior-example.toml) for the full reference. When the `[behavior]` section is absent, SAide falls back to `conservative` defaults with no extra delay.
+
 ## Quick start
 
 1. Download the latest release for your platform from [Releases](https://github.com/keivry/saide/releases).
@@ -109,6 +144,7 @@ Config file location (searched in order): platform config dir → `./config.toml
 | `[scrcpy.video]`   | bitrate, fps, max size, codec, encoder                                        |
 | `[scrcpy.audio]`   | audio enablement, codec, source, buffering                                    |
 | `[scrcpy.options]` | screen-off and stay-awake                                                     |
+| `[behavior]`       | anti-detection: touch, typing, and timing humanization                        |
 | `[gpu]`            | backend (`VULKAN`/`OPENGL`), vsync, hardware decode                           |
 | `[input]`          | long press, drag threshold, drag interval                                     |
 | `[mappings]`       | toggle key and per-device profiles                                            |

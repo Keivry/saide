@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-pub use scrcpy_protocol::ControlSender;
+pub use scrcpy_protocol::{
+    ControlSender,
+    protocol::control::{
+        AndroidKeyEventAction,
+        AndroidMotionEventAction,
+        ControlMessage,
+        POINTER_ID_GENERIC_FINGER,
+        POINTER_ID_MOUSE,
+        POINTER_ID_VIRTUAL_FINGER,
+        Position,
+    },
+};
 
 #[cfg(test)]
 mod tests {

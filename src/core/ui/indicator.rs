@@ -24,6 +24,9 @@ pub struct Indicator {
     /// Currently selected custom keyboard mapping profile
     active_profile_name: Option<String>,
 
+    /// Currently active behavior profile name for display
+    behavior_profile_name: Option<String>,
+
     /// Android display rotation (0-3 from `Display.getRotation()` / `Surface.ROTATION_*`)
     display_rotation: u32,
 
@@ -54,6 +57,7 @@ impl Indicator {
     pub fn new(position: IndicatorPosition, max_fps: f32) -> Self {
         Self {
             active_profile_name: None,
+            behavior_profile_name: None,
             display_rotation: 0,
             capture_orientation: None,
             video_rotation: 0,
@@ -77,6 +81,11 @@ impl Indicator {
 
     pub fn update_active_profile(&mut self, profile_name: Option<String>) -> &mut Self {
         self.active_profile_name = profile_name;
+        self
+    }
+
+    pub fn update_behavior_profile(&mut self, profile_name: Option<String>) -> &mut Self {
+        self.behavior_profile_name = profile_name;
         self
     }
 
@@ -232,7 +241,7 @@ impl Indicator {
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(colors.indicator_popup_bg)
-                    .stroke(egui::Stroke::new(1.0, colors.indicator_popup_stroke))
+                    .stroke(egui::Stroke::new(1.0_f32, colors.indicator_popup_stroke))
                     .inner_margin(egui::Margin::same(12))
                     .show(ui, |ui| {
                         ui.set_min_width(280.0);
@@ -300,6 +309,14 @@ impl Indicator {
                                     self.active_profile_name
                                         .as_deref()
                                         .unwrap_or(&t!("indicator-panel-profile-none")),
+                                );
+                                ui.end_row();
+
+                                ui.label(t!("indicator-panel-behavior"));
+                                ui.label(
+                                    self.behavior_profile_name
+                                        .as_deref()
+                                        .unwrap_or(&t!("indicator-panel-behavior-none")),
                                 );
                                 ui.end_row();
                             });

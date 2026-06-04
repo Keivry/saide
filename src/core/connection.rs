@@ -7,6 +7,7 @@
 
 use {
     crate::{
+        behavior::BehaviorEngine,
         config::{InputConfig, SAideConfig},
         controller::{control_sender::ControlSender, keyboard::KeyboardMapper, mouse::MouseMapper},
         decoder::AutoDecoder,
@@ -18,7 +19,10 @@ use {
         },
     },
     adbshell::AdbShell,
-    std::{net::TcpStream, sync::Arc},
+    std::{
+        net::TcpStream,
+        sync::{Arc, Mutex},
+    },
     tokio_util::sync::CancellationToken,
     tracing::{debug, error, info},
 };
@@ -33,6 +37,8 @@ pub struct ConnectionResult {
     pub device_name: Option<String>,
     pub audio_disabled_reason: Option<AudioDisabledReason>,
     pub capture_orientation: Option<u32>,
+    pub shell: Arc<AdbShell>,
+    pub monitor_stream: Option<TcpStream>,
 }
 
 /// Connection service - manages scrcpy connection lifecycle
@@ -79,7 +85,7 @@ impl ConnectionService {
             _ = token.cancelled() => {
                 return Err(SAideError::Cancelled);
             }
-            conn = Self::scrcpy_connection(shell, config.clone(), capture_orientation) => {
+            conn = Self::scrcpy_connection(shell.clone(), config.clone(), capture_orientation) => {
                 conn?
             }
         };
@@ -114,6 +120,9 @@ impl ConnectionService {
             video_resolution.0, video_resolution.1, capture_orientation
         );
 
+        // Clone control_stream for DeviceMonitor TCP event listening
+        let monitor_stream = control_stream.try_clone().ok();
+
         connection.set_control_stream(control_stream);
 
         Ok(ConnectionResult {
@@ -125,6 +134,8 @@ impl ConnectionService {
             device_name,
             audio_disabled_reason,
             capture_orientation,
+            shell,
+            monitor_stream,
         })
     }
 
@@ -199,22 +210,29 @@ pub struct InputManager;
 
 impl InputManager {
     /// Create keyboard mapper
-    pub fn create_keyboard_mapper<F>(control_sender: ControlSender, on_ready: F)
-    where
+    pub fn create_keyboard_mapper<F>(
+        control_sender: ControlSender,
+        behavior_engine: Arc<Mutex<BehaviorEngine>>,
+        on_ready: F,
+    ) where
         F: FnOnce(KeyboardMapper),
     {
-        let mapper = KeyboardMapper::new(control_sender);
-        debug!("Keyboard mapper initialized with ControlSender");
+        let mapper = KeyboardMapper::new(control_sender, behavior_engine);
+        debug!("Keyboard mapper initialized with ControlSender + BehaviorEngine");
         on_ready(mapper);
     }
 
     /// Create mouse mapper
-    pub fn create_mouse_mapper<F>(config: InputConfig, control_sender: ControlSender, on_ready: F)
-    where
+    pub fn create_mouse_mapper<F>(
+        config: InputConfig,
+        control_sender: ControlSender,
+        behavior_engine: Arc<Mutex<BehaviorEngine>>,
+        on_ready: F,
+    ) where
         F: FnOnce(MouseMapper),
     {
-        let mapper = MouseMapper::new(control_sender, config);
-        debug!("Mouse mapper initialized with ControlSender");
+        let mapper = MouseMapper::new(control_sender, config, behavior_engine);
+        debug!("Mouse mapper initialized with ControlSender + BehaviorEngine");
         on_ready(mapper);
     }
 }
