@@ -1,14 +1,13 @@
 package com.genymobile.scrcpy.control;
 
-// PATCH: anti-detection - new device monitoring message types
-public static final int TYPE_ROTATION_CHANGED = 3;
-public static final int TYPE_IME_STATE_CHANGED = 4;
-
 public final class DeviceMessage {
 
     public static final int TYPE_CLIPBOARD = 0;
     public static final int TYPE_ACK_CLIPBOARD = 1;
     public static final int TYPE_UHID_OUTPUT = 2;
+    // PATCH: anti-detection - new device monitoring message types
+    public static final int TYPE_ROTATION_CHANGED = 3;
+    public static final int TYPE_IME_STATE_CHANGED = 4;
 
     private int type;
     private String text;
