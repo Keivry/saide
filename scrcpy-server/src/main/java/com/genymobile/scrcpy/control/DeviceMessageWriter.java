@@ -42,12 +42,11 @@ public class DeviceMessageWriter {
                 break;
             // PATCH: anti-detection - serialize device monitoring messages
             case DeviceMessage.TYPE_ROTATION_CHANGED:
-                ByteBuffer rotationBuffer = ByteBuffer.allocate(4);
-                rotationBuffer.putInt(msg.getRotation());
-                return rotationBuffer.array();
+                dos.writeInt(msg.getRotation());
+                break;
             case DeviceMessage.TYPE_IME_STATE_CHANGED:
-                byte[] imeByte = new byte[]{(byte) (msg.getImeVisible() ? 1 : 0)};
-                return imeByte;
+                dos.writeByte(msg.getImeVisible() ? 1 : 0);
+                break;
             default:
                 throw new ControlProtocolException("Unknown event type: " + type);
         }

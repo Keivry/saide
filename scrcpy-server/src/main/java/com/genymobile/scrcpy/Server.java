@@ -173,6 +173,7 @@ public final class Server {
             }
 
             // PATCH: anti-detection - register screen rotation and IME visibility listeners
+            final DeviceMessageSender sender = controller.getSender();
             OrientationEventListener orientationListener = new OrientationEventListener(FakeContext.get(), SensorManager.SENSOR_DELAY_NORMAL) {
                 @Override
                 public void onOrientationChanged(int orientation) {
@@ -187,7 +188,6 @@ public final class Server {
                         } else {
                             rotation = 270;
                         }
-                        DeviceMessageSender sender = controller.getSender();
                         if (sender != null) {
                             sender.send(DeviceMessage.createRotationChanged(rotation));
                         }
@@ -221,7 +221,6 @@ public final class Server {
                         boolean imeVisible = (screenHeight - rect.bottom) > screenHeight * 0.15;
                         if (imeVisible != lastVisible) {
                             lastVisible = imeVisible;
-                            DeviceMessageSender sender = controller.getSender();
                             if (sender != null) {
                                 sender.send(DeviceMessage.createImeStateChanged(imeVisible));
                             }
