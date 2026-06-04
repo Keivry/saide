@@ -146,14 +146,13 @@ jobs:
 
       - name: Set up vcpkg (Windows)
         if: runner.os == 'Windows'
-        shell: bash
         run: |
-          VCPKG_DIR="C:/vcpkg"
-          if [ ! -d "$VCPKG_DIR" ]; then
-            git clone --depth 1 https://github.com/microsoft/vcpkg "$VCPKG_DIR"
-            "$VCPKG_DIR/bootstrap-vcpkg.bat" -disableMetrics
-          fi
-          echo "VCPKG_ROOT=$VCPKG_DIR" >> "$GITHUB_ENV"
+          $VCPKG_DIR = "C:\vcpkg"
+          if (-not (Test-Path $VCPKG_DIR)) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg $VCPKG_DIR
+            & "$VCPKG_DIR\bootstrap-vcpkg.bat" -disableMetrics
+          }
+          "VCPKG_ROOT=$VCPKG_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKG_DEFAULT_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKG_TARGET_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKG_OVERLAY_TRIPLETS=$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -207,15 +206,14 @@ jobs:
             "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
 
-      # ── Rust ────────────────────────────────────────────
+      # ── Rust cache (deps only, target/ too large for GitHub cache) ──
 
-      - name: Cache Rust build artifacts
+      - name: Cache Rust dependencies
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
