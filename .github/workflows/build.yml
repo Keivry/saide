@@ -20,12 +20,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -38,142 +36,14 @@ jobs:
       runner: ubuntu-latest
       binary_name: saide
       extra_runtime_lib_dirs: /opt/ffmpeg8/lib
-
-  check-linux:
-    name: Clippy + Test Linux
-    needs: build-linux
-    runs-on: ubuntu-latest
-    env:
-      FFMPEG_PREFIX: /opt/ffmpeg8
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: clippy
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libasound2-dev libfontconfig1-dev libfreetype6-dev libssl-dev \
-            libvulkan-dev libwayland-dev libx11-dev libxcb1-dev libxcb-shm0-dev \
-            libxcb-xfixes0-dev libxcursor-dev libxi-dev libxkbcommon-dev libxrandr-dev pkg-config
-
-      - name: Build FFmpeg 8 from source
-        run: |
-          set -euo pipefail
-          curl -L "https://ffmpeg.org/releases/ffmpeg-8.1.tar.xz" -o /tmp/ffmpeg-8.1.tar.xz
-          rm -rf /tmp/ffmpeg-8.1
-          tar -xf /tmp/ffmpeg-8.1.tar.xz -C /tmp
-          cd /tmp/ffmpeg-8.1
-          ./configure --prefix="$FFMPEG_PREFIX" --enable-gpl --enable-pic \
-            --enable-shared --disable-static --disable-programs --disable-doc --disable-debug
-          make -j"$(getconf _NPROCESSORS_ONLN)"
-          sudo make install
-          printf 'PKG_CONFIG_PATH=%s/lib/pkgconfig\n' "$FFMPEG_PREFIX" >> "$GITHUB_ENV"
-
-      - name: Cache Rust build artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Check compilation
-        run: cargo check --workspace
-
-      - name: Run clippy
-        run: cargo clippy --workspace -- -D warnings
-
-      - name: Run tests
-        env:
-          LD_LIBRARY_PATH: /opt/ffmpeg8/lib
-        run: >-
-          cargo test --workspace --
-          --skip test_audio_player_creation
-          --skip recorder_writes_audio_stream_to_mp4
-          --skip test_detect_gpu_linux
+      checks: true
 
   build-windows:
-    name: Build Windows
+    name: Build + Check Windows
     needs: fmt
     uses: ./.github/workflows/_build.yml
     with:
       target: x86_64-pc-windows-msvc
       runner: windows-latest
       binary_name: saide.exe
-
-  check-windows:
-    name: Clippy + Test Windows
-    needs: build-windows
-    runs-on: windows-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: x86_64-pc-windows-msvc
-          components: clippy
-
-      - name: Set up vcpkg
-        run: |
-          git clone --depth 1 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
-          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
-          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VCPKG_DEFAULT_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VCPKG_TARGET_TRIPLET=x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VCPKG_OVERLAY_TRIPLETS=$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VCPKGRS_DYNAMIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Install Windows pkg-config fallback
-        run: |
-          choco install -y pkgconfiglite
-          "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-
-      - name: Install CUDA toolkit
-        uses: MZWNET/cuda-toolkit@master
-        with:
-          cuda: "13.2.0"
-          method: network
-
-      - name: Install Windows build dependencies
-        run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install --overlay-triplets "$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" "ffmpeg[nvcodec]:x64-windows-release" "opus:x64-windows-release"
-          "VCPKG_INSTALLED_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "FFMPEG_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "PKG_CONFIG_PATH=$env:VCPKG_ROOT\installed\x64-windows-release\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$env:VCPKG_ROOT\installed\x64-windows-release\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          if ($env:CUDA_PATH) {
-            "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
-          }
-
-      - name: Cache Rust build artifacts
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Check compilation
-        run: cargo check --workspace
-
-      - name: Run clippy
-        run: cargo clippy --workspace -- -D warnings
-
-      - name: Run tests
-        run: >-
-          cargo test --workspace --
-          --skip test_audio_player_creation
-          --skip recorder_writes_audio_stream_to_mp4
-          --skip test_detect_gpu_linux
+      checks: true

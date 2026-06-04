@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: ""
+      checks:
+        description: "Run cargo check, clippy, and tests after build"
+        required: false
+        type: boolean
+        default: false
     outputs:
       scrcpy-server-jar-path:
         description: "Path to built scrcpy-server JAR"
@@ -40,6 +45,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           targets: ${{ inputs.target }}
+          components: ${{ inputs.checks && 'clippy,rustfmt' || '' }}
 
       - name: Set up Java 17
         if: inputs.target == 'x86_64-unknown-linux-gnu'
@@ -90,8 +96,18 @@ jobs:
             libxcb-xfixes0-dev libxcursor-dev libxi-dev libxkbcommon-dev \
             libxrandr-dev nasm patchelf perl pkg-config tar xz-utils yasm
 
-      - name: Build FFmpeg 8 from source
+      # ── FFmpeg (Linux, cached) ──────────────────────────────
+
+      - name: Restore FFmpeg cache
         if: inputs.target == 'x86_64-unknown-linux-gnu'
+        id: ffmpeg-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.FFMPEG_PREFIX }}
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ runner.os }}
+
+      - name: Build FFmpeg 8 from source
+        if: inputs.target == 'x86_64-unknown-linux-gnu' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           curl -L "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" -o "/tmp/ffmpeg-${FFMPEG_VERSION}.tar.xz"
@@ -102,7 +118,12 @@ jobs:
             --enable-shared --disable-static --disable-programs --disable-doc --disable-debug
           make -j"$(getconf _NPROCESSORS_ONLN)"
           sudo make install
-          printf 'PKG_CONFIG_PATH=%s/lib/pkgconfig\n' "$FFMPEG_PREFIX" >> "$GITHUB_ENV"
+
+      - name: Set FFmpeg pkg-config path
+        if: inputs.target == 'x86_64-unknown-linux-gnu'
+        run: printf 'PKG_CONFIG_PATH=%s/lib/pkgconfig\n' "$FFMPEG_PREFIX" >> "$GITHUB_ENV"
+
+      # ── Windows (vcpkg, no cache — vcpkg handles it) ────────
 
       - name: Set up vcpkg (Windows)
         if: runner.os == 'Windows'
@@ -140,6 +161,8 @@ jobs:
             "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
 
+      # ── Rust build ──────────────────────────────────────────
+
       - name: Cache Rust build artifacts
         uses: actions/cache@v5
         with:
@@ -154,6 +177,26 @@ jobs:
         env:
           LD_LIBRARY_PATH: ${{ inputs.extra_runtime_lib_dirs }}
         run: cargo build --release --target ${{ inputs.target }}
+
+      # ── Checks (only when enabled, after build reuses target/) ─
+
+      - name: Check compilation
+        if: inputs.checks
+        run: cargo check --workspace
+
+      - name: Run clippy
+        if: inputs.checks
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run tests
+        if: inputs.checks
+        env:
+          LD_LIBRARY_PATH: ${{ inputs.extra_runtime_lib_dirs }}
+        run: >-
+          cargo test --workspace --
+          --skip test_audio_player_creation
+          --skip recorder_writes_audio_stream_to_mp4
+          --skip test_detect_gpu_linux
 
       - name: Verify binary
         run: |
