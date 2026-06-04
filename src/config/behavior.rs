@@ -368,9 +368,11 @@ mod tests {
 
     #[test]
     fn test_merge_override() {
-        let mut user_cfg = BehaviorConfig::default();
-        user_cfg.enabled = Some(false);
-        user_cfg.delay_mean_ms = Some(999);
+        let user_cfg = BehaviorConfig {
+            enabled: Some(false),
+            delay_mean_ms: Some(999),
+            ..Default::default()
+        };
 
         let balanced = BehaviorProfile::Balanced.to_config();
         let merged = user_cfg.merge_with_preset(&balanced);
@@ -389,11 +391,13 @@ mod tests {
 
     #[test]
     fn test_validate_invalid() {
-        let mut cfg = BehaviorConfig::default();
-        cfg.position_jitter = Some(-1.0); // 超出 [0.0, 0.10]
-        cfg.delay_min_ms = Some(100);
-        cfg.delay_max_ms = Some(50); // min > max
-        cfg.touch_pressure_mean = Some(2.0); // 超出 [0.0, 1.0]
+        let mut cfg = BehaviorConfig {
+            position_jitter: Some(-1.0), // 超出 [0.0, 0.10]
+            delay_min_ms: Some(100),
+            delay_max_ms: Some(50),         // min > max
+            touch_pressure_mean: Some(2.0), // 超出 [0.0, 1.0]
+            ..Default::default()
+        };
 
         // 不应 panic
         cfg.validate();

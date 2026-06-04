@@ -94,7 +94,10 @@ mod tests {
         let mut tp = TouchParams::new(config);
         for _ in 0..1000 {
             let p = tp.generate_pressure();
-            assert!(p >= 0.3 && p <= 1.0, "Pressure {p} out of [0.3, 1.0] range");
+            assert!(
+                (0.3..=1.0).contains(&p),
+                "Pressure {p} out of [0.3, 1.0] range"
+            );
         }
     }
 }

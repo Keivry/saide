@@ -186,18 +186,14 @@ mod tests {
 
     #[test]
     fn parse_ime_state_changed() {
-        let mut buf = Vec::new();
-        buf.push(4); // type
-        buf.push(1); // visible = true
+        let buf = vec![4u8, 1u8]; // type=4, visible=true
 
         let msg = DeviceMessage::read_from(&mut Cursor::new(buf))
             .unwrap()
             .unwrap();
         assert_eq!(msg, DeviceMessage::ImeStateChanged(true));
 
-        let mut buf = Vec::new();
-        buf.push(4);
-        buf.push(0); // visible = false
+        let buf = vec![4u8, 0u8]; // type=4, visible=false
         let msg = DeviceMessage::read_from(&mut Cursor::new(buf))
             .unwrap()
             .unwrap();

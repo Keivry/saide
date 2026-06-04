@@ -332,65 +332,6 @@ impl DeviceMonitor {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use {super::*, std::io::Cursor};
-
-    #[test]
-    fn test_rotation_message_parsed() {
-        // DeviceMessage type byte 3 = RotationChanged, followed by 4-byte BE u32
-        let mut buf = Vec::new();
-        buf.push(3u8);
-        buf.extend_from_slice(&90u32.to_be_bytes());
-
-        let msg = DeviceMessage::read_from(&mut Cursor::new(buf))
-            .expect("read_from failed")
-            .expect("message should be Some");
-        assert_eq!(msg, DeviceMessage::RotationChanged(90));
-    }
-
-    #[test]
-    fn test_ime_message_parsed() {
-        // DeviceMessage type byte 4 = ImeStateChanged, followed by 1-byte bool
-        let mut buf = Vec::new();
-        buf.push(4u8);
-        buf.push(0x01);
-
-        let msg = DeviceMessage::read_from(&mut Cursor::new(buf))
-            .expect("read_from failed")
-            .expect("message should be Some");
-        assert_eq!(msg, DeviceMessage::ImeStateChanged(true));
-    }
-
-    #[test]
-    fn test_tcp_probe_detects_disconnect() {
-        // peer_addr() may return Ok after remote disconnect — the address is
-        // cached by the kernel; real disconnection is detected via read errors.
-        use std::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
-        let addr = listener.local_addr().unwrap();
-        let client = TcpStream::connect(addr).expect("failed to connect");
-        let (server, _addr) = listener.accept().expect("failed to accept");
-        drop(server);
-
-        let mut failures: u32 = 0;
-        const MAX_CONSECUTIVE_FAILURES: u32 = 3;
-
-        for _ in 0..(MAX_CONSECUTIVE_FAILURES + 2) {
-            match client.peer_addr() {
-                Ok(_) => failures = 0,
-                Err(_) => {
-                    failures += 1;
-                    if failures >= MAX_CONSECUTIVE_FAILURES {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-}
-
 async fn run_adb_with_retry<T, F>(token: CancellationToken, shell: Arc<AdbShell>, f: F) -> Result<T>
 where
     T: Send + 'static,
@@ -424,6 +365,63 @@ where
                     attempts, e, RETRY_DELAY_MS
                 );
                 tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, std::io::Cursor};
+
+    #[test]
+    fn test_rotation_message_parsed() {
+        // DeviceMessage type byte 3 = RotationChanged, followed by 4-byte BE u32
+        let mut buf = Vec::new();
+        buf.push(3u8);
+        buf.extend_from_slice(&90u32.to_be_bytes());
+
+        let msg = DeviceMessage::read_from(&mut Cursor::new(buf))
+            .expect("read_from failed")
+            .expect("message should be Some");
+        assert_eq!(msg, DeviceMessage::RotationChanged(90));
+    }
+
+    #[test]
+    fn test_ime_message_parsed() {
+        // DeviceMessage type byte 4 = ImeStateChanged, followed by 1-byte bool
+        let buf = vec![4u8, 0x01];
+
+        let msg = DeviceMessage::read_from(&mut Cursor::new(buf))
+            .expect("read_from failed")
+            .expect("message should be Some");
+        assert_eq!(msg, DeviceMessage::ImeStateChanged(true));
+    }
+
+    #[test]
+    fn test_tcp_probe_detects_disconnect() {
+        // peer_addr() may return Ok after remote disconnect — the address is
+        // cached by the kernel; real disconnection is detected via read errors.
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).expect("failed to connect");
+        let (server, _addr) = listener.accept().expect("failed to accept");
+        drop(server);
+
+        let mut failures: u32 = 0;
+        const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+
+        for _ in 0..(MAX_CONSECUTIVE_FAILURES + 2) {
+            match client.peer_addr() {
+                Ok(_) => failures = 0,
+                Err(_) => {
+                    failures += 1;
+                    if failures >= MAX_CONSECUTIVE_FAILURES {
+                        break;
+                    }
+                }
             }
         }
     }

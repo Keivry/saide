@@ -111,7 +111,7 @@ mod tests {
         for _ in 0..1000 {
             let ms = generator.generate_ms();
             assert!(
-                ms >= 20 && ms <= 200,
+                (20..=200).contains(&ms),
                 "Uniform delay {ms} out of [20, 200] range"
             );
         }
@@ -130,7 +130,7 @@ mod tests {
         for _ in 0..1000 {
             let ms = generator.generate_ms();
             assert!(
-                ms >= 20 && ms <= 200,
+                (20..=200).contains(&ms),
                 "Gaussian delay {ms} out of [20, 200] range"
             );
         }
@@ -150,7 +150,7 @@ mod tests {
         generator.sleep();
         let elapsed = start.elapsed().as_millis() as u64;
         assert!(
-            elapsed >= 45 && elapsed <= 65,
+            (45..=65).contains(&elapsed),
             "Sleep elapsed {elapsed}ms, expected ~50ms"
         );
     }

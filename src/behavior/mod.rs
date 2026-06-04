@@ -878,8 +878,10 @@ mod tests {
     fn test_enabled_false_fallback() {
         // conservative 预设：enabled=true 但 pointer/pressure 关闭
         // 构造一个 enabled=false 的配置
-        let mut config = BehaviorConfig::default();
-        config.enabled = Some(false);
+        let config = BehaviorConfig {
+            enabled: Some(false),
+            ..Default::default()
+        };
         let mut engine = BehaviorEngine::new(config, 1080, 2340);
 
         let (stream, handle) = setup_mock_server();
@@ -922,8 +924,10 @@ mod tests {
 
     #[test]
     fn test_enabled_false_does_not_panic() {
-        let mut config = BehaviorConfig::default();
-        config.enabled = Some(false);
+        let config = BehaviorConfig {
+            enabled: Some(false),
+            ..Default::default()
+        };
         let mut engine = BehaviorEngine::new(config, 1080, 2340);
 
         let (stream, _handle) = setup_mock_server();
@@ -983,10 +987,12 @@ mod tests {
     #[test]
     fn test_tap_rate_limited_skip() {
         // 使用极低速率（1 tok/s, burst=1）确保速率限制确实阻断
-        let mut config = BehaviorConfig::default();
-        config.rate_limit_enabled = true;
-        config.rate_limit_ops_per_sec = Some(1);
-        config.rate_limit_burst = Some(1);
+        let config = BehaviorConfig {
+            rate_limit_enabled: true,
+            rate_limit_ops_per_sec: Some(1),
+            rate_limit_burst: Some(1),
+            ..Default::default()
+        };
         let mut engine = BehaviorEngine::new(config, 1080, 2340);
 
         let (stream, handle) = setup_mock_server();
@@ -1025,9 +1031,11 @@ mod tests {
 
     #[test]
     fn test_execute_text_disabled_no_delay() {
-        let mut config = BehaviorConfig::default();
-        config.char_by_char_enabled = false;
-        config.char_delay_mean_ms = Some(100);
+        let config = BehaviorConfig {
+            char_by_char_enabled: false,
+            char_delay_mean_ms: Some(100),
+            ..Default::default()
+        };
         let mut engine = BehaviorEngine::new(config, 1080, 2340);
 
         let mut received = Vec::new();
