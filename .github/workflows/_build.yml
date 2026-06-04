@@ -167,10 +167,10 @@ jobs:
           "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0" | Out-File -FilePath $env:GITHUB_ENV -Append
           "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
-      - name: Cache vcpkg artifacts (Windows)
+      - name: Restore vcpkg cache (Windows)
         if: runner.os == 'Windows'
         id: vcpkg-cache
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: |
             ${{ env.VCPKG_ROOT }}/installed
@@ -181,16 +181,18 @@ jobs:
         if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         run: |
           & "$env:VCPKG_ROOT\vcpkg.exe" install --overlay-triplets "$env:GITHUB_WORKSPACE\.github\vcpkg-triplets" "ffmpeg[nvcodec]:x64-windows-release" "opus:x64-windows-release"
-          "VCPKG_INSTALLED_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "FFMPEG_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "PKG_CONFIG_PATH=$env:VCPKG_ROOT\installed\x64-windows-release\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$env:VCPKG_ROOT\installed\x64-windows-release\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          if ($env:CUDA_PATH) {
-            "CUDA_PATH=$env:CUDA_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
-          }
 
-      - name: Set vcpkg env vars (cache hit)
-        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit == 'true'
+      - name: Save vcpkg cache (Windows)
+        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}/installed
+            ${{ env.VCPKG_ROOT }}/packages
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+
+      - name: Set vcpkg env vars (Windows)
+        if: runner.os == 'Windows'
         run: |
           "VCPKG_INSTALLED_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
           "FFMPEG_DIR=$env:VCPKG_ROOT\installed\x64-windows-release" | Out-File -FilePath $env:GITHUB_ENV -Append
