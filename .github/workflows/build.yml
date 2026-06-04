@@ -146,6 +146,8 @@ jobs:
         run: cargo clippy --workspace -- -D warnings
 
       - name: Run tests
+        env:
+          LD_LIBRARY_PATH: /opt/ffmpeg8/lib
         run: cargo test --workspace
 
       - name: Build release binary

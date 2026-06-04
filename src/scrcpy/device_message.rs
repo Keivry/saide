@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn truncated_payload_is_io_error() {
         // Type byte present but payload truncated → genuine I/O error
-        let mut buf = vec![0u8]; // type byte only, no length follows
+        let buf = vec![0u8]; // type byte only, no length follows
         let result = DeviceMessage::read_from(&mut Cursor::new(buf));
         assert!(result.is_err());
         match result {
