@@ -36,9 +36,7 @@ import java.util.List;
 
 import android.content.Context;
 
-// PATCH: anti-detection - imports for device monitoring listeners
-import android.hardware.SensorManager;
-import android.view.OrientationEventListener;
+// PATCH: anti-detection - imports for device monitoring
 import com.genymobile.scrcpy.control.DeviceMessage;
 import com.genymobile.scrcpy.control.DeviceMessageSender;
 import com.genymobile.scrcpy.util.Command;
@@ -167,41 +165,35 @@ public final class Server {
                 }
             }
 
-            // PATCH: anti-detection - register screen rotation listener
+            // PATCH: anti-detection - screen rotation polling via WindowManager
             final DeviceMessageSender sender = controller.getSender();
-            OrientationEventListener orientationListener = new OrientationEventListener(FakeContext.get(), SensorManager.SENSOR_DELAY_NORMAL) {
-                private int lastRotation = -1;
-
-                @Override
-                public void onOrientationChanged(int orientation) {
+            final Thread rotationMonitorThread = new Thread(() -> {
+                int lastRotation = -1;
+                while (!Thread.currentThread().isInterrupted()) {
                     try {
-                        int rotation;
-                        if (orientation >= 315 || orientation < 45) {
-                            rotation = 0;
-                        } else if (orientation >= 45 && orientation < 135) {
-                            rotation = 90;
-                        } else if (orientation >= 135 && orientation < 225) {
-                            rotation = 180;
-                        } else if (orientation >= 225 && orientation < 315) {
-                            rotation = 270;
-                        } else {
-                            return; // -1 or unknown
-                        }
-                        // De-duplicate: only send when rotation actually changes
-                        if (rotation != lastRotation) {
-                            lastRotation = rotation;
+                        int rotation = ServiceManager.getWindowManager().getRotation();
+                        int degrees = rotation * 90;
+                        if (degrees != lastRotation) {
+                            lastRotation = degrees;
                             if (sender != null) {
-                                sender.send(DeviceMessage.createRotationChanged(rotation));
-                                Ln.i("Rotation changed: " + rotation + "° (raw=" + orientation + ")");
+                                sender.send(DeviceMessage.createRotationChanged(degrees));
+                                Ln.i("Screen rotation changed: " + degrees + "° (raw=" + rotation + ")");
                             }
                         }
+                    } catch (InterruptedException e) {
+                        break;
                     } catch (Exception e) {
-                        Ln.e("Rotation listener error: " + e.getMessage());
+                        Ln.e("Rotation detection error: " + e.getMessage());
+                    }
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException e) {
+                        break;
                     }
                 }
-            };
-            orientationListener.enable();
-            Ln.i("Rotation listener enabled");
+            }, "rotation-monitor");
+            rotationMonitorThread.setDaemon(true);
+            rotationMonitorThread.start();
 
             // PATCH: anti-detection - IME state polling via in-process dumpsys
             final Thread imeMonitorThread = new Thread(() -> {
