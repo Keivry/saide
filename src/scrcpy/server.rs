@@ -7,11 +7,7 @@ use {
         scrcpy::codec_probe::EncoderProfileDatabase,
     },
     adbshell::AdbShell,
-    scrcpy_protocol::{
-        SCRCPY_SERVER_CLASS_NAME,
-        SCRCPY_SERVER_PATH,
-        ScrcpyError,
-    },
+    scrcpy_protocol::{SCRCPY_SERVER_CLASS_NAME, SCRCPY_SERVER_PATH, ScrcpyError},
     std::{
         path::{Path, PathBuf},
         process::Child,
