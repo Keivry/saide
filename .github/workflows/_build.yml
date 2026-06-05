@@ -53,9 +53,15 @@ env:
   FFMPEG_VERSION: "8.1"
 
 jobs:
+  build-scrcpy:
+    name: Build scrcpy-server
+    if: inputs.target == 'x86_64-unknown-linux-gnu'
+    uses: ./.github/workflows/_build-scrcpy-server.yml
+
   build:
     name: Build ${{ inputs.target }}
     runs-on: ${{ inputs.runner }}
+    needs: build-scrcpy
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -68,46 +74,12 @@ jobs:
 
       # ── Linux-only: scrcpy-server + FFmpeg ─────────────────
 
-      - name: Set up Java 17
+      - name: Download scrcpy-server JAR
         if: inputs.target == 'x86_64-unknown-linux-gnu'
-        uses: actions/setup-java@v5
+        uses: actions/download-artifact@v8
         with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Android SDK
-        if: inputs.target == 'x86_64-unknown-linux-gnu'
-        uses: android-actions/setup-android@v4
-        with:
-          cmdline-tools-version: 12266719
-          accept-android-sdk-licenses: true
-          log-accepted-android-sdk-licenses: false
-          packages: tools platform-tools platforms;android-36
-
-      - name: Set up Gradle
-        if: inputs.target == 'x86_64-unknown-linux-gnu'
-        uses: gradle/actions/setup-gradle@v5
-        with:
-          gradle-version: '8.14'
-
-      - name: Build scrcpy-server
-        id: build-scrcpy
-        if: inputs.target == 'x86_64-unknown-linux-gnu'
-        working-directory: scrcpy-server
-        run: |
-          set -euo pipefail
-          gradle assembleRelease --no-daemon --console=plain 2>&1
-          BUILT_JAR="build/outputs/apk/release/scrcpy-server-release-unsigned.apk"
-          if [ ! -f "$BUILT_JAR" ]; then
-            echo "ERROR: scrcpy-server jar not found at $BUILT_JAR" >&2
-            exit 1
-          fi
-          # Rename to match release.yml find pattern and Rust constant SCRCPY_SERVER_VERSION_STRING
-          RENAMED_JAR="$(dirname "$BUILT_JAR")/scrcpy-server-v3.3.4"
-          cp "$BUILT_JAR" "$RENAMED_JAR"
-          echo "jar-path=$(realpath "$RENAMED_JAR")" >> "$GITHUB_OUTPUT"
-          echo "jar-filename=scrcpy-server-v3.3.4" >> "$GITHUB_OUTPUT"
-          echo "Built scrcpy-server v3.3.4 from source"
+          name: scrcpy-server
+          path: scrcpy-server/build/outputs/apk/release
 
       - name: Install Ubuntu build dependencies
         if: inputs.target == 'x86_64-unknown-linux-gnu'
@@ -266,8 +238,8 @@ jobs:
           PACKAGE_DIR_NAME: ${{ inputs.package_dir_name }}
           ARCHIVE_FORMAT: ${{ inputs.archive_format }}
           EXTRA_RUNTIME_LIB_DIRS: ${{ inputs.extra_runtime_lib_dirs }}
-          SCRCPY_SERVER_ASSET_PATH: ${{ steps.build-scrcpy.outputs.jar-path }}
-          SCRCPY_SERVER_ASSET_NAME: ${{ steps.build-scrcpy.outputs.jar-filename }}
+          SCRCPY_SERVER_ASSET_PATH: ${{ github.workspace }}/scrcpy-server/build/outputs/apk/release/scrcpy-server-v3.3.4
+          SCRCPY_SERVER_ASSET_NAME: scrcpy-server-v3.3.4
         run: |
           chmod +x scripts/package-release.sh
           scripts/package-release.sh
@@ -278,10 +250,3 @@ jobs:
         with:
           name: ${{ inputs.artifact_name }}
           path: dist/${{ inputs.archive_basename }}.${{ inputs.archive_format }}
-
-      - name: Upload scrcpy-server JAR
-        if: inputs.package && inputs.target == 'x86_64-unknown-linux-gnu'
-        uses: actions/upload-artifact@v7
-        with:
-          name: scrcpy-server
-          path: ${{ steps.build-scrcpy.outputs.jar-path }}

@@ -1,0 +1,64 @@
+name: Reusable Build scrcpy-server
+
+on:
+  workflow_call:
+    outputs:
+      jar-path:
+        description: "Absolute path to the built scrcpy-server JAR"
+        value: ${{ jobs.build.outputs.jar-path }}
+      jar-filename:
+        description: "Filename of the scrcpy-server JAR (e.g. scrcpy-server-v3.3.4)"
+        value: ${{ jobs.build.outputs.jar-filename }}
+
+jobs:
+  build:
+    name: Build scrcpy-server
+    runs-on: ubuntu-latest
+    outputs:
+      jar-path: ${{ steps.build.outputs.jar-path }}
+      jar-filename: ${{ steps.build.outputs.jar-filename }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 12266719
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+          packages: tools platform-tools platforms;android-36
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "8.14"
+
+      - name: Build scrcpy-server
+        id: build
+        working-directory: scrcpy-server
+        run: |
+          set -euo pipefail
+          gradle assembleRelease --no-daemon --console=plain 2>&1
+          BUILT_JAR="build/outputs/apk/release/scrcpy-server-release-unsigned.apk"
+          if [ ! -f "$BUILT_JAR" ]; then
+            echo "ERROR: scrcpy-server jar not found at $BUILT_JAR" >&2
+            exit 1
+          fi
+          RENAMED_JAR="$(dirname "$BUILT_JAR")/scrcpy-server-v3.3.4"
+          cp "$BUILT_JAR" "$RENAMED_JAR"
+          echo "jar-path=$(realpath "$RENAMED_JAR")" >> "$GITHUB_OUTPUT"
+          echo "jar-filename=scrcpy-server-v3.3.4" >> "$GITHUB_OUTPUT"
+          echo "Built scrcpy-server v3.3.4 from source"
+
+      - name: Upload scrcpy-server JAR
+        uses: actions/upload-artifact@v7
+        with:
+          name: scrcpy-server
+          path: ${{ steps.build.outputs.jar-path }}

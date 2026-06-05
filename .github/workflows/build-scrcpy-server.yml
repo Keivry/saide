@@ -1,0 +1,9 @@
+name: Build scrcpy-server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build scrcpy-server
+    uses: ./.github/workflows/_build-scrcpy-server.yml
