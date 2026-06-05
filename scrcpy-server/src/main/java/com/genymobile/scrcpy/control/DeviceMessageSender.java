@@ -11,7 +11,7 @@ public final class DeviceMessageSender {
     private final ControlChannel controlChannel;
 
     private Thread thread;
-    private final BlockingQueue<DeviceMessage> queue = new ArrayBlockingQueue<>(16);
+    private final BlockingQueue<DeviceMessage> queue = new ArrayBlockingQueue<>(64);
 
     public DeviceMessageSender(ControlChannel controlChannel) {
         this.controlChannel = controlChannel;

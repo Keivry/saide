@@ -38,13 +38,7 @@ import android.content.Context;
 
 // PATCH: anti-detection - imports for device monitoring listeners
 import android.hardware.SensorManager;
-import android.view.Gravity;
 import android.view.OrientationEventListener;
-import android.view.View;
-import android.view.ViewTreeObserver;
-import android.view.WindowManager;
-import android.graphics.PixelFormat;
-import android.graphics.Rect;
 import com.genymobile.scrcpy.control.DeviceMessage;
 import com.genymobile.scrcpy.control.DeviceMessageSender;
 
@@ -172,9 +166,11 @@ public final class Server {
                 }
             }
 
-            // PATCH: anti-detection - register screen rotation and IME visibility listeners
+            // PATCH: anti-detection - register screen rotation listener
             final DeviceMessageSender sender = controller.getSender();
             OrientationEventListener orientationListener = new OrientationEventListener(FakeContext.get(), SensorManager.SENSOR_DELAY_NORMAL) {
+                private int lastRotation = -1;
+
                 @Override
                 public void onOrientationChanged(int orientation) {
                     try {
@@ -185,11 +181,18 @@ public final class Server {
                             rotation = 90;
                         } else if (orientation >= 135 && orientation < 225) {
                             rotation = 180;
-                        } else {
+                        } else if (orientation >= 225 && orientation < 315) {
                             rotation = 270;
+                        } else {
+                            return; // -1 or unknown
                         }
-                        if (sender != null) {
-                            sender.send(DeviceMessage.createRotationChanged(rotation));
+                        // De-duplicate: only send when rotation actually changes
+                        if (rotation != lastRotation) {
+                            lastRotation = rotation;
+                            if (sender != null) {
+                                sender.send(DeviceMessage.createRotationChanged(rotation));
+                                Ln.i("Rotation changed: " + rotation + "° (raw=" + orientation + ")");
+                            }
                         }
                     } catch (Exception e) {
                         Ln.e("Rotation listener error: " + e.getMessage());
@@ -198,40 +201,6 @@ public final class Server {
             };
             orientationListener.enable();
             Ln.i("Rotation listener enabled");
-
-            WindowManager windowManager = (WindowManager) FakeContext.get().getSystemService(Context.WINDOW_SERVICE);
-            View dummyView = new View(FakeContext.get());
-            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                    0, 0,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-                    PixelFormat.TRANSLUCENT);
-            try {
-                windowManager.addView(dummyView, params);
-                Ln.i("IME listener view added successfully");
-            } catch (Exception e) {
-                Ln.w("Failed to add IME listener view (no overlay permission?): " + e.getMessage());
-            }
-            dummyView.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-                private boolean lastVisible = false;
-                @Override
-                public void onGlobalLayout() {
-                    try {
-                        Rect rect = new Rect();
-                        dummyView.getWindowVisibleDisplayFrame(rect);
-                        int screenHeight = dummyView.getRootView().getHeight();
-                        boolean imeVisible = (screenHeight - rect.bottom) > screenHeight * 0.15;
-                        if (imeVisible != lastVisible) {
-                            lastVisible = imeVisible;
-                            if (sender != null) {
-                                sender.send(DeviceMessage.createImeStateChanged(imeVisible));
-                            }
-                        }
-                    } catch (Exception e) {
-                        Ln.e("IME listener error: " + e.getMessage());
-                    }
-                }
-            });
 
             Completion completion = new Completion(asyncProcessors.size());
             for (AsyncProcessor asyncProcessor : asyncProcessors) {
