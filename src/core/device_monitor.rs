@@ -289,7 +289,12 @@ impl DeviceMonitor {
         }
     }
 
-    /// DEPRECATED: pre-built jar fallback — ADB-based IME state polling.
+    /// ADB-based IME state polling (low-priority fallback).
+    ///
+    /// The patched scrcpy-server now handles IME detection internally
+    /// (via in-process dumpsys) and sends events over TCP. This fallback
+    /// exists for pre-built JARs and as a safety net if the TCP path
+    /// fails to detect IME changes.
     async fn monitor_ime_state_adb_fallback(
         shell: Arc<AdbShell>,
         event_tx: Sender<DeviceMonitorEvent>,

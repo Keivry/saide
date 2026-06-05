@@ -41,6 +41,7 @@ import android.hardware.SensorManager;
 import android.view.OrientationEventListener;
 import com.genymobile.scrcpy.control.DeviceMessage;
 import com.genymobile.scrcpy.control.DeviceMessageSender;
+import com.genymobile.scrcpy.util.Command;
 
 public final class Server {
 
@@ -201,6 +202,35 @@ public final class Server {
             };
             orientationListener.enable();
             Ln.i("Rotation listener enabled");
+
+            // PATCH: anti-detection - IME state polling via in-process dumpsys
+            final Thread imeMonitorThread = new Thread(() -> {
+                boolean lastImeVisible = false;
+                while (!Thread.currentThread().isInterrupted()) {
+                    try {
+                        String output = Command.execReadOutput("dumpsys", "window", "InputMethod");
+                        boolean visible = output.contains("isVisible=true");
+                        if (visible != lastImeVisible) {
+                            lastImeVisible = visible;
+                            if (sender != null) {
+                                sender.send(DeviceMessage.createImeStateChanged(visible));
+                                Ln.i("IME state changed: visible=" + visible);
+                            }
+                        }
+                    } catch (InterruptedException e) {
+                        break;
+                    } catch (Exception e) {
+                        Ln.e("IME detection error: " + e.getMessage());
+                    }
+                    try {
+                        Thread.sleep(500);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                }
+            }, "ime-monitor");
+            imeMonitorThread.setDaemon(true);
+            imeMonitorThread.start();
 
             Completion completion = new Completion(asyncProcessors.size());
             for (AsyncProcessor asyncProcessor : asyncProcessors) {
