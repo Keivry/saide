@@ -82,22 +82,9 @@ impl DeviceMonitor {
             let shell = self.shell.clone();
             let health_stream = stream.try_clone().expect("monitor_stream try_clone failed");
 
-            let shell_for_ime = shell.clone();
-            let event_tx_for_ime = event_tx.clone();
-            let token_for_ime = token.clone();
-            let shell_for_rot = shell.clone();
-            let event_tx_for_rot = event_tx.clone();
-            let token_for_rot = token.clone();
-
             tokio::join!(
                 Self::listen_device_messages(stream, event_tx.clone(), token.clone()),
                 Self::monitor_device_state_tcp(health_stream, event_tx, shell, token),
-                Self::monitor_ime_state_adb_fallback(
-                    shell_for_ime,
-                    event_tx_for_ime,
-                    token_for_ime
-                ),
-                Self::monitor_rotation_adb_fallback(shell_for_rot, event_tx_for_rot, token_for_rot),
             );
         } else {
             let event_tx = self.event_tx;
