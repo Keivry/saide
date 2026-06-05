@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use {
-    crate::{error::Result, scrcpy::codec_probe::EncoderProfileDatabase},
+    crate::{
+        constant::SCRCPY_SERVER_VERSION,
+        error::Result,
+        scrcpy::codec_probe::EncoderProfileDatabase,
+    },
     adbshell::AdbShell,
     scrcpy_protocol::{
         SCRCPY_SERVER_CLASS_NAME,
         SCRCPY_SERVER_PATH,
-        SCRCPY_SERVER_VERSION,
         ScrcpyError,
     },
     std::{
@@ -207,7 +210,7 @@ fn build_server_args(params: &ServerParams) -> Vec<String> {
         args.push("stay_awake=true".to_string());
     }
     if let Some(timeout) = params.screen_off_timeout {
-        args.push(format!("power_off_on_close={}", timeout));
+        args.push(format!("screen_off_timeout={}", timeout));
     }
 
     args
