@@ -102,7 +102,11 @@ jobs:
             echo "ERROR: scrcpy-server jar not found at $BUILT_JAR" >&2
             exit 1
           fi
-          echo "jar-path=$(realpath "$BUILT_JAR")" >> "$GITHUB_OUTPUT"
+          # Rename to match release.yml find pattern and Rust constant SCRCPY_SERVER_VERSION_STRING
+          RENAMED_JAR="$(dirname "$BUILT_JAR")/scrcpy-server-v3.3.4"
+          cp "$BUILT_JAR" "$RENAMED_JAR"
+          echo "jar-path=$(realpath "$RENAMED_JAR")" >> "$GITHUB_OUTPUT"
+          echo "jar-filename=scrcpy-server-v3.3.4" >> "$GITHUB_OUTPUT"
           echo "Built scrcpy-server v3.3.4 from source"
 
       - name: Install Ubuntu build dependencies
@@ -262,6 +266,8 @@ jobs:
           PACKAGE_DIR_NAME: ${{ inputs.package_dir_name }}
           ARCHIVE_FORMAT: ${{ inputs.archive_format }}
           EXTRA_RUNTIME_LIB_DIRS: ${{ inputs.extra_runtime_lib_dirs }}
+          SCRCPY_SERVER_ASSET_PATH: ${{ steps.build-scrcpy.outputs.jar-path }}
+          SCRCPY_SERVER_ASSET_NAME: ${{ steps.build-scrcpy.outputs.jar-filename }}
         run: |
           chmod +x scripts/package-release.sh
           scripts/package-release.sh
