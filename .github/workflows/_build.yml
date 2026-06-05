@@ -62,6 +62,7 @@ jobs:
     name: Build ${{ inputs.target }}
     runs-on: ${{ inputs.runner }}
     needs: build-scrcpy
+    if: ${{ !cancelled() }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -75,7 +76,7 @@ jobs:
       # ── Linux-only: scrcpy-server + FFmpeg ─────────────────
 
       - name: Download scrcpy-server JAR
-        if: inputs.target == 'x86_64-unknown-linux-gnu'
+        if: inputs.target == 'x86_64-unknown-linux-gnu' && needs.build-scrcpy.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: scrcpy-server
@@ -154,7 +155,7 @@ jobs:
           path: |
             C:/vcpkg/installed
             C:/vcpkg/packages
-          key: ${{ runner.os }}-vcpkg-${{ hashFiles('scrcpy-server/build.gradle') }}
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('.github/workflows/_build.yml') }}
           restore-keys: ${{ runner.os }}-vcpkg-
 
       - name: Install Windows build dependencies
@@ -238,8 +239,8 @@ jobs:
           PACKAGE_DIR_NAME: ${{ inputs.package_dir_name }}
           ARCHIVE_FORMAT: ${{ inputs.archive_format }}
           EXTRA_RUNTIME_LIB_DIRS: ${{ inputs.extra_runtime_lib_dirs }}
-          SCRCPY_SERVER_ASSET_PATH: ${{ github.workspace }}/scrcpy-server/build/outputs/apk/release/scrcpy-server-v3.3.4
-          SCRCPY_SERVER_ASSET_NAME: scrcpy-server-v3.3.4
+          SCRCPY_SERVER_ASSET_PATH: ${{ github.workspace }}/scrcpy-server/build/outputs/apk/release/${{ needs.build-scrcpy.outputs.jar-filename || 'scrcpy-server-placeholder' }}
+          SCRCPY_SERVER_ASSET_NAME: ${{ needs.build-scrcpy.outputs.jar-filename || 'scrcpy-server-placeholder' }}
         run: |
           chmod +x scripts/package-release.sh
           scripts/package-release.sh

@@ -50,6 +50,17 @@ impl RateLimiter {
         }
     }
 
+    /// 动态调整速率（用于会话节奏联动）
+    ///
+    /// 根据当前活跃度倍率调整令牌生成速率。
+    /// 调用后令牌桶上限不会超过 `max_tokens`。
+    pub fn set_rate(&mut self, rate_per_sec: f64) {
+        self.rate_per_sec = rate_per_sec;
+        if self.tokens > self.max_tokens {
+            self.tokens = self.max_tokens;
+        }
+    }
+
     /// 补充令牌
     fn refill(&mut self) {
         let now = Instant::now();

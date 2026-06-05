@@ -39,7 +39,7 @@ fn conservative_config() -> BehaviorConfig {
     BehaviorConfig {
         preset: Some(BehaviorProfile::Conservative),
         enabled: Some(true),
-        position_jitter: Some(0.005), // ±0.5%, 与当前 CUSTOM_KEYMAPPING_POS_JITTER 一致
+        position_jitter: Some(0.005), // ±0.5%，conservative 预设与 v0.1.8 抖动幅度一致
         jitter_weighting: crate::config::behavior::JitterWeighting::Uniform,
         inter_action_delay_enabled: false,
         delay_distribution: Some(crate::config::behavior::DelayDistributionConfig::Gaussian),

@@ -278,14 +278,20 @@ impl BehaviorEngine {
             return;
         }
 
+        // 会话节奏：更新活跃度、延迟倍率、速率倍率
+        let delay_mod = self.session_rhythm.update_delay_modifier();
+        let rate_mult = self.session_rhythm.update_rate_multiplier();
+
+        // 将会话节奏速率倍率应用到令牌桶
+        if self.config.rate_limit_enabled {
+            self.rate_limiter
+                .set_rate(self.config.rate_limit_ops_per_sec.unwrap_or(10) as f64 * rate_mult);
+        }
+
         // 速率限制
         if self.config.rate_limit_enabled && !self.rate_limiter.try_acquire() {
             return;
         }
-
-        // 会话节奏：更新活跃度、延迟倍率、速率倍率
-        let delay_mod = self.session_rhythm.update_delay_modifier();
-        let _rate_mult = self.session_rhythm.update_rate_multiplier();
 
         // 检查是否需要间歇性停顿
         if let Some(pause_sec) = self.session_rhythm.should_pause() {
@@ -353,14 +359,20 @@ impl BehaviorEngine {
             return;
         }
 
+        // 会话节奏
+        let delay_mod = self.session_rhythm.update_delay_modifier();
+        let rate_mult = self.session_rhythm.update_rate_multiplier();
+
+        // 将会话节奏速率倍率应用到令牌桶
+        if self.config.rate_limit_enabled {
+            self.rate_limiter
+                .set_rate(self.config.rate_limit_ops_per_sec.unwrap_or(10) as f64 * rate_mult);
+        }
+
         // 速率限制
         if self.config.rate_limit_enabled && !self.rate_limiter.try_acquire() {
             return;
         }
-
-        // 会话节奏
-        let delay_mod = self.session_rhythm.update_delay_modifier();
-        let _rate_mult = self.session_rhythm.update_rate_multiplier();
 
         if let Some(pause_sec) = self.session_rhythm.should_pause() {
             thread::sleep(Duration::from_secs_f64(pause_sec));
@@ -532,7 +544,6 @@ impl BehaviorEngine {
     ///
     /// 不通过 `BehaviorEngine` 发送，仅返回构造好的 [`ControlMessage`]，
     /// 供调用者自行发送。
-    #[allow(dead_code)]
     pub(crate) fn build_touch_event(
         &self,
         action: AndroidMotionEventAction,
