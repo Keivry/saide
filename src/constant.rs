@@ -74,7 +74,7 @@ pub fn resolve_scrcpy_server_path() -> PathBuf {
 pub const SCRCPY_SERVER_VERSION: &str = "3.3.3";
 
 /// Version string of the scrcpy server
-pub const SCRCPY_SERVER_VERSION_STRING: &str = "v3.3.3";
+pub const SCRCPY_SERVER_VERSION_STRING: &str = "v3.3.4";
 
 /// Java class name of the scrcpy server
 pub const SCRCPY_SERVER_CLASS_NAME: &str = "com.genymobile.scrcpy.Server";

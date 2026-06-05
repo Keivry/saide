@@ -28,7 +28,7 @@ window_width = 1280
 window_height = 720
 smart_window_resize = true
 bind_address = "127.0.0.1"
-scrcpy_server = "<resolved path to scrcpy-server-v3.3.3>"
+scrcpy_server = "<resolved path to scrcpy-server-v3.3.4>"
 # screenshot_path = "/home/user/Pictures/saide"
 # recording_path = "/home/user/Videos/saide"
 ```
@@ -47,7 +47,7 @@ scrcpy_server = "<resolved path to scrcpy-server-v3.3.3>"
 
 ### scrcpy server lookup order
 
-If `general.scrcpy_server` is not overridden, SAide searches for `scrcpy-server-v3.3.3` in this order:
+If `general.scrcpy_server` is not overridden, SAide searches for `scrcpy-server-v3.3.4` in this order:
 
 1. application data directory
 2. current working directory

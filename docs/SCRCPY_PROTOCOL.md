@@ -22,7 +22,7 @@ The current implementation in `ScrcpyConnection::connect()` accepts them in exac
 
 ### Handshake sequence used by SAide
 
-1. Resolve or push `scrcpy-server-v3.3.3`.
+1. Resolve or push `scrcpy-server-v3.3.4`.
 2. Reserve a local TCP port from `DEFAULT_PORT_RANGE`.
 3. Install an ADB reverse tunnel.
 4. Start the Android server process.

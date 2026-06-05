@@ -73,7 +73,7 @@ The application startup path is anchored in `src/main.rs` and `src/config/mod.rs
 
 ### scrcpy server path resolution
 
-`constant::resolve_scrcpy_server_path()` looks for `scrcpy-server-v3.3.3` in this order:
+`constant::resolve_scrcpy_server_path()` looks for `scrcpy-server-v3.3.4` in this order:
 
 1. The application data directory.
 2. The current working directory.
