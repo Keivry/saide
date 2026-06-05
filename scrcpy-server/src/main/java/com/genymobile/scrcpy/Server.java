@@ -192,11 +192,12 @@ public final class Server {
                             sender.send(DeviceMessage.createRotationChanged(rotation));
                         }
                     } catch (Exception e) {
-                        // silently ignore
+                        Ln.e("Rotation listener error: " + e.getMessage());
                     }
                 }
             };
             orientationListener.enable();
+            Ln.i("Rotation listener enabled");
 
             WindowManager windowManager = (WindowManager) FakeContext.get().getSystemService(Context.WINDOW_SERVICE);
             View dummyView = new View(FakeContext.get());
@@ -207,8 +208,9 @@ public final class Server {
                     PixelFormat.TRANSLUCENT);
             try {
                 windowManager.addView(dummyView, params);
+                Ln.i("IME listener view added successfully");
             } catch (Exception e) {
-                // silently ignore if overlay permission not granted
+                Ln.w("Failed to add IME listener view (no overlay permission?): " + e.getMessage());
             }
             dummyView.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
                 private boolean lastVisible = false;
@@ -226,7 +228,7 @@ public final class Server {
                             }
                         }
                     } catch (Exception e) {
-                        // silently ignore
+                        Ln.e("IME listener error: " + e.getMessage());
                     }
                 }
             });

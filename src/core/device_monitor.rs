@@ -23,7 +23,7 @@ use {
         time::Duration,
     },
     tokio_util::sync::CancellationToken,
-    tracing::{error, info, warn},
+    tracing::{debug, error, info, warn},
 };
 
 const DEVICE_MONITOR_CHANNEL_CAPACITY: usize = 64;
@@ -82,9 +82,14 @@ impl DeviceMonitor {
             let shell = self.shell.clone();
             let health_stream = stream.try_clone().expect("monitor_stream try_clone failed");
 
+            let shell_for_ime = shell.clone();
+            let event_tx_for_ime = event_tx.clone();
+            let token_for_ime = token.clone();
+
             tokio::join!(
                 Self::listen_device_messages(stream, event_tx.clone(), token.clone()),
                 Self::monitor_device_state_tcp(health_stream, event_tx, shell, token),
+                Self::monitor_ime_state_adb_fallback(shell_for_ime, event_tx_for_ime, token_for_ime),
             );
         } else {
             let event_tx = self.event_tx;
@@ -139,24 +144,27 @@ impl DeviceMonitor {
             .await
             {
                 Ok(Ok(Some(DeviceMessage::RotationChanged(rot)))) => {
+                    debug!("TCP: received rotation event: {}°", rot);
                     let _ = event_tx.send(DeviceMonitorEvent::Rotated(rot % 360));
                 }
                 Ok(Ok(Some(DeviceMessage::ImeStateChanged(visible)))) => {
+                    debug!("TCP: received IME state event: visible={}", visible);
                     let _ = event_tx.send(DeviceMonitorEvent::ImStateChanged(visible));
                 }
-                Ok(Ok(Some(_))) => {
-                    // Ignore other message types (Clipboard, UhidOutput, etc.)
+                Ok(Ok(Some(other))) => {
+                    debug!("TCP: received other device message: {:?}", other);
                 }
                 Ok(Ok(None)) => {
-                    // WouldBlock / UnexpectedEof — no data available
+                    // WouldBlock / UnexpectedEof — no data available this cycle
                 }
-                Ok(Err(_e)) => {
+                Ok(Err(e)) => {
                     // IO error on stream → device likely offline
+                    error!("Device message listener IO error: {}", e);
                     let _ = event_tx.send(DeviceMonitorEvent::DeviceOffline);
                     return;
                 }
-                Err(_) => {
-                    error!("spawn_blocking join error in device message listener");
+                Err(e) => {
+                    error!("spawn_blocking join error in device message listener: {}", e);
                     return;
                 }
             }
