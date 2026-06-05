@@ -39,6 +39,7 @@ import android.content.Context;
 // PATCH: anti-detection - imports for device monitoring
 import com.genymobile.scrcpy.control.DeviceMessage;
 import com.genymobile.scrcpy.control.DeviceMessageSender;
+import com.genymobile.scrcpy.wrappers.ServiceManager;
 import com.genymobile.scrcpy.util.Command;
 
 public final class Server {
