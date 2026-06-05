@@ -157,8 +157,12 @@ impl DeviceMonitor {
             .await
             {
                 Ok(Ok(Some(DeviceMessage::RotationChanged(rot)))) => {
-                    debug!("TCP: received rotation event: {}°", rot);
-                    let _ = event_tx.send(DeviceMonitorEvent::Rotated(rot % 360));
+                    let orientation = rot / 90;
+                    debug!(
+                        "TCP: received rotation event: {}° -> orientation {}",
+                        rot, orientation
+                    );
+                    let _ = event_tx.send(DeviceMonitorEvent::Rotated(orientation));
                 }
                 Ok(Ok(Some(DeviceMessage::ImeStateChanged(visible)))) => {
                     debug!("TCP: received IME state event: visible={}", visible);
