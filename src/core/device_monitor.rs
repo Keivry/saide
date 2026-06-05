@@ -85,11 +85,19 @@ impl DeviceMonitor {
             let shell_for_ime = shell.clone();
             let event_tx_for_ime = event_tx.clone();
             let token_for_ime = token.clone();
+            let shell_for_rot = shell.clone();
+            let event_tx_for_rot = event_tx.clone();
+            let token_for_rot = token.clone();
 
             tokio::join!(
                 Self::listen_device_messages(stream, event_tx.clone(), token.clone()),
                 Self::monitor_device_state_tcp(health_stream, event_tx, shell, token),
-                Self::monitor_ime_state_adb_fallback(shell_for_ime, event_tx_for_ime, token_for_ime),
+                Self::monitor_ime_state_adb_fallback(
+                    shell_for_ime,
+                    event_tx_for_ime,
+                    token_for_ime
+                ),
+                Self::monitor_rotation_adb_fallback(shell_for_rot, event_tx_for_rot, token_for_rot),
             );
         } else {
             let event_tx = self.event_tx;
@@ -120,11 +128,16 @@ impl DeviceMonitor {
     ) {
         info!("Starting TCP device message listener...");
 
-        if let Err(e) = stream.set_nonblocking(true) {
-            error!("Failed to set monitor stream to non-blocking: {}", e);
+        // Use blocking mode with a short timeout so that read_exact() on
+        // multi-byte payloads doesn't immediately fail with WouldBlock.
+        // When the type byte and payload arrive in separate TCP segments
+        // (possible for large clipboard/UHID messages), the short timeout
+        // gives the kernel time to coalesce the remaining bytes before
+        // returning a recoverable WouldBlock.
+        if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(100))) {
+            error!("Failed to set monitor stream read timeout: {}", e);
             return;
         }
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
 
         let stream = Arc::new(Mutex::new(stream));
 
@@ -155,7 +168,7 @@ impl DeviceMonitor {
                     debug!("TCP: received other device message: {:?}", other);
                 }
                 Ok(Ok(None)) => {
-                    // WouldBlock / UnexpectedEof — no data available this cycle
+                    // Timeout / WouldBlock / EOF — no complete message yet
                 }
                 Ok(Err(e)) => {
                     // IO error on stream → device likely offline
@@ -164,7 +177,10 @@ impl DeviceMonitor {
                     return;
                 }
                 Err(e) => {
-                    error!("spawn_blocking join error in device message listener: {}", e);
+                    error!(
+                        "spawn_blocking join error in device message listener: {}",
+                        e
+                    );
                     return;
                 }
             }

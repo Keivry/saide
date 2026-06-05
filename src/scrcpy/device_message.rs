@@ -24,6 +24,7 @@
 use {
     crate::error::{Result, SAideError},
     std::io::{ErrorKind, Read},
+    tracing::warn,
 };
 
 /// Device message types received from the scrcpy server on the control
@@ -54,14 +55,24 @@ impl DeviceMessage {
     /// Try to read and parse a single device message from the given reader.
     ///
     /// Returns `Ok(None)` when the underlying source has no data available
-    /// (i.e. `WouldBlock` on a non-blocking stream or `UnexpectedEof` on a
-    /// blocking one that has been cleanly shut down).
+    /// (i.e. `WouldBlock` on a non-blocking stream, timeout on a blocking
+    /// stream, or `UnexpectedEof` on a cleanly shut down connection).
+    ///
+    /// # WouldBlock safety
+    ///
+    /// Partial reads are NOT recoverable—if the type byte is consumed from the
+    /// underlying reader but the payload WouldBlocks, a warning is logged and
+    /// `Ok(None)` is returned.  The next call will interpret the next byte in
+    /// the stream as a new type byte, which may cause a protocol desync for
+    /// that single message.  This is accepted as the lesser evil compared to
+    /// killing the entire monitor loop.
     pub fn read_from<R: Read>(reader: &mut R) -> Result<Option<Self>> {
         // --- type byte ---
         let mut type_buf = [0u8; 1];
         match reader.read_exact(&mut type_buf) {
             Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::WouldBlock => return Ok(None),
+            Err(e) if e.kind() == ErrorKind::TimedOut => return Ok(None),
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => return Ok(None),
             Err(e) => return Err(SAideError::from(e)),
         }
@@ -71,10 +82,22 @@ impl DeviceMessage {
             0 => {
                 // CLIPBOARD: length(u32 BE) + UTF-8 text
                 let mut len_buf = [0u8; 4];
-                reader.read_exact(&mut len_buf)?;
+                if let Err(e) = reader.read_exact(&mut len_buf) {
+                    if is_recoverable(&e) {
+                        warn!("Partial clipboard read (lost 1 byte type): {e}");
+                        return Ok(None);
+                    }
+                    return Err(SAideError::from(e));
+                }
                 let len = u32::from_be_bytes(len_buf) as usize;
                 let mut text_buf = vec![0u8; len];
-                reader.read_exact(&mut text_buf)?;
+                if let Err(e) = reader.read_exact(&mut text_buf) {
+                    if is_recoverable(&e) {
+                        warn!("Partial clipboard read (lost 5 byte header): {e}");
+                        return Ok(None);
+                    }
+                    return Err(SAideError::from(e));
+                }
                 let text = String::from_utf8(text_buf).map_err(|e| {
                     SAideError::ProtocolError(format!(
                         "invalid UTF-8 in device clipboard message: {e}"
@@ -85,7 +108,13 @@ impl DeviceMessage {
             1 => {
                 // ACK_CLIPBOARD: sequence(u64 BE)
                 let mut seq_buf = [0u8; 8];
-                reader.read_exact(&mut seq_buf)?;
+                if let Err(e) = reader.read_exact(&mut seq_buf) {
+                    if is_recoverable(&e) {
+                        warn!("Partial ack-clipboard read (lost 1 byte type): {e}");
+                        return Ok(None);
+                    }
+                    return Err(SAideError::from(e));
+                }
                 Ok(Some(DeviceMessage::AckClipboard(u64::from_be_bytes(
                     seq_buf,
                 ))))
@@ -93,17 +122,35 @@ impl DeviceMessage {
             2 => {
                 // UHID_OUTPUT: id(u16 BE) + len(u16 BE) + data
                 let mut header = [0u8; 4];
-                reader.read_exact(&mut header)?;
+                if let Err(e) = reader.read_exact(&mut header) {
+                    if is_recoverable(&e) {
+                        warn!("Partial UHID read (lost 1 byte type): {e}");
+                        return Ok(None);
+                    }
+                    return Err(SAideError::from(e));
+                }
                 let id = u16::from_be_bytes([header[0], header[1]]);
                 let len = u16::from_be_bytes([header[2], header[3]]) as usize;
                 let mut data = vec![0u8; len];
-                reader.read_exact(&mut data)?;
+                if let Err(e) = reader.read_exact(&mut data) {
+                    if is_recoverable(&e) {
+                        warn!("Partial UHID read (lost 5 byte header): {e}");
+                        return Ok(None);
+                    }
+                    return Err(SAideError::from(e));
+                }
                 Ok(Some(DeviceMessage::UhidOutput { id, data }))
             }
             3 => {
                 // ROTATION_CHANGED: rotation(u32 BE)
                 let mut rot_buf = [0u8; 4];
-                reader.read_exact(&mut rot_buf)?;
+                if let Err(e) = reader.read_exact(&mut rot_buf) {
+                    if is_recoverable(&e) {
+                        warn!("Partial rotation read (lost 1 byte type): {e}");
+                        return Ok(None);
+                    }
+                    return Err(SAideError::from(e));
+                }
                 Ok(Some(DeviceMessage::RotationChanged(u32::from_be_bytes(
                     rot_buf,
                 ))))
@@ -111,7 +158,13 @@ impl DeviceMessage {
             4 => {
                 // IME_STATE_CHANGED: visible(bool, 1 byte)
                 let mut vis_buf = [0u8; 1];
-                reader.read_exact(&mut vis_buf)?;
+                if let Err(e) = reader.read_exact(&mut vis_buf) {
+                    if is_recoverable(&e) {
+                        warn!("Partial IME read (lost 1 byte type): {e}");
+                        return Ok(None);
+                    }
+                    return Err(SAideError::from(e));
+                }
                 Ok(Some(DeviceMessage::ImeStateChanged(vis_buf[0] != 0)))
             }
             _ => Err(SAideError::ProtocolError(format!(
@@ -119,6 +172,17 @@ impl DeviceMessage {
             ))),
         }
     }
+}
+
+/// Returns true if the error indicates a temporary lack of data
+/// (WouldBlock for non-blocking streams, TimedOut for blocking streams
+/// with a read deadline), rather than a permanent I/O failure.
+///
+/// `UnexpectedEof` is intentionally NOT considered recoverable—for a
+/// `Cursor`-backed reader it signals truncated input, and for a TCP
+/// stream it signals a clean remote close.
+fn is_recoverable(e: &std::io::Error) -> bool {
+    matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
 }
 
 #[cfg(test)]
