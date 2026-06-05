@@ -181,8 +181,6 @@ public final class Server {
                                 Ln.i("Screen rotation changed: " + degrees + "° (raw=" + rotation + ")");
                             }
                         }
-                    } catch (InterruptedException e) {
-                        break;
                     } catch (Exception e) {
                         Ln.e("Rotation detection error: " + e.getMessage());
                     }
@@ -210,8 +208,6 @@ public final class Server {
                                 Ln.i("IME state changed: visible=" + visible);
                             }
                         }
-                    } catch (InterruptedException e) {
-                        break;
                     } catch (Exception e) {
                         Ln.e("IME detection error: " + e.getMessage());
                     }
