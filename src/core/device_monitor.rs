@@ -315,6 +315,7 @@ impl DeviceMonitor {
 
             match run_adb_with_retry(token.clone(), shell.clone(), |s| s.get_ime_state()).await {
                 Ok(is_shown) => {
+                    info!("ADB: IME state changed: visible={}", is_shown);
                     let _ = event_tx.send(DeviceMonitorEvent::ImStateChanged(is_shown));
                 }
                 Err(e) => {
@@ -351,7 +352,7 @@ impl DeviceMonitor {
             {
                 Ok(orientation) => {
                     if Some(orientation) != last_orientation {
-                        info!("Device rotated to orientation: {}", orientation);
+                        info!("ADB: device rotated to orientation: {}", orientation);
                         last_orientation = Some(orientation);
                         let _ = event_tx.send(DeviceMonitorEvent::Rotated(orientation));
                     }
